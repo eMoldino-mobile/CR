@@ -13,6 +13,7 @@ def load_data(uploaded_file):
         if uploaded_file.name.endswith('.csv'):
             df = pd.read_csv(uploaded_file)
         elif uploaded_file.name.endswith(('.xls', '.xlsx')):
+            # Requires openpyxl
             df = pd.read_excel(uploaded_file)
         else:
             st.error("Error: Unsupported file format. Please upload a CSV or Excel file.")
@@ -25,15 +26,18 @@ def load_data(uploaded_file):
 def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, slow_tol_perc, fast_tol_perc, target_oee_perc):
     """
     Main function to process the raw DataFrame and calculate all Capacity Risk fields
-    using the final "Performance vs. Quality" logic.
+    using the final "Performance vs. Quality" logic (Test 5).
     """
     
     # --- 1. Standardize and Prepare Data ---
     df = df_raw.copy()
+    # Define standard column names we expect
     col_map = {
         'SHOT TIME': 'SHOT TIME', 'APPROVED CT': 'Approved CT', 'ACTUAL CT': 'Actual CT',
         'Working Cavities': 'Working Cavities', 'Plant Area': 'Plant Area'
     }
+    
+    # Find and rename columns, ignoring case/spacing
     rename_dict = {}
     for col in df.columns:
         for standard_name in col_map.values():
@@ -55,14 +59,18 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, slow_tol_pe
         st.info(f"'Working Cavities' column not found. Using default value: {default_cavities}")
         df['Working Cavities'] = default_cavities
     else:
+        # Default missing cavity data to 1
         df['Working Cavities'].fillna(1, inplace=True)
 
     if 'Plant Area' not in df.columns:
         if toggle_filter:
             st.warning("'Plant Area' column not found. Cannot apply Maintenance/Warehouse filter.")
-            toggle_filter = False
-        df['Plant Area'] = 'Production'
+            toggle_filter = False # Disable the toggle if column is missing
+        df['Plant Area'] = 'Production' # Assign a default value
+    else:
+        df['Plant Area'].fillna('Production', inplace=True)
 
+    # Convert data types
     try:
         df['SHOT TIME'] = pd.to_datetime(df['SHOT TIME'])
         df['Actual CT'] = pd.to_numeric(df['Actual CT'])
@@ -82,6 +90,7 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, slow_tol_pe
         st.error("Error: No 'Production' data found after filtering.")
         return None, None
 
+    # Create the final 'valid' dataframe (for cycle calcs)
     df_valid = df_production_only[df_production_only['Actual CT'] < 999.9].copy()
 
     if df_valid.empty:
@@ -91,22 +100,24 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, slow_tol_pe
 
     # --- 5. Get Configuration Values ---
     try:
+        # Get the single, consistent Approved CT
         APPROVED_CT = df_valid['Approved CT'].mode().iloc[0]
     except IndexError:
+        # Fallback if df_valid is empty
         APPROVED_CT = df_production_only['Approved CT'].mode().iloc[0]
 
-    # --- 5a. Define Quality Boundaries ---
+    # --- 5a. Define Quality Boundaries (for 'Good Shots' count) ---
     quality_slow_limit = APPROVED_CT * (1 + (slow_tol_perc / 100.0))
     quality_fast_limit = APPROVED_CT * (1 - (fast_tol_perc / 100.0))
     
-    # --- 5b. Define Performance Boundaries ---
+    # --- 5b. Define Performance Boundaries (for Gain/Loss calcs) ---
     # Performance is benchmarked *only* against the Approved CT
     PERFORMANCE_BENCHMARK = APPROVED_CT
 
     # --- 6. Calculate Per-Shot Metrics ---
     # We calculate these *before* aggregating for the hourly chart
     
-    # Performance Calcs
+    # Performance Calcs (relative to APPROVED_CT)
     df_valid['parts_gain'] = np.where(
         df_valid['Actual CT'] < PERFORMANCE_BENCHMARK,
         ((PERFORMANCE_BENCHMARK - df_valid['Actual CT']) / PERFORMANCE_BENCHMARK) * df_valid['Working Cavities'],
@@ -118,7 +129,7 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, slow_tol_pe
         0
     )
     
-    # Quality Calc
+    # Quality Calc (relative to tolerance band)
     df_valid['is_good'] = np.where(
         (df_valid['Actual CT'] >= quality_fast_limit) & (df_valid['Actual CT'] <= quality_slow_limit),
         1,
@@ -146,7 +157,7 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, slow_tol_pe
     max_cavities = df_production_only['Working Cavities'].max()
     results['Optimal Output'] = (results['Total Run Time (sec)'] / APPROVED_CT) * max_cavities
 
-    # D. Loss & Gap Calculations
+    # D. Loss & Gap Calculations (from our new logic)
     results['Availability Loss'] = results['Downtime (sec)'] / APPROVED_CT
     results['Slow Cycle Loss'] = df_valid['parts_loss'].sum()
     results['Efficiency Gain'] = df_valid['parts_gain'].sum()
@@ -162,16 +173,24 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, slow_tol_pe
     # G. OEE Percentage Metrics
     # Avoid division by zero if run time is 0
     if results['Total Run Time (sec)'] > 0:
+        # Availability = Run Time / Total Time
+        # Per our logic: Run Time = Actual Cycle Time Total
+        # Total Time = Total Run Time
         results['Availability %'] = results['Actual Cycle Time Total (sec)'] / results['Total Run Time (sec)']
     else:
         results['Availability %'] = 0
         
     if results['Actual Cycle Time Total (sec)'] > 0:
+        # Performance = (Total Parts * Ideal CT) / Run Time
+        # Per our logic: Total Parts = VALID SHOTS
+        # Ideal CT = APPROVED_CT
+        # Run Time = Actual Cycle Time Total
         results['Performance %'] = (APPROVED_CT * results['VALID SHOTS']) / results['Actual Cycle Time Total (sec)']
     else:
         results['Performance %'] = 0
 
     if results['VALID SHOTS'] > 0:
+        # Quality = Good Parts / Total Parts
         results['Quality %'] = results['Good Shots'] / results['VALID SHOTS']
     else:
         results['Quality %'] = 0
@@ -328,7 +347,8 @@ if uploaded_file is not None:
                 colD.metric(
                     "OEE", 
                     f"{results_series.get('OEE %', 0):.1%}",
-                    f"{results_series.get('OEE %', 0) - (target_oee_perc/100.0):.1%}"
+                    f"{results_series.get('OEE %', 0) - (target_oee_perc/100.0):.1%}",
+                    delta_color="inverse"
                 )
 
                 # --- 2. Hourly Chart ---
@@ -348,8 +368,12 @@ if uploaded_file is not None:
                     y=alt.Y('Value:Q', axis=alt.Axis(title='Parts')),
                     color=alt.Color('Metric:N', scale={'domain': ['Actual Output', 'Slow Cycle Loss'],
                                                       'range': ['#4e79a7', '#e15759']}), # Blue, Red
-                    tooltip=['Hour:T', 'Metric:N', 'Value:Q']
+                    tooltip=['Hour:T', 'Metric:N', 'Value:Details', alt.Tooltip('Value', format=',.0f')]
+                ).transform_calculate(
+                    # Create a "Details" field for the tooltip to show gain
+                    Value_Details=alt.datum.Value + alt.datum['Efficiency Gain']
                 )
+
 
                 # Stacked bars
                 bar_chart = base.mark_bar().properties(
@@ -360,7 +384,7 @@ if uploaded_file is not None:
                 line_chart = alt.Chart(df_hourly).mark_line(color='green', strokeDash=[5,5]).encode(
                     x=alt.X('Hour:T'),
                     y=alt.Y('Hourly Optimal Output:Q', axis=alt.Axis(title='Hourly Optimal Output', titleColor='green')),
-                    tooltip=[alt.Tooltip('Hour:T'), alt.Tooltip('Hourly Optimal Output:Q', title='Hourly Optimal')]
+                    tooltip=[alt.Tooltip('Hour:T'), alt.Tooltip('Hourly Optimal Output:Q', title='Hourly Optimal', format=',.0f')]
                 ).properties(
                     title="Hourly Optimal Output (Right Axis)"
                 )
@@ -378,16 +402,26 @@ if uploaded_file is not None:
                 # Format the Series into a nice DataFrame for display
                 results_df = results_series.to_frame(name="Value")
                 
-                # Apply number formatting
+                # --- NEW, CORRECTED CODE ---
+
+                # 1. Define the metrics that should be percentages
+                percent_metrics = [
+                    'Availability %', 
+                    'Performance %', 
+                    'Quality %', 
+                    'OEE %'
+                ]
+
+                # 2. Apply formatting using an IndexSlice for precision
                 st.dataframe(
-                    results_df.style.format(
-                        {
-                            "Value": lambda x: f"{x:,.1%}" if "%" in results_df.loc[x.name].name else f"{x:,.2f}"
-                        },
-                        na_rep="N/A"
+                    results_df.style.format("{:,.2f}", na_rep="N/A") # Default: format all as float
+                    .format(
+                        "{:,.1%}", # Override: format these specific rows as percent
+                        subset=pd.IndexSlice[percent_metrics, "Value"]
                     ),
                     use_container_width=True
                 )
+                # --- END CORRECTED CODE ---
 
             elif results_series is not None:
                 st.warning("No valid data was found after filtering. Cannot display results.")
