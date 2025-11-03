@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import altair as alt
+# Altair import removed as it's no longer needed
 
 # ==================================================================
 #                       DATA CALCULATION
