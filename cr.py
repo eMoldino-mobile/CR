@@ -212,7 +212,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("Capacity Risk Dashboard (Phase 1)")
+st.title("Capacity Risk Report")
 
 # --- Sidebar for Inputs ---
 st.sidebar.header("Configuration")
@@ -287,109 +287,15 @@ if uploaded_file is not None:
             
             if results_series is not None and not results_series.empty:
                 
-                # --- 1. Metrics Dashboard ---
-                st.header("Daily Metrics Dashboard")
-                
-                # --- Top Level Metrics ---
-                col1, col2, col3 = st.columns(3)
-                col1.metric(
-                    "Actual Output (Parts)", 
-                    f"{results_series.get('Actual Output', 0):,.0f}"
-                )
-                col2.metric(
-                    "Target Output (Parts)", 
-                    f"{results_series.get('Target Output', 0):,.0f}",
-                    f"{results_series.get('Target OEE', 0):.0f}% of Optimal"
-                )
-                col3.metric(
-                    "Gap to Optimal (Parts)", 
-                    f"{results_series.get('Gap', 0):,.0f}"
-                )
-                
-                st.divider()
+                # --- METRICS AND CHART REMOVED ---
 
-                # --- OEE Metrics ---
-                colA, colB, colC, colD = st.columns(4)
-                colA.metric(
-                    "Availability", 
-                    f"{results_series.get('Availability %', 0):.1%}"
-                )
-                colB.metric(
-                    "Performance", 
-                    f"{results_series.get('Performance %', 0):.1%}"
-                )
-                colC.metric(
-                    "Quality (Good Shots)", 
-                    f"{results_series.get('Quality %', 0):.1%}"
-                )
-                colD.metric(
-                    "OEE", 
-                    f"{results_series.get('OEE %', 0):.1%}",
-                    f"{results_series.get('OEE %', 0) - (target_oee_perc/100.0):.1%}",
-                    delta_color="inverse"
-                )
-
-                # --- 2. Daily Stacked Chart (Replaced Hourly) ---
-                st.header("Daily Performance Breakdown")
-
-                # Create a DataFrame for the single-day stack
-                chart_data = [
-                    {'Category': 'Total Loss', 'Metric': 'Availability Loss', 'Value': results_series.get('Availability Loss', 0)},
-                    {'Category': 'Total Loss', 'Metric': 'Slow Cycle Loss', 'Value': results_series.get('Slow Cycle Loss', 0)},
-                    {'Category': 'Total Output', 'Metric': 'Actual Output', 'Value': results_series.get('Actual Output', 0)},
-                    {'Category': 'Total Output', 'Metric': 'Efficiency Gain', 'Value': results_series.get('Efficiency Gain', 0)},
-                ]
-                df_chart = pd.DataFrame(chart_data)
-
-                # Define the target and optimal lines
-                df_lines = pd.DataFrame([
-                    {'Metric': 'Target Output', 'Value': results_series.get('Target Output', 0)},
-                    {'Metric': 'Optimal Output', 'Value': results_series.get('Optimal Output', 0)},
-                ])
-
-                # Base chart for stacking
-                base = alt.Chart(df_chart).encode(
-                    # Use a dummy x-axis for a single stack
-                    x=alt.X('Category:N', title=None, axis=None),
-                    y=alt.Y('Value:Q', title='Parts'),
-                    color=alt.Color('Metric:N', 
-                                    scale={'domain': ['Actual Output', 'Efficiency Gain', 'Slow Cycle Loss', 'Availability Loss'],
-                                           'range': ['#4e79a7', '#76b7b2', '#e15759', '#f28e2b']}), # Blue, Teal, Red, Orange
-                    tooltip=[
-                        'Metric:N', 
-                        alt.Tooltip('Value:Q', format=',.0f')
-                    ]
-                )
-
-                # Stacked bars
-                bar_chart = base.mark_bar().properties(
-                    title="Daily Production vs. Loss"
-                )
-                
-                # Target Line (Green)
-                target_line = alt.Chart(df_lines[df_lines['Metric'] == 'Target Output']).mark_rule(color='green', strokeDash=[5,5], size=2).encode(
-                    y='Value:Q',
-                    tooltip=[alt.Tooltip('Metric'), alt.Tooltip('Value', format=',.0f')]
-                )
-                
-                # Optimal Line (Red)
-                optimal_line = alt.Chart(df_lines[df_lines['Metric'] == 'Optimal Output']).mark_rule(color='red', size=2).encode(
-                    y='Value:Q',
-                    tooltip=[alt.Tooltip('Metric'), alt.Tooltip('Value', format=',.0f')]
-                )
-
-                # Combine the charts
-                final_chart = alt.layer(bar_chart, target_line, optimal_line).interactive()
-                
-                st.altair_chart(final_chart, use_container_width=True)
-
-                # --- 3. Full Data Table (Open by Default) ---
+                # --- Full Data Table (Open by Default) ---
                 st.header("Full Daily Report")
                 
                 # Format the Series into a nice DataFrame for display
                 results_df = results_series.to_frame(name="Value")
                 
-                # --- NEW, V1.4 ROBUST FORMATTING ---
+                # --- ROBUST V1.4 FORMATTING ---
 
                 # 1. Define the metrics that should be percentages
                 percent_metrics = [
