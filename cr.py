@@ -52,7 +52,7 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, slow_tol_pe
     
     if missing_cols:
         st.error(f"Error: Missing required columns: {', '.join(missing_cols)}")
-        return None, None
+        return None
 
     # --- 3. Handle Optional Columns and Data Types ---
     if 'Working Cavities' not in df.columns:
@@ -78,7 +78,7 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, slow_tol_pe
         df['Working Cavities'] = pd.to_numeric(df['Working Cavities'])
     except Exception as e:
         st.error(f"Error converting data types: {e}")
-        return None, None
+        return None
         
     # --- 4. Apply Filters (The Toggle) ---
     if toggle_filter:
@@ -88,7 +88,7 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, slow_tol_pe
 
     if df_production_only.empty:
         st.error("Error: No 'Production' data found after filtering.")
-        return None, None
+        return None
 
     # Create the final 'valid' dataframe (for cycle calcs)
     df_valid = df_production_only[df_production_only['Actual CT'] < 999.9].copy()
@@ -96,7 +96,7 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, slow_tol_pe
     if df_valid.empty:
         st.warning("Warning: No valid shots found (all shots >= 999.9 sec).")
         # Create empty results to avoid crashing
-        return pd.Series(dtype=float), pd.DataFrame()
+        return pd.Series(dtype=float)
 
     # --- 5. Get Configuration Values ---
     try:
@@ -115,7 +115,6 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, slow_tol_pe
     PERFORMANCE_BENCHMARK = APPROVED_CT
 
     # --- 6. Calculate Per-Shot Metrics ---
-    # We calculate these *before* aggregating for the hourly chart
     
     # Performance Calcs (relative to APPROVED_CT)
     df_valid['parts_gain'] = np.where(
@@ -196,34 +195,11 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, slow_tol_pe
         results['Quality %'] = 0
         
     results['OEE %'] = results['Availability %'] * results['Performance %'] * results['Quality %']
-
-    # --- 8. Calculate Hourly Aggregates (for Chart) ---
-    df_hourly = pd.DataFrame()
-    df_valid_indexed = df_valid.set_index('SHOT TIME')
-    df_prod_indexed = df_production_only.set_index('SHOT TIME')
-
-    # Sum up hourly components
-    df_hourly['Actual Output'] = df_valid_indexed['actual_output'].resample('H').sum()
-    df_hourly['Slow Cycle Loss'] = df_valid_indexed['parts_loss'].resample('H').sum()
-    df_hourly['Efficiency Gain'] = df_valid_indexed['parts_gain'].resample('H').sum()
     
-    # Calculate hourly runtime (max-min)
-    hourly_runtime = df_prod_indexed['Actual CT'].resample('H').apply(
-        lambda x: (x.index.max() - x.index.min()).total_seconds() if not x.empty else 0
-    )
-    # Add back the last cycle time for a more accurate hourly "run"
-    hourly_last_ct = df_prod_indexed['Actual CT'].resample('H').last().fillna(0)
-    hourly_runtime = hourly_runtime + hourly_last_ct
-    
-    df_hourly['Hourly Optimal Output'] = (hourly_runtime / APPROVED_CT) * max_cavities
-
-    # Reset index to make 'Hour' a column for Altair
-    df_hourly = df_hourly.reset_index().rename(columns={'SHOT TIME': 'Hour'})
-    
-    # --- 9. Format and Return Results ---
+    # --- 8. Format and Return Results ---
     final_results = pd.Series(results)
     
-    return final_results, df_hourly
+    return final_results
 
 # ==================================================================
 #                       STREAMLIT APP LAYOUT
@@ -298,7 +274,8 @@ if uploaded_file is not None:
         # --- Run Calculation ---
         with st.spinner("Calculating Capacity Risk..."):
             
-            results_series, df_hourly = calculate_capacity_risk(
+            # Removed df_hourly from the return
+            results_series = calculate_capacity_risk(
                 df_raw, 
                 toggle_filter, 
                 default_cavities, 
@@ -351,48 +328,57 @@ if uploaded_file is not None:
                     delta_color="inverse"
                 )
 
-                # --- 2. Hourly Chart ---
-                st.header("Hourly Performance Breakdown")
+                # --- 2. Daily Stacked Chart (Replaced Hourly) ---
+                st.header("Daily Performance Breakdown")
 
-                # Melt the dataframe for stacking
-                df_melted = df_hourly.melt(
-                    id_vars=['Hour', 'Hourly Optimal Output', 'Efficiency Gain'],
-                    value_vars=['Actual Output', 'Slow Cycle Loss'],
-                    var_name='Metric',
-                    value_name='Value'
-                )
+                # Create a DataFrame for the single-day stack
+                chart_data = [
+                    {'Category': 'Total Loss', 'Metric': 'Availability Loss', 'Value': results_series.get('Availability Loss', 0)},
+                    {'Category': 'Total Loss', 'Metric': 'Slow Cycle Loss', 'Value': results_series.get('Slow Cycle Loss', 0)},
+                    {'Category': 'Total Output', 'Metric': 'Actual Output', 'Value': results_series.get('Actual Output', 0)},
+                    {'Category': 'Total Output', 'Metric': 'Efficiency Gain', 'Value': results_series.get('Efficiency Gain', 0)},
+                ]
+                df_chart = pd.DataFrame(chart_data)
+
+                # Define the target and optimal lines
+                df_lines = pd.DataFrame([
+                    {'Metric': 'Target Output', 'Value': results_series.get('Target Output', 0)},
+                    {'Metric': 'Optimal Output', 'Value': results_series.get('Optimal Output', 0)},
+                ])
 
                 # Base chart for stacking
-                base = alt.Chart(df_melted).encode(
-                    x=alt.X('Hour:T', axis=alt.Axis(title='Hour of Day', format="%H:00")),
-                    y=alt.Y('Value:Q', axis=alt.Axis(title='Parts')),
-                    color=alt.Color('Metric:N', scale={'domain': ['Actual Output', 'Slow Cycle Loss'],
-                                                      'range': ['#4e79a7', '#e15759']}), # Blue, Red
-                    tooltip=['Hour:T', 'Metric:N', 'Value:Details', alt.Tooltip('Value', format=',.0f')]
-                ).transform_calculate(
-                    # Create a "Details" field for the tooltip to show gain
-                    Value_Details=alt.datum.Value + alt.datum['Efficiency Gain']
+                base = alt.Chart(df_chart).encode(
+                    # Use a dummy x-axis for a single stack
+                    x=alt.X('Category:N', title=None, axis=None),
+                    y=alt.Y('Value:Q', title='Parts'),
+                    color=alt.Color('Metric:N', 
+                                    scale={'domain': ['Actual Output', 'Efficiency Gain', 'Slow Cycle Loss', 'Availability Loss'],
+                                           'range': ['#4e79a7', '#76b7b2', '#e15759', '#f28e2b']}), # Blue, Teal, Red, Orange
+                    tooltip=[
+                        'Metric:N', 
+                        alt.Tooltip('Value:Q', format=',.0f')
+                    ]
                 )
-
 
                 # Stacked bars
                 bar_chart = base.mark_bar().properties(
-                    title="Hourly Production vs. Loss"
+                    title="Daily Production vs. Loss"
                 )
                 
-                # Line chart for Optimal Output
-                line_chart = alt.Chart(df_hourly).mark_line(color='green', strokeDash=[5,5]).encode(
-                    x=alt.X('Hour:T'),
-                    y=alt.Y('Hourly Optimal Output:Q', axis=alt.Axis(title='Hourly Optimal Output', titleColor='green')),
-                    tooltip=[alt.Tooltip('Hour:T'), alt.Tooltip('Hourly Optimal Output:Q', title='Hourly Optimal', format=',.0f')]
-                ).properties(
-                    title="Hourly Optimal Output (Right Axis)"
+                # Target Line (Green)
+                target_line = alt.Chart(df_lines[df_lines['Metric'] == 'Target Output']).mark_rule(color='green', strokeDash=[5,5], size=2).encode(
+                    y='Value:Q',
+                    tooltip=[alt.Tooltip('Metric'), alt.Tooltip('Value', format=',.0f')]
+                )
+                
+                # Optimal Line (Red)
+                optimal_line = alt.Chart(df_lines[df_lines['Metric'] == 'Optimal Output']).mark_rule(color='red', size=2).encode(
+                    y='Value:Q',
+                    tooltip=[alt.Tooltip('Metric'), alt.Tooltip('Value', format=',.0f')]
                 )
 
-                # Combine the charts with independent Y-axes
-                final_chart = alt.layer(bar_chart, line_chart).resolve_scale(
-                    y='independent'
-                ).interactive()
+                # Combine the charts
+                final_chart = alt.layer(bar_chart, target_line, optimal_line).interactive()
                 
                 st.altair_chart(final_chart, use_container_width=True)
 
@@ -428,3 +414,4 @@ if uploaded_file is not None:
 
 else:
     st.info("Please upload a data file to begin.")
+
