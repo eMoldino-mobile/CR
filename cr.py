@@ -197,6 +197,7 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, slow_tol_pe
     results['OEE %'] = results['Availability %'] * results['Performance %'] * results['Quality %']
     
     # --- 8. Format and Return Results ---
+    # Removed the hourly aggregation logic
     final_results = pd.Series(results)
     
     return final_results
