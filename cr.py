@@ -389,7 +389,7 @@ if uploaded_file is not None:
                 # Format the Series into a nice DataFrame for display
                 results_df = results_series.to_frame(name="Value")
                 
-                # --- NEW, SIMPLER, MORE ROBUST FORMATTING ---
+                # --- NEW, V1.4 ROBUST FORMATTING ---
 
                 # 1. Define the metrics that should be percentages
                 percent_metrics = [
@@ -406,15 +406,25 @@ if uploaded_file is not None:
                 for metric_name in percent_metrics:
                     if metric_name in formatted_df.index:
                         value = formatted_df.loc[metric_name, 'Value']
-                        if pd.api.types.is_number(value):
+                        # Check if it's a valid number (not NaN or None)
+                        if pd.notna(value) and isinstance(value, (int, float)):
                             formatted_df.loc[metric_name, 'Value'] = f"{value:.1%}"
+                        elif pd.notna(value):
+                             # if it's not a number (e.g., already a string), just keep it
+                             formatted_df.loc[metric_name, 'Value'] = str(value)
+                        else:
+                            formatted_df.loc[metric_name, 'Value'] = "N/A" # Handle NaN/None
 
                 # 3. Format all other numeric values
                 for idx in formatted_df.index:
                     if idx not in percent_metrics:
                         value = formatted_df.loc[idx, 'Value']
-                        if pd.api.types.is_number(value):
+                        if pd.notna(value) and isinstance(value, (int, float)):
                             formatted_df.loc[idx, 'Value'] = f"{value:,.2f}"
+                        elif pd.notna(value):
+                             formatted_df.loc[idx, 'Value'] = str(value)
+                        else:
+                            formatted_df.loc[idx, 'Value'] = "N/A"
 
                 # 4. Display the string-formatted DataFrame
                 # We don't use .style.format() at all now.
