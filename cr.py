@@ -389,7 +389,7 @@ if uploaded_file is not None:
                 # Format the Series into a nice DataFrame for display
                 results_df = results_series.to_frame(name="Value")
                 
-                # --- NEW, CORRECTED CODE ---
+                # --- NEW, SIMPLER, MORE ROBUST FORMATTING ---
 
                 # 1. Define the metrics that should be percentages
                 percent_metrics = [
@@ -398,17 +398,31 @@ if uploaded_file is not None:
                     'Quality %', 
                     'OEE %'
                 ]
+                
+                # Create a copy to format and ensure it's object type for strings
+                formatted_df = results_df.astype(object)
 
-                # 2. Apply formatting using an IndexSlice for precision
+                # 2. Iterate and apply string formatting
+                for metric_name in percent_metrics:
+                    if metric_name in formatted_df.index:
+                        value = formatted_df.loc[metric_name, 'Value']
+                        if pd.api.types.is_number(value):
+                            formatted_df.loc[metric_name, 'Value'] = f"{value:.1%}"
+
+                # 3. Format all other numeric values
+                for idx in formatted_df.index:
+                    if idx not in percent_metrics:
+                        value = formatted_df.loc[idx, 'Value']
+                        if pd.api.types.is_number(value):
+                            formatted_df.loc[idx, 'Value'] = f"{value:,.2f}"
+
+                # 4. Display the string-formatted DataFrame
+                # We don't use .style.format() at all now.
                 st.dataframe(
-                    results_df.style.format("{:,.2f}", na_rep="N/A") # Default: format all as float
-                    .format(
-                        "{:,.1%}", # Override: format these specific rows as percent
-                        subset=pd.IndexSlice[percent_metrics, "Value"]
-                    ),
+                    formatted_df,
                     use_container_width=True
                 )
-                # --- END CORRECTED CODE ---
+                # --- END NEW FORMATTING ---
 
             elif results_series is not None:
                 st.warning("No valid data was found after filtering. Cannot display results.")
