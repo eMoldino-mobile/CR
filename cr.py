@@ -1,6 +1,11 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import altair as alt
+
+# ==================================================================
+#                       DATA CALCULATION
+# ==================================================================
 
 def load_data(uploaded_file):
     """Loads data from the uploaded file (Excel or CSV) into a DataFrame."""
@@ -19,24 +24,16 @@ def load_data(uploaded_file):
 
 def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, slow_tol_perc, fast_tol_perc, target_oee_perc):
     """
-    Main function to process the raw DataFrame and calculate all 16 Capacity Risk fields.
+    Main function to process the raw DataFrame and calculate all Capacity Risk fields
+    using the final "Performance vs. Quality" logic.
     """
     
     # --- 1. Standardize and Prepare Data ---
-    
-    # Create a working copy
     df = df_raw.copy()
-
-    # Define standard column names
     col_map = {
-        'SHOT TIME': 'SHOT TIME',
-        'APPROVED CT': 'Approved CT',
-        'ACTUAL CT': 'Actual CT',
-        'Working Cavities': 'Working Cavities',
-        'Plant Area': 'Plant Area'
+        'SHOT TIME': 'SHOT TIME', 'APPROVED CT': 'Approved CT', 'ACTUAL CT': 'Actual CT',
+        'Working Cavities': 'Working Cavities', 'Plant Area': 'Plant Area'
     }
-    
-    # Rename columns to standard names (case-insensitive find)
     rename_dict = {}
     for col in df.columns:
         for standard_name in col_map.values():
@@ -51,26 +48,21 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, slow_tol_pe
     
     if missing_cols:
         st.error(f"Error: Missing required columns: {', '.join(missing_cols)}")
-        return None
+        return None, None
 
     # --- 3. Handle Optional Columns and Data Types ---
-    
-    # Handle 'Working Cavities' (as defined in our logic)
     if 'Working Cavities' not in df.columns:
         st.info(f"'Working Cavities' column not found. Using default value: {default_cavities}")
         df['Working Cavities'] = default_cavities
     else:
-        # Fill any missing cavity data with the default (1)
         df['Working Cavities'].fillna(1, inplace=True)
 
-    # Handle 'Plant Area' (as defined in our logic)
     if 'Plant Area' not in df.columns:
         if toggle_filter:
             st.warning("'Plant Area' column not found. Cannot apply Maintenance/Warehouse filter.")
-            toggle_filter = False # Disable the toggle if column is missing
-        df['Plant Area'] = 'Production' # Assign a default value
+            toggle_filter = False
+        df['Plant Area'] = 'Production'
 
-    # Convert data types
     try:
         df['SHOT TIME'] = pd.to_datetime(df['SHOT TIME'])
         df['Actual CT'] = pd.to_numeric(df['Actual CT'])
@@ -78,11 +70,9 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, slow_tol_pe
         df['Working Cavities'] = pd.to_numeric(df['Working Cavities'])
     except Exception as e:
         st.error(f"Error converting data types: {e}")
-        return None
+        return None, None
         
     # --- 4. Apply Filters (The Toggle) ---
-
-    # Filter for production shots based on the toggle
     if toggle_filter:
         df_production_only = df[~df['Plant Area'].isin(['Maintenance', 'Warehouse'])].copy()
     else:
@@ -90,98 +80,131 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, slow_tol_pe
 
     if df_production_only.empty:
         st.error("Error: No 'Production' data found after filtering.")
-        return None
+        return None, None
 
-    # Create the final 'valid' dataframe (for cycle calcs)
     df_valid = df_production_only[df_production_only['Actual CT'] < 999.9].copy()
 
     if df_valid.empty:
         st.warning("Warning: No valid shots found (all shots >= 999.9 sec).")
-        # Allow calculations to proceed, but many will be 0.
-    
+        # Create empty results to avoid crashing
+        return pd.Series(dtype=float), pd.DataFrame()
+
     # --- 5. Get Configuration Values ---
-    
-    # Get the single, consistent Approved CT
-    # We take the mode() in case there are multiple, but user said it's consistent.
     try:
         APPROVED_CT = df_valid['Approved CT'].mode().iloc[0]
     except IndexError:
-        # Fallback if df_valid is empty
         APPROVED_CT = df_production_only['Approved CT'].mode().iloc[0]
 
-    SLOW_TOLERANCE = slow_tol_perc / 100.0
-    FAST_TOLERANCE = fast_tol_perc / 100.0
-    TARGET_OEE = target_oee_perc / 100.0
-
-    # --- 6. Calculate All 16 Fields ---
+    # --- 5a. Define Quality Boundaries ---
+    quality_slow_limit = APPROVED_CT * (1 + (slow_tol_perc / 100.0))
+    quality_fast_limit = APPROVED_CT * (1 - (fast_tol_perc / 100.0))
     
+    # --- 5b. Define Performance Boundaries ---
+    # Performance is benchmarked *only* against the Approved CT
+    PERFORMANCE_BENCHMARK = APPROVED_CT
+
+    # --- 6. Calculate Per-Shot Metrics ---
+    # We calculate these *before* aggregating for the hourly chart
+    
+    # Performance Calcs
+    df_valid['parts_gain'] = np.where(
+        df_valid['Actual CT'] < PERFORMANCE_BENCHMARK,
+        ((PERFORMANCE_BENCHMARK - df_valid['Actual CT']) / PERFORMANCE_BENCHMARK) * df_valid['Working Cavities'],
+        0
+    )
+    df_valid['parts_loss'] = np.where(
+        df_valid['Actual CT'] > PERFORMANCE_BENCHMARK,
+        ((df_valid['Actual CT'] - PERFORMANCE_BENCHMARK) / PERFORMANCE_BENCHMARK) * df_valid['Working Cavities'],
+        0
+    )
+    
+    # Quality Calc
+    df_valid['is_good'] = np.where(
+        (df_valid['Actual CT'] >= quality_fast_limit) & (df_valid['Actual CT'] <= quality_slow_limit),
+        1,
+        0
+    )
+    
+    # Output Calc
+    df_valid['actual_output'] = df_valid['Working Cavities']
+
+    # --- 7. Calculate Daily Aggregates (for Table & Metrics) ---
     results = {}
     
     # A. Basic Counts
     results['Total Shots (all)'] = len(df_production_only)
     results['VALID SHOTS'] = len(df_valid)
     results['Invalid Shots (999.9 sec)'] = results['Total Shots (all)'] - results['VALID SHOTS']
-    
+
     # B. Time Calculations
     results['Total Run Time (sec)'] = (df_production_only['SHOT TIME'].max() - df_production_only['SHOT TIME'].min()).total_seconds()
-    
-    if not df_valid.empty:
-        results['Mode CT'] = df_valid['Actual CT'].mode().iloc[0]
-        results['Actual Cycle Time Total (sec)'] = df_valid['Actual CT'].sum()
-    else:
-        results['Mode CT'] = 0
-        results['Actual Cycle Time Total (sec)'] = 0
-    
-    # *** NEW CONFIRMED LOGIC ***
+    results['Actual Cycle Time Total (sec)'] = df_valid['Actual CT'].sum()
     results['Downtime (sec)'] = results['Total Run Time (sec)'] - results['Actual Cycle Time Total (sec)']
-    
+
     # C. Output Calculations
-    results['Actual Output'] = df_valid['Working Cavities'].sum()
-    
-    if not df_valid.empty:
-        max_cavities = df_valid['Working Cavities'].max()
-    else:
-        max_cavities = default_cavities # Fallback
-        
+    results['Actual Output'] = df_valid['actual_output'].sum()
+    max_cavities = df_production_only['Working Cavities'].max()
     results['Optimal Output'] = (results['Total Run Time (sec)'] / APPROVED_CT) * max_cavities
-    
+
     # D. Loss & Gap Calculations
     results['Availability Loss'] = results['Downtime (sec)'] / APPROVED_CT
+    results['Slow Cycle Loss'] = df_valid['parts_loss'].sum()
+    results['Efficiency Gain'] = df_valid['parts_gain'].sum()
     results['Gap'] = results['Optimal Output'] - results['Actual Output']
-    
-    # Slow Cycle Loss
-    slow_limit = APPROVED_CT * (1 + SLOW_TOLERANCE)
-    df_slow = df_valid[df_valid['Actual CT'] > slow_limit]
-    if not df_slow.empty:
-        slow_loss_series = ((df_slow['Actual CT'] - APPROVED_CT) / APPROVED_CT) * df_slow['Working Cavities']
-        results['Slow Cycle Loss'] = slow_loss_series.sum()
-    else:
-        results['Slow Cycle Loss'] = 0
-        
-    # Efficiency Gain
-    fast_limit = APPROVED_CT * (1 - FAST_TOLERANCE)
-    df_fast = df_valid[df_valid['Actual CT'] < fast_limit]
-    if not df_fast.empty:
-        gain_series = ((APPROVED_CT - df_fast['Actual CT']) / APPROVED_CT) * df_fast['Working Cavities']
-        results['Efficiency Gain'] = gain_series.sum()
-    else:
-        results['Efficiency Gain'] = 0
 
-    # Good Shots
-    df_good = df_valid[(df_valid['Actual CT'] >= fast_limit) & (df_valid['Actual CT'] <= slow_limit)]
-    results['Good Shots'] = len(df_good)
+    # E. Quality
+    results['Good Shots'] = df_valid['is_good'].sum()
+
+    # F. Target
+    results['Target OEE'] = target_oee_perc
+    results['Target Output'] = results['Optimal Output'] * (target_oee_perc / 100.0)
+
+    # G. OEE Percentage Metrics
+    # Avoid division by zero if run time is 0
+    if results['Total Run Time (sec)'] > 0:
+        results['Availability %'] = results['Actual Cycle Time Total (sec)'] / results['Total Run Time (sec)']
+    else:
+        results['Availability %'] = 0
+        
+    if results['Actual Cycle Time Total (sec)'] > 0:
+        results['Performance %'] = (APPROVED_CT * results['VALID SHOTS']) / results['Actual Cycle Time Total (sec)']
+    else:
+        results['Performance %'] = 0
+
+    if results['VALID SHOTS'] > 0:
+        results['Quality %'] = results['Good Shots'] / results['VALID SHOTS']
+    else:
+        results['Quality %'] = 0
+        
+    results['OEE %'] = results['Availability %'] * results['Performance %'] * results['Quality %']
+
+    # --- 8. Calculate Hourly Aggregates (for Chart) ---
+    df_hourly = pd.DataFrame()
+    df_valid_indexed = df_valid.set_index('SHOT TIME')
+    df_prod_indexed = df_production_only.set_index('SHOT TIME')
+
+    # Sum up hourly components
+    df_hourly['Actual Output'] = df_valid_indexed['actual_output'].resample('H').sum()
+    df_hourly['Slow Cycle Loss'] = df_valid_indexed['parts_loss'].resample('H').sum()
+    df_hourly['Efficiency Gain'] = df_valid_indexed['parts_gain'].resample('H').sum()
     
-    # E. Target Calculations
-    results['Target OEE'] = target_oee_perc # Store as percentage
-    results['Target Output'] = results['Optimal Output'] * TARGET_OEE
+    # Calculate hourly runtime (max-min)
+    hourly_runtime = df_prod_indexed['Actual CT'].resample('H').apply(
+        lambda x: (x.index.max() - x.index.min()).total_seconds() if not x.empty else 0
+    )
+    # Add back the last cycle time for a more accurate hourly "run"
+    hourly_last_ct = df_prod_indexed['Actual CT'].resample('H').last().fillna(0)
+    hourly_runtime = hourly_runtime + hourly_last_ct
     
-    # --- 7. Format and Return Results ---
+    df_hourly['Hourly Optimal Output'] = (hourly_runtime / APPROVED_CT) * max_cavities
+
+    # Reset index to make 'Hour' a column for Altair
+    df_hourly = df_hourly.reset_index().rename(columns={'SHOT TIME': 'Hour'})
     
-    # Convert dictionary to a Series for a clean data table
-    final_results = pd.Series(results, name="Value")
-    final_results.index.name = "Metric"
+    # --- 9. Format and Return Results ---
+    final_results = pd.Series(results)
     
-    return final_results
+    return final_results, df_hourly
 
 # ==================================================================
 #                       STREAMLIT APP LAYOUT
@@ -193,7 +216,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("Capacity Risk Calculator (Phase 1)")
+st.title("Capacity Risk Dashboard (Phase 1)")
 
 # --- Sidebar for Inputs ---
 st.sidebar.header("Configuration")
@@ -204,7 +227,7 @@ st.sidebar.markdown("---")
 
 toggle_filter = st.sidebar.toggle(
     "Remove Maintenance/Warehouse Shots", 
-    value=False,
+    value=True, # Default to ON, as per our test
     help="If ON, all calculations will exclude shots where 'Plant Area' is 'Maintenance' or 'Warehouse'."
 )
 
@@ -216,31 +239,30 @@ default_cavities = st.sidebar.number_input(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("Tolerance & Targets")
+st.sidebar.subheader("Quality Tolerance & Targets")
 
 slow_tol_perc = st.sidebar.slider(
-    "Slow Tolerance %", 
-    min_value=0.0, 
-    max_value=100.0, 
-    value=5.0, 
+    "Slow Tolerance % (for Quality)", 
+    min_value=0.0, max_value=100.0, 
+    value=5.0, # New Default
     step=0.5,
-    format="%.1f%%"
+    format="%.1f%%",
+    help="Defines the *upper* band for a 'Good Shot' (e.g., 5% over ACT)."
 )
 
 fast_tol_perc = st.sidebar.slider(
-    "Fast Tolerance %", 
-    min_value=0.0, 
-    max_value=100.0, 
-    value=10.0, 
+    "Fast Tolerance % (for Quality)", 
+    min_value=0.0, max_value=100.0, 
+    value=5.0, # New Default
     step=0.5,
-    format="%.1f%%"
+    format="%.1f%%",
+    help="Defines the *lower* band for a 'Good Shot' (e.g., 5% under ACT)."
 )
 
 target_oee_perc = st.sidebar.slider(
     "Target OEE", 
-    min_value=0.0, 
-    max_value=100.0, 
-    value=100.0, 
+    min_value=0.0, max_value=100.0, 
+    value=85.0, # More realistic default
     step=1.0,
     format="%.0f%%"
 )
@@ -256,37 +278,119 @@ if uploaded_file is not None:
         
         # --- Run Calculation ---
         with st.spinner("Calculating Capacity Risk..."):
-            try:
-                results_series = calculate_capacity_risk(
-                    df_raw, 
-                    toggle_filter, 
-                    default_cavities, 
-                    slow_tol_perc, 
-                    fast_tol_perc, 
-                    target_oee_perc
+            
+            results_series, df_hourly = calculate_capacity_risk(
+                df_raw, 
+                toggle_filter, 
+                default_cavities, 
+                slow_tol_perc, 
+                fast_tol_perc, 
+                target_oee_perc
+            )
+            
+            if results_series is not None and not results_series.empty:
+                
+                # --- 1. Metrics Dashboard ---
+                st.header("Daily Metrics Dashboard")
+                
+                # --- Top Level Metrics ---
+                col1, col2, col3 = st.columns(3)
+                col1.metric(
+                    "Actual Output (Parts)", 
+                    f"{results_series.get('Actual Output', 0):,.0f}"
+                )
+                col2.metric(
+                    "Target Output (Parts)", 
+                    f"{results_series.get('Target Output', 0):,.0f}",
+                    f"{results_series.get('Target OEE', 0):.0f}% of Optimal"
+                )
+                col3.metric(
+                    "Gap to Optimal (Parts)", 
+                    f"{results_series.get('Gap', 0):,.0f}"
                 )
                 
-                if results_series is not None:
-                    # --- Display Results Table ---
-                    st.header("Capacity Risk Data Table")
-                    
-                    # Format the Series into a nice DataFrame for display
-                    results_df = results_series.to_frame(name="Value")
-                    
-                    # Apply number formatting
-                    st.dataframe(
-                        results_df.style.format("{:,.2f}", na_rep="N/A"),
-                        use_container_width=True
-                    )
-                    
-                    # --- Display Raw Data (optional) ---
-                    with st.expander("Show Loaded & Standardized Raw Data"):
-                        # Re-load for a clean view, or show the processed df
-                        # For simplicity, we'll just show the head() of the raw file
-                        st.dataframe(df_raw.head(100))
+                st.divider()
 
-            except Exception as e:
-                st.error(f"An unexpected error occurred during calculation: {e}")
+                # --- OEE Metrics ---
+                colA, colB, colC, colD = st.columns(4)
+                colA.metric(
+                    "Availability", 
+                    f"{results_series.get('Availability %', 0):.1%}"
+                )
+                colB.metric(
+                    "Performance", 
+                    f"{results_series.get('Performance %', 0):.1%}"
+                )
+                colC.metric(
+                    "Quality (Good Shots)", 
+                    f"{results_series.get('Quality %', 0):.1%}"
+                )
+                colD.metric(
+                    "OEE", 
+                    f"{results_series.get('OEE %', 0):.1%}",
+                    f"{results_series.get('OEE %', 0) - (target_oee_perc/100.0):.1%}"
+                )
+
+                # --- 2. Hourly Chart ---
+                st.header("Hourly Performance Breakdown")
+
+                # Melt the dataframe for stacking
+                df_melted = df_hourly.melt(
+                    id_vars=['Hour', 'Hourly Optimal Output', 'Efficiency Gain'],
+                    value_vars=['Actual Output', 'Slow Cycle Loss'],
+                    var_name='Metric',
+                    value_name='Value'
+                )
+
+                # Base chart for stacking
+                base = alt.Chart(df_melted).encode(
+                    x=alt.X('Hour:T', axis=alt.Axis(title='Hour of Day', format="%H:00")),
+                    y=alt.Y('Value:Q', axis=alt.Axis(title='Parts')),
+                    color=alt.Color('Metric:N', scale={'domain': ['Actual Output', 'Slow Cycle Loss'],
+                                                      'range': ['#4e79a7', '#e15759']}), # Blue, Red
+                    tooltip=['Hour:T', 'Metric:N', 'Value:Q']
+                )
+
+                # Stacked bars
+                bar_chart = base.mark_bar().properties(
+                    title="Hourly Production vs. Loss"
+                )
+                
+                # Line chart for Optimal Output
+                line_chart = alt.Chart(df_hourly).mark_line(color='green', strokeDash=[5,5]).encode(
+                    x=alt.X('Hour:T'),
+                    y=alt.Y('Hourly Optimal Output:Q', axis=alt.Axis(title='Hourly Optimal Output', titleColor='green')),
+                    tooltip=[alt.Tooltip('Hour:T'), alt.Tooltip('Hourly Optimal Output:Q', title='Hourly Optimal')]
+                ).properties(
+                    title="Hourly Optimal Output (Right Axis)"
+                )
+
+                # Combine the charts with independent Y-axes
+                final_chart = alt.layer(bar_chart, line_chart).resolve_scale(
+                    y='independent'
+                ).interactive()
+                
+                st.altair_chart(final_chart, use_container_width=True)
+
+                # --- 3. Full Data Table (Open by Default) ---
+                st.header("Full Daily Report")
+                
+                # Format the Series into a nice DataFrame for display
+                results_df = results_series.to_frame(name="Value")
+                
+                # Apply number formatting
+                st.dataframe(
+                    results_df.style.format(
+                        {
+                            "Value": lambda x: f"{x:,.1%}" if "%" in results_df.loc[x.name].name else f"{x:,.2f}"
+                        },
+                        na_rep="N/A"
+                    ),
+                    use_container_width=True
+                )
+
+            elif results_series is not None:
+                st.warning("No valid data was found after filtering. Cannot display results.")
 
 else:
     st.info("Please upload a data file to begin.")
