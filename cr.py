@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import altair as alt
+import plotly.graph_objects as go
 
 # ==================================================================
 #                       DATA CALCULATION
@@ -165,6 +165,8 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, target_outp
         return None
 
     final_df = pd.DataFrame(daily_results_list)
+    # --- IMPORTANT: Convert Date to datetime for resampling ---
+    final_df['Date'] = pd.to_datetime(final_df['Date'])
     final_df = final_df.set_index('Date') # Set Date as the index
     
     return final_df
@@ -185,6 +187,14 @@ st.title("Capacity Risk Report")
 st.sidebar.header("Configuration")
 
 uploaded_file = st.sidebar.file_uploader("Upload Raw Data File (CSV or Excel)", type=["csv", "xlsx", "xls"])
+
+# --- NEW: Data Frequency Selector ---
+data_frequency = st.sidebar.radio(
+    "Select Graph Frequency",
+    ['Daily', 'Weekly', 'Monthly'],
+    index=0, # Default to Daily
+    horizontal=True
+)
 
 st.sidebar.markdown("---")
 
@@ -235,61 +245,87 @@ if uploaded_file is not None:
             
             if results_df is not None and not results_df.empty:
                 
-                # --- NEW: Daily Performance Chart ---
-                st.header("Daily Performance Breakdown")
+                # --- NEW: Aggregate data based on frequency selection ---
+                if data_frequency == 'Weekly':
+                    # Resample by week (summing all columns)
+                    # 'W' stands for Weekly, ending on Sunday
+                    agg_df = results_df.resample('W').sum()
+                    chart_title = "Weekly Output & Losses vs. Optimal Output"
+                    xaxis_title = "Week"
+                    display_df = agg_df
+                elif data_frequency == 'Monthly':
+                    # Resample by month end (summing all columns)
+                    agg_df = results_df.resample('ME').sum()
+                    chart_title = "Monthly Output & Losses vs. Optimal Output"
+                    xaxis_title = "Month"
+                    display_df = agg_df
+                else: # Daily
+                    display_df = results_df # Use the original daily df
+                    chart_title = "Daily Output & Losses vs. Optimal Output"
+                    xaxis_title = "Date"
                 
-                # Prepare data for charting
-                chart_df = results_df.reset_index()
+                chart_df = display_df.reset_index()
+                # --- END NEW LOGIC ---
+
+                # --- Performance Breakdown Chart (using Plotly) ---
+                st.header(f"{data_frequency} Performance Breakdown")
                 
-                # Melt for stacking
-                df_melted = chart_df.melt(
-                    id_vars=['Date'],
-                    value_vars=['Actual Output', 'Availability Loss', 'Slow Cycle Loss'],
-                    var_name='Metric',
-                    value_name='Parts'
+                # Create the figure with a secondary y-axis
+                fig = go.Figure()
+
+                # Add stacked bars for Actual Output and Losses
+                fig.add_trace(go.Bar(
+                    x=chart_df['Date'],
+                    y=chart_df['Actual Output'],
+                    name='Actual Output',
+                    marker_color='#4e79a7' # Blue
+                ))
+                fig.add_trace(go.Bar(
+                    x=chart_df['Date'],
+                    y=chart_df['Availability Loss'],
+                    name='Availability Loss',
+                    marker_color='#f28e2b' # Orange
+                ))
+                fig.add_trace(go.Bar(
+                    x=chart_df['Date'],
+                    y=chart_df['Slow Cycle Loss'],
+                    name='Slow Cycle Loss',
+                    marker_color='#e15759' # Red
+                ))
+
+                # Add line chart for Optimal Output on secondary y-axis
+                fig.add_trace(go.Scatter(
+                    x=chart_df['Date'],
+                    y=chart_df['Optimal Output'],
+                    name='Optimal Output',
+                    mode='lines+markers',
+                    line=dict(color='black', dash='dash'),
+                    yaxis='y2' # Assign to the secondary y-axis
+                ))
+
+                # Update layout
+                fig.update_layout(
+                    barmode='stack',
+                    title=chart_title, # Use new dynamic title
+                    xaxis_title=xaxis_title, # Use new dynamic axis label
+                    yaxis_title='Parts (Output & Loss)',
+                    yaxis2=dict(
+                        title='Optimal Output (Parts)',
+                        overlaying='y',
+                        side='right'
+                    ),
+                    legend_title='Metric',
+                    hovermode="x unified"
                 )
 
-                # Base chart
-                base = alt.Chart(df_melted).encode(
-                    x=alt.X('Date:T', axis=alt.Axis(title='Date')),
-                    y=alt.Y('Parts:Q', axis=alt.Axis(title='Parts')),
-                    color=alt.Color('Metric:N', scale={
-                        'domain': ['Actual Output', 'Availability Loss', 'Slow Cycle Loss'],
-                        'range': ['#4e79a7', '#f28e2b', '#e15759'] # Blue, Orange, Red
-                    }),
-                    tooltip=['Date:T', 'Metric:N', 'Parts:Q']
-                )
-
-                # Stacked bars
-                bar_chart = base.mark_bar().properties(
-                    title="Daily Output & Losses"
-                )
-
-                # Line chart for Optimal Output
-                line_chart = alt.Chart(chart_df).mark_line(
-                    color='black', 
-                    strokeDash=[5,5],
-                    point=True
-                ).encode(
-                    x=alt.X('Date:T'),
-                    y=alt.Y('Optimal Output:Q', axis=alt.Axis(title='Optimal Output')),
-                    tooltip=[alt.Tooltip('Date:T'), alt.Tooltip('Optimal Output:Q', format=',.0f')]
-                )
-
-                # Combine
-                final_chart = alt.layer(bar_chart, line_chart).resolve_scale(
-                    y='independent' # Use independent Y-axes
-                ).interactive()
-
-                st.altair_chart(final_chart, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True)
                 
                 # --- Full Data Table (Open by Default) ---
-                st.header("Full Daily Report")
+                st.header(f"Full {data_frequency} Report")
                 
-                # We no longer transpose (.T)
-                # We use .style.format() for clean formatting of the DataFrame
+                # Display the aggregated dataframe
                 st.dataframe(
-                    results_df.style.format("{:,.2f}"),
+                    display_df.style.format("{:,.2f}"),
                     use_container_width=True
                 )
 
