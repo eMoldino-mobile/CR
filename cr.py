@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import altair as alt
 
 # ==================================================================
 #                       DATA CALCULATION
@@ -26,17 +27,16 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, target_outp
     """
     Main function to process the raw DataFrame and calculate all Capacity Risk fields
     using the final "Net Performance" logic.
+    
+    This version groups the calculations by day.
     """
     
     # --- 1. Standardize and Prepare Data ---
     df = df_raw.copy()
-    # Define standard column names we expect
     col_map = {
         'SHOT TIME': 'SHOT TIME', 'APPROVED CT': 'Approved CT', 'ACTUAL CT': 'Actual CT',
         'Working Cavities': 'Working Cavities', 'Plant Area': 'Plant Area'
     }
-    
-    # Find and rename columns, ignoring case/spacing
     rename_dict = {}
     for col in df.columns:
         for standard_name in col_map.values():
@@ -58,18 +58,16 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, target_outp
         st.info(f"'Working Cavities' column not found. Using default value: {default_cavities}")
         df['Working Cavities'] = default_cavities
     else:
-        # Default missing cavity data to 1
         df['Working Cavities'].fillna(1, inplace=True)
 
     if 'Plant Area' not in df.columns:
         if toggle_filter:
             st.warning("'Plant Area' column not found. Cannot apply Maintenance/Warehouse filter.")
-            toggle_filter = False # Disable the toggle if column is missing
-        df['Plant Area'] = 'Production' # Assign a default value
+            toggle_filter = False 
+        df['Plant Area'] = 'Production'
     else:
         df['Plant Area'].fillna('Production', inplace=True)
 
-    # Convert data types
     try:
         df['SHOT TIME'] = pd.to_datetime(df['SHOT TIME'])
         df['Actual CT'] = pd.to_numeric(df['Actual CT'])
@@ -89,82 +87,87 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, target_outp
         st.error("Error: No 'Production' data found after filtering.")
         return None
 
-    # Create the final 'valid' dataframe (for cycle calcs)
-    df_valid = df_production_only[df_production_only['Actual CT'] < 999.9].copy()
-
-    if df_valid.empty:
-        st.warning("Warning: No valid shots found (all shots >= 999.9 sec).")
-        # Create empty results to avoid crashing
-        return pd.Series(dtype=float)
-
-    # --- 5. Get Configuration Values ---
-    try:
-        # Get the single, consistent Approved CT
-        APPROVED_CT = df_valid['Approved CT'].mode().iloc[0]
-    except IndexError:
-        # Fallback if df_valid is empty
-        APPROVED_CT = df_production_only['Approved CT'].mode().iloc[0]
+    # --- 5. NEW: Group by Day ---
+    # Create a 'date' column for grouping
+    df_production_only['date'] = df_production_only['SHOT TIME'].dt.date
     
-    # --- 5b. Define Performance Boundaries (for Gain/Loss calcs) ---
-    # Performance is benchmarked *only* against the Approved CT
-    PERFORMANCE_BENCHMARK = APPROVED_CT
-
-    # --- 6. Calculate Per-Shot Metrics ---
+    daily_results_list = []
     
-    # Performance Calcs (relative to APPROVED_CT)
-    df_valid['parts_gain'] = np.where(
-        df_valid['Actual CT'] < PERFORMANCE_BENCHMARK,
-        ((PERFORMANCE_BENCHMARK - df_valid['Actual CT']) / PERFORMANCE_BENCHMARK) * df_valid['Working Cavities'],
-        0
-    )
-    df_valid['parts_loss'] = np.where(
-        df_valid['Actual CT'] > PERFORMANCE_BENCHMARK,
-        ((df_valid['Actual CT'] - PERFORMANCE_BENCHMARK) / PERFORMANCE_BENCHMARK) * df_valid['Working Cavities'],
-        0
-    )
-    
-    # "Good Shots" calculation removed
-    
-    # Output Calc
-    df_valid['actual_output'] = df_valid['Working Cavities']
+    # Iterate over each day's data
+    for date, daily_df in df_production_only.groupby('date'):
+        
+        results = {}
+        results['Date'] = date
+        
+        # Create the final 'valid' dataframe (for cycle calcs)
+        df_valid = daily_df[daily_df['Actual CT'] < 999.9].copy()
 
-    # --- 7. Calculate Daily Aggregates (for Table & Metrics) ---
-    results = {}
+        if df_valid.empty:
+            # Add a row of zeros or NaNs if a day has no valid shots
+            results['Total Shots (all)'] = len(daily_df)
+            results['VALID SHOTS'] = 0
+            # ... add other keys as 0 or np.nan
+            daily_results_list.append(results)
+            continue
+
+        # --- 6. Get Daily Configuration Values ---
+        try:
+            APPROVED_CT = df_valid['Approved CT'].mode().iloc[0]
+        except IndexError:
+            APPROVED_CT = daily_df['Approved CT'].mode().iloc[0]
+        
+        PERFORMANCE_BENCHMARK = APPROVED_CT
+
+        # --- 7. Calculate Per-Shot Metrics (for this day) ---
+        df_valid['parts_gain'] = np.where(
+            df_valid['Actual CT'] < PERFORMANCE_BENCHMARK,
+            ((PERFORMANCE_BENCHMARK - df_valid['Actual CT']) / PERFORMANCE_BENCHMARK) * df_valid['Working Cavities'],
+            0
+        )
+        df_valid['parts_loss'] = np.where(
+            df_valid['Actual CT'] > PERFORMANCE_BENCHMARK,
+            ((df_valid['Actual CT'] - PERFORMANCE_BENCHMARK) / PERFORMANCE_BENCHMARK) * df_valid['Working Cavities'],
+            0
+        )
+        df_valid['actual_output'] = df_valid['Working Cavities']
+
+        # --- 8. Calculate Daily Aggregates ---
+        
+        # A. Basic Counts
+        results['Total Shots (all)'] = len(daily_df)
+        results['VALID SHOTS'] = len(df_valid)
+        results['Invalid Shots (999.9 sec)'] = results['Total Shots (all)'] - results['VALID SHOTS']
+
+        # B. Time Calculations
+        results['Total Run Time (sec)'] = (daily_df['SHOT TIME'].max() - daily_df['SHOT TIME'].min()).total_seconds()
+        results['Actual Cycle Time Total (sec)'] = df_valid['Actual CT'].sum()
+        results['Downtime (sec)'] = results['Total Run Time (sec)'] - results['Actual Cycle Time Total (sec)']
+
+        # C. Output Calculations
+        results['Actual Output'] = df_valid['actual_output'].sum()
+        max_cavities = daily_df['Working Cavities'].max()
+        results['Optimal Output'] = (results['Total Run Time (sec)'] / APPROVED_CT) * max_cavities
+
+        # D. Loss & Gap Calculations
+        results['Availability Loss'] = results['Downtime (sec)'] / APPROVED_CT
+        results['Slow Cycle Loss'] = df_valid['parts_loss'].sum()
+        results['Efficiency Gain'] = df_valid['parts_gain'].sum()
+        results['Gap'] = results['Optimal Output'] - results['Actual Output']
+
+        # F. Target
+        results['Target Output'] = results['Optimal Output'] * (target_output_perc / 100.0)
+        
+        daily_results_list.append(results)
+
+    # --- 9. Format and Return Final DataFrame ---
+    if not daily_results_list:
+        st.warning("No data found to process.")
+        return None
+
+    final_df = pd.DataFrame(daily_results_list)
+    final_df = final_df.set_index('Date') # Set Date as the index
     
-    # A. Basic Counts
-    results['Total Shots (all)'] = len(df_production_only)
-    results['VALID SHOTS'] = len(df_valid)
-    results['Invalid Shots (999.9 sec)'] = results['Total Shots (all)'] - results['VALID SHOTS']
-
-    # B. Time Calculations
-    results['Total Run Time (sec)'] = (df_production_only['SHOT TIME'].max() - df_production_only['SHOT TIME'].min()).total_seconds()
-    results['Actual Cycle Time Total (sec)'] = df_valid['Actual CT'].sum()
-    results['Downtime (sec)'] = results['Total Run Time (sec)'] - results['Actual Cycle Time Total (sec)']
-
-    # C. Output Calculations
-    results['Actual Output'] = df_valid['actual_output'].sum()
-    max_cavities = df_production_only['Working Cavities'].max()
-    results['Optimal Output'] = (results['Total Run Time (sec)'] / APPROVED_CT) * max_cavities
-
-    # D. Loss & Gap Calculations (from our new logic)
-    results['Availability Loss'] = results['Downtime (sec)'] / APPROVED_CT
-    results['Slow Cycle Loss'] = df_valid['parts_loss'].sum()
-    results['Efficiency Gain'] = df_valid['parts_gain'].sum()
-    results['Gap'] = results['Optimal Output'] - results['Actual Output']
-
-    # E. Quality
-    # "Good Shots" metric removed
-    
-    # F. Target
-    results['Target Output'] = results['Optimal Output'] * (target_output_perc / 100.0)
-
-    # --- G. OEE Percentage Metrics ---
-    # This entire section has been removed as requested by the user.
-    
-    # --- 8. Format and Return Results ---
-    final_results = pd.Series(results)
-    
-    return final_results
+    return final_df
 
 # ==================================================================
 #                       STREAMLIT APP LAYOUT
@@ -201,8 +204,6 @@ default_cavities = st.sidebar.number_input(
 st.sidebar.markdown("---")
 st.sidebar.subheader("Target")
 
-# --- Tolerance Sliders Removed ---
-
 target_output_perc = st.sidebar.slider(
     "Target Output % (of Optimal)", 
     min_value=0.0, max_value=100.0, 
@@ -224,65 +225,75 @@ if uploaded_file is not None:
         # --- Run Calculation ---
         with st.spinner("Calculating Capacity Risk..."):
             
-            # Removed df_hourly from the return
-            results_series = calculate_capacity_risk(
+            # The function now returns a DataFrame
+            results_df = calculate_capacity_risk(
                 df_raw, 
                 toggle_filter, 
                 default_cavities, 
                 target_output_perc
             )
             
-            if results_series is not None and not results_series.empty:
+            if results_df is not None and not results_df.empty:
                 
-                # --- METRICS AND CHART REMOVED ---
+                # --- NEW: Daily Performance Chart ---
+                st.header("Daily Performance Breakdown")
+                
+                # Prepare data for charting
+                chart_df = results_df.reset_index()
+                
+                # Melt for stacking
+                df_melted = chart_df.melt(
+                    id_vars=['Date'],
+                    value_vars=['Actual Output', 'Availability Loss', 'Slow Cycle Loss'],
+                    var_name='Metric',
+                    value_name='Parts'
+                )
 
+                # Base chart
+                base = alt.Chart(df_melted).encode(
+                    x=alt.X('Date:T', axis=alt.Axis(title='Date')),
+                    y=alt.Y('Parts:Q', axis=alt.Axis(title='Parts')),
+                    color=alt.Color('Metric:N', scale={
+                        'domain': ['Actual Output', 'Availability Loss', 'Slow Cycle Loss'],
+                        'range': ['#4e79a7', '#f28e2b', '#e15759'] # Blue, Orange, Red
+                    }),
+                    tooltip=['Date:T', 'Metric:N', 'Parts:Q']
+                )
+
+                # Stacked bars
+                bar_chart = base.mark_bar().properties(
+                    title="Daily Output & Losses"
+                )
+
+                # Line chart for Optimal Output
+                line_chart = alt.Chart(chart_df).mark_line(
+                    color='black', 
+                    strokeDash=[5,5],
+                    point=True
+                ).encode(
+                    x=alt.X('Date:T'),
+                    y=alt.Y('Optimal Output:Q', axis=alt.Axis(title='Optimal Output')),
+                    tooltip=[alt.Tooltip('Date:T'), alt.Tooltip('Optimal Output:Q', format=',.0f')]
+                )
+
+                # Combine
+                final_chart = alt.layer(bar_chart, line_chart).resolve_scale(
+                    y='independent' # Use independent Y-axes
+                ).interactive()
+
+                st.altair_chart(final_chart, use_container_width=True)
+                
                 # --- Full Data Table (Open by Default) ---
                 st.header("Full Daily Report")
                 
-                # Format the Series into a nice DataFrame for display
-                results_df = results_series.to_frame(name="Value")
-                
-                # --- ROBUST V2.0 FORMATTING ---
-
-                # 1. Define the metrics that should be percentages
-                # This list is now empty
-                percent_metrics = []
-                
-                # Create a copy to format and ensure it's object type for strings
-                formatted_df = results_df.astype(object)
-
-                # 2. Iterate and apply string formatting (this loop will be skipped)
-                for metric_name in percent_metrics:
-                    if metric_name in formatted_df.index:
-                        value = formatted_df.loc[metric_name, 'Value']
-                        if pd.notna(value) and isinstance(value, (int, float)):
-                            formatted_df.loc[metric_name, 'Value'] = f"{value:.1%}"
-                        elif pd.notna(value):
-                             formatted_df.loc[metric_name, 'Value'] = str(value)
-                        else:
-                            formatted_df.loc[metric_name, 'Value'] = "N/A"
-
-                # 3. Format all other numeric values
-                for idx in formatted_df.index:
-                    if idx not in percent_metrics:
-                        value = formatted_df.loc[idx, 'Value']
-                        if pd.notna(value) and isinstance(value, (int, float)):
-                            # All values are now formatted as floats
-                            formatted_df.loc[idx, 'Value'] = f"{value:,.2f}"
-                        elif pd.notna(value):
-                             formatted_df.loc[idx, 'Value'] = str(value)
-                        else:
-                            formatted_df.loc[idx, 'Value'] = "N/A"
-
-                # 4. Display the string-formatted DataFrame
-                # We also transpose it (.T) to make it horizontal
+                # We no longer transpose (.T)
+                # We use .style.format() for clean formatting of the DataFrame
                 st.dataframe(
-                    formatted_df.T,
+                    results_df.style.format("{:,.2f}"),
                     use_container_width=True
                 )
-                # --- END NEW FORMATTING ---
 
-            elif results_series is not None:
+            elif results_df is not None:
                 st.warning("No valid data was found after filtering. Cannot display results.")
 
 else:
