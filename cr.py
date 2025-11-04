@@ -273,34 +273,38 @@ if uploaded_file is not None:
                 # Create the figure with a secondary y-axis
                 fig = go.Figure()
 
-                # --- STACKED BAR CHART (Positive Values) ---
-                fig.add_trace(go.Bar(
+                # --- NEW: STACKED AREA CHART (Positive Values) ---
+                # We create cumulative columns for stacking
+                chart_df['Actual_plus_Slow'] = chart_df['Actual Output'] + chart_df['Slow Cycle Loss']
+                chart_df['Total_Stack'] = chart_df['Actual_plus_Slow'] + chart_df['Availability Loss']
+
+                fig.add_trace(go.Scatter(
                     x=chart_df['Date'],
                     y=chart_df['Actual Output'],
                     name='Actual Output',
-                    marker_color='green'
+                    mode='lines',
+                    fill='tozeroy', # Fill down to zero
+                    line=dict(color='green')
                 ))
-                fig.add_trace(go.Bar(
+                fig.add_trace(go.Scatter(
                     x=chart_df['Date'],
-                    y=chart_df['Availability Loss'],
-                    name='Availability Loss',
-                    marker_color='red'
-                ))
-                fig.add_trace(go.Bar(
-                    x=chart_df['Date'],
-                    y=chart_df['Slow Cycle Loss'],
+                    y=chart_df['Actual_plus_Slow'],
                     name='Slow Cycle Loss',
-                    marker_color='gold'
+                    mode='lines',
+                    fill='tonexty', # Fill to the trace below
+                    line=dict(color='gold')
+                ))
+                fig.add_trace(go.Scatter(
+                    x=chart_df['Date'],
+                    y=chart_df['Total_Stack'],
+                    name='Availability Loss',
+                    mode='lines',
+                    fill='tonexty', # Fill to the trace below
+                    line=dict(color='red')
                 ))
                 
-                # --- NEW: ADD EFFICIENCY GAIN AS A NEGATIVE BAR ---
-                # We multiply by -1 so it stacks "down"
-                fig.add_trace(go.Bar(
-                    x=chart_df['Date'],
-                    y=chart_df['Efficiency Gain'] * -1, 
-                    name='Efficiency Gain (Negative)',
-                    marker_color='limegreen' # A light, distinct green
-                ))
+                # --- Efficiency Gain bar chart (Negative) is removed to match screenshot style ---
+                # The data is still in the table below.
 
                 # --- OVERLAY LINES (BOTH ON PRIMARY Y-AXIS) ---
                 fig.add_trace(go.Scatter(
@@ -308,8 +312,7 @@ if uploaded_file is not None:
                     y=chart_df['Target Output'], 
                     name='Target Output', 
                     mode='lines',
-                    line=dict(color='blue', dash='dash'), 
-                    # yaxis='y2' REMOVED
+                    line=dict(color='black', dash='dash'), # Swapped to black
                 ))
                 
                 fig.add_trace(go.Scatter(
@@ -317,13 +320,12 @@ if uploaded_file is not None:
                     y=chart_df['Optimal Output'], 
                     name='Optimal Output (100%)', 
                     mode='lines',
-                    line=dict(color='black', dash='dot'), 
-                    # yaxis='y2' REMOVED
+                    line=dict(color='blue', dash='dot'), # CHANGED to blue
                 ))
 
                 # --- LAYOUT UPDATE ---
                 fig.update_layout(
-                    barmode='stack', # This handles pos/neg stacking
+                    # barmode='stack', # No longer a bar chart
                     title=chart_title, 
                     xaxis_title=xaxis_title,
                     yaxis_title='Parts (Output, Loss & Targets)', # CHANGED
