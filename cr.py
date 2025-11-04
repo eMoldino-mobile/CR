@@ -273,13 +273,8 @@ if uploaded_file is not None:
                 # Create the figure
                 fig = go.Figure()
 
-                # --- CLUSTERED BAR CHART (Positive Values) ---
-                fig.add_trace(go.Bar(
-                    x=chart_df['Date'],
-                    y=chart_df['Actual Output'],
-                    name='Actual Output',
-                    marker_color='green'
-                ))
+                # --- STACKED BAR CHART (Positive Values) ---
+                # --- RE-ORDERED BARS ---
                 fig.add_trace(go.Bar(
                     x=chart_df['Date'],
                     y=chart_df['Availability Loss'],
@@ -292,15 +287,13 @@ if uploaded_file is not None:
                     name='Slow Cycle Loss',
                     marker_color='gold'
                 ))
-                
-                # --- NEW: Add Target Output as a cluster bar ---
                 fig.add_trace(go.Bar(
                     x=chart_df['Date'],
-                    y=chart_df['Target Output'],
-                    name='Target Output',
-                    marker_color='blue'
+                    y=chart_df['Actual Output'],
+                    name='Actual Output',
+                    marker_color='green'
                 ))
-                
+                                
                 # --- EFFICIENCY GAIN AS A NEGATIVE BAR ---
                 # We multiply by -1 so it stacks "down"
                 fig.add_trace(go.Bar(
@@ -310,11 +303,26 @@ if uploaded_file is not None:
                     marker_color='cornflowerblue' # A distinct, non-green color
                 ))
 
-                # --- OVERLAY LINES REMOVED ---
+                # --- OVERLAY LINES (BACK ON PRIMARY Y-AXIS) ---
+                fig.add_trace(go.Scatter(
+                    x=chart_df['Date'],
+                    y=chart_df['Target Output'], 
+                    name='Target Output', 
+                    mode='lines',
+                    line=dict(color='blue', dash='dash'), # CHANGED to blue
+                ))
+                
+                fig.add_trace(go.Scatter(
+                    x=chart_df['Date'],
+                    y=chart_df['Optimal Output'], 
+                    name='Optimal Output (100%)', 
+                    mode='lines',
+                    line=dict(color='darkgrey', dash='dot'), # CHANGED to darkgrey
+                ))
                 
                 # --- LAYOUT UPDATE ---
                 fig.update_layout(
-                    barmode='group', # CHANGED to 'group'
+                    barmode='stack', # CHANGED back to 'stack'
                     title=chart_title, 
                     xaxis_title=xaxis_title,
                     yaxis_title='Parts (Output, Loss & Targets)',
@@ -338,4 +346,5 @@ if uploaded_file is not None:
 
 else:
     st.info("Please upload a data file to begin.")
+
 
