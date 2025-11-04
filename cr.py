@@ -270,41 +270,38 @@ if uploaded_file is not None:
                 # --- Performance Breakdown Chart (using Plotly) ---
                 st.header(f"{data_frequency} Performance Breakdown")
                 
-                # Create the figure with a secondary y-axis
+                # Create the figure
                 fig = go.Figure()
 
-                # --- NEW: STACKED AREA CHART (Positive Values) ---
-                # We create cumulative columns for stacking
-                chart_df['Actual_plus_Slow'] = chart_df['Actual Output'] + chart_df['Slow Cycle Loss']
-                chart_df['Total_Stack'] = chart_df['Actual_plus_Slow'] + chart_df['Availability Loss']
-
-                fig.add_trace(go.Scatter(
+                # --- STACKED BAR CHART (Positive Values) ---
+                # Reverting to go.Bar
+                fig.add_trace(go.Bar(
                     x=chart_df['Date'],
                     y=chart_df['Actual Output'],
                     name='Actual Output',
-                    mode='lines',
-                    fill='tozeroy', # Fill down to zero
-                    line=dict(color='green')
+                    marker_color='green'
                 ))
-                fig.add_trace(go.Scatter(
+                fig.add_trace(go.Bar(
                     x=chart_df['Date'],
-                    y=chart_df['Actual_plus_Slow'],
-                    name='Slow Cycle Loss',
-                    mode='lines',
-                    fill='tonexty', # Fill to the trace below
-                    line=dict(color='gold')
-                ))
-                fig.add_trace(go.Scatter(
-                    x=chart_df['Date'],
-                    y=chart_df['Total_Stack'],
+                    y=chart_df['Availability Loss'],
                     name='Availability Loss',
-                    mode='lines',
-                    fill='tonexty', # Fill to the trace below
-                    line=dict(color='red')
+                    marker_color='red'
+                ))
+                fig.add_trace(go.Bar(
+                    x=chart_df['Date'],
+                    y=chart_df['Slow Cycle Loss'],
+                    name='Slow Cycle Loss',
+                    marker_color='gold'
                 ))
                 
-                # --- Efficiency Gain bar chart (Negative) is removed to match screenshot style ---
-                # The data is still in the table below.
+                # --- EFFICIENCY GAIN AS A NEGATIVE BAR ---
+                # We multiply by -1 so it stacks "down"
+                fig.add_trace(go.Bar(
+                    x=chart_df['Date'],
+                    y=chart_df['Efficiency Gain'] * -1, 
+                    name='Efficiency Gain (Negative)',
+                    marker_color='cornflowerblue' # A distinct, non-green color
+                ))
 
                 # --- OVERLAY LINES (BOTH ON PRIMARY Y-AXIS) ---
                 fig.add_trace(go.Scatter(
@@ -312,7 +309,7 @@ if uploaded_file is not None:
                     y=chart_df['Target Output'], 
                     name='Target Output', 
                     mode='lines',
-                    line=dict(color='black', dash='dash'), # Swapped to black
+                    line=dict(color='black', dash='dash'), 
                 ))
                 
                 fig.add_trace(go.Scatter(
@@ -320,16 +317,15 @@ if uploaded_file is not None:
                     y=chart_df['Optimal Output'], 
                     name='Optimal Output (100%)', 
                     mode='lines',
-                    line=dict(color='blue', dash='dot'), # CHANGED to blue
+                    line=dict(color='blue', dash='dot'), 
                 ))
 
                 # --- LAYOUT UPDATE ---
                 fig.update_layout(
-                    # barmode='stack', # No longer a bar chart
+                    barmode='stack', # Changed back to stack for bars
                     title=chart_title, 
                     xaxis_title=xaxis_title,
-                    yaxis_title='Parts (Output, Loss & Targets)', # CHANGED
-                    # yaxis2 block removed
+                    yaxis_title='Parts (Output, Loss & Targets)',
                     legend_title='Metric',
                     hovermode="x unified"
                 )
