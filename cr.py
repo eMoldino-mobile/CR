@@ -26,7 +26,7 @@ def load_data(uploaded_file):
 def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, target_output_perc):
     """
     Main function to process the raw DataFrame and calculate all Capacity Risk fields
-    using the final "Net Performance" logic.
+    using the "Gross Loss" model.
     
     This version groups the calculations by day.
     """
@@ -119,11 +119,8 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, target_outp
         PERFORMANCE_BENCHMARK = APPROVED_CT
 
         # --- 7. Calculate Per-Shot Metrics (for this day) ---
-        df_valid['parts_gain'] = np.where(
-            df_valid['Actual CT'] < PERFORMANCE_BENCHMARK,
-            ((PERFORMANCE_BENCHMARK - df_valid['Actual CT']) / PERFORMANCE_BENCHMARK) * df_valid['Working Cavities'],
-            0
-        )
+        # REMOVED 'parts_gain' calculation
+        
         df_valid['parts_loss'] = np.where(
             df_valid['Actual CT'] > PERFORMANCE_BENCHMARK,
             ((df_valid['Actual CT'] - PERFORMANCE_BENCHMARK) / PERFORMANCE_BENCHMARK) * df_valid['Working Cavities'],
@@ -149,11 +146,14 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, target_outp
         results['Optimal Output'] = (results['Total Run Time (sec)'] / APPROVED_CT) * max_cavities
 
         # D. Loss & Gap Calculations
-        results['Availability Loss'] = results['Downtime (sec)'] / APPROVED_CT
+        # --- LOGIC FIX: Availability Loss must be multiplied by max_cavities ---
+        results['Availability Loss'] = (results['Downtime (sec)'] / APPROVED_CT) * max_cavities
         results['Slow Cycle Loss'] = df_valid['parts_loss'].sum()
-        results['Efficiency Gain'] = df_valid['parts_gain'].sum()
-        results['Gap'] = results['Optimal Output'] - results['Actual Output']
-
+        # REMOVED 'Efficiency Gain'
+        
+        # --- LOGIC FIX: Gap is now the sum of the two gross losses ---
+        results['Gap'] = results['Availability Loss'] + results['Slow Cycle Loss']
+        
         # F. Target
         results['Target Output'] = results['Optimal Output'] * (target_output_perc / 100.0)
         
@@ -168,6 +168,17 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, target_outp
     # --- IMPORTANT: Convert Date to datetime for resampling ---
     final_df['Date'] = pd.to_datetime(final_df['Date'])
     final_df = final_df.set_index('Date') # Set Date as the index
+    
+    # Re-order columns for clarity
+    column_order = [
+        'Total Shots (all)', 'VALID SHOTS', 'Invalid Shots (999.9 sec)',
+        'Total Run Time (sec)', 'Actual Cycle Time Total (sec)', 'Downtime (sec)',
+        'Actual Output', 'Availability Loss', 'Slow Cycle Loss', 'Gap',
+        'Optimal Output', 'Target Output'
+    ]
+    # Filter for columns that actually exist (in case one was skipped)
+    final_columns = [col for col in column_order if col in final_df.columns]
+    final_df = final_df[final_columns]
     
     return final_df
 
@@ -250,18 +261,18 @@ if uploaded_file is not None:
                     # Resample by week (summing all columns)
                     # 'W' stands for Weekly, ending on Sunday
                     agg_df = results_df.resample('W').sum()
-                    chart_title = "Weekly Output & Losses vs. Target Output"
+                    chart_title = "Weekly Capacity Report"
                     xaxis_title = "Week"
                     display_df = agg_df
                 elif data_frequency == 'Monthly':
                     # Resample by month end (summing all columns)
                     agg_df = results_df.resample('ME').sum()
-                    chart_title = "Monthly Output & Losses vs. Target Output"
+                    chart_title = "Monthly Capacity Report"
                     xaxis_title = "Month"
                     display_df = agg_df
                 else: # Daily
                     display_df = results_df # Use the original daily df
-                    chart_title = "Daily Output & Losses vs. Target Output"
+                    chart_title = "Daily Capacity Report"
                     xaxis_title = "Date"
                 
                 chart_df = display_df.reset_index()
@@ -273,8 +284,13 @@ if uploaded_file is not None:
                 # Create the figure
                 fig = go.Figure()
 
-                # --- STACKED BAR CHART (Positive Values) ---
-                # --- RE-ORDERED BARS ---
+                # --- NEW "GROSS LOSS" STACKED BAR CHART ---
+                fig.add_trace(go.Bar(
+                    x=chart_df['Date'],
+                    y=chart_df['Actual Output'],
+                    name='Actual Output',
+                    marker_color='green'
+                ))
                 fig.add_trace(go.Bar(
                     x=chart_df['Date'],
                     y=chart_df['Availability Loss'],
@@ -287,29 +303,16 @@ if uploaded_file is not None:
                     name='Slow Cycle Loss',
                     marker_color='gold'
                 ))
-                fig.add_trace(go.Bar(
-                    x=chart_df['Date'],
-                    y=chart_df['Actual Output'],
-                    name='Actual Output',
-                    marker_color='green'
-                ))
                                 
-                # --- EFFICIENCY GAIN AS A NEGATIVE BAR ---
-                # We multiply by -1 so it stacks "down"
-                fig.add_trace(go.Bar(
-                    x=chart_df['Date'],
-                    y=chart_df['Efficiency Gain'] * -1, 
-                    name='Efficiency Gain (Negative)',
-                    marker_color='cornflowerblue' # A distinct, non-green color
-                ))
+                # --- EFFICIENCY GAIN REMOVED ---
 
-                # --- OVERLAY LINES (BACK ON PRIMARY Y-AXIS) ---
+                # --- OVERLAY LINES (BOTH ON PRIMARY Y-AXIS) ---
                 fig.add_trace(go.Scatter(
                     x=chart_df['Date'],
                     y=chart_df['Target Output'], 
                     name='Target Output', 
                     mode='lines',
-                    line=dict(color='blue', dash='dash'), # CHANGED to blue
+                    line=dict(color='blue', dash='dash'), 
                 ))
                 
                 fig.add_trace(go.Scatter(
@@ -317,15 +320,15 @@ if uploaded_file is not None:
                     y=chart_df['Optimal Output'], 
                     name='Optimal Output (100%)', 
                     mode='lines',
-                    line=dict(color='darkgrey', dash='dot'), # CHANGED to darkgrey
+                    line=dict(color='darkgrey', dash='dot'), 
                 ))
                 
                 # --- LAYOUT UPDATE ---
                 fig.update_layout(
-                    barmode='stack', # CHANGED back to 'stack'
+                    barmode='stack', # This is key
                     title=chart_title, 
                     xaxis_title=xaxis_title,
-                    yaxis_title='Parts (Output, Loss & Targets)',
+                    yaxis_title='Parts (Output & Loss)',
                     legend_title='Metric',
                     hovermode="x unified"
                 )
@@ -346,5 +349,4 @@ if uploaded_file is not None:
 
 else:
     st.info("Please upload a data file to begin.")
-
 
