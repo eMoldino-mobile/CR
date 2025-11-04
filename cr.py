@@ -273,46 +273,53 @@ if uploaded_file is not None:
                 # Create the figure with a secondary y-axis
                 fig = go.Figure()
 
-                # --- STACKED BAR CHART ---
-                # --- UPDATED COLORS ---
+                # --- STACKED BAR CHART (Positive Values) ---
                 fig.add_trace(go.Bar(
                     x=chart_df['Date'],
                     y=chart_df['Actual Output'],
                     name='Actual Output',
-                    marker_color='green' # CHANGED
+                    marker_color='green'
                 ))
                 fig.add_trace(go.Bar(
                     x=chart_df['Date'],
                     y=chart_df['Availability Loss'],
                     name='Availability Loss',
-                    marker_color='red' # CHANGED
+                    marker_color='red'
                 ))
                 fig.add_trace(go.Bar(
                     x=chart_df['Date'],
                     y=chart_df['Slow Cycle Loss'],
                     name='Slow Cycle Loss',
-                    marker_color='gold' # CHANGED (from e15759)
+                    marker_color='gold'
+                ))
+                
+                # --- NEW: ADD EFFICIENCY GAIN AS A NEGATIVE BAR ---
+                # We multiply by -1 so it stacks "down"
+                fig.add_trace(go.Bar(
+                    x=chart_df['Date'],
+                    y=chart_df['Efficiency Gain'] * -1, 
+                    name='Efficiency Gain (Negative)',
+                    marker_color='limegreen' # A light, distinct green
                 ))
 
                 # --- OVERLAY LINE ---
-                # --- UPDATED DATA & NAME ---
                 fig.add_trace(go.Scatter(
                     x=chart_df['Date'],
-                    y=chart_df['Target Output'], # CHANGED
-                    name='Target Output', # CHANGED
+                    y=chart_df['Target Output'], 
+                    name='Target Output', 
                     mode='lines+markers',
-                    line=dict(color='black', dash='dash'),
+                    line=dict(color='blue', dash='dash'), # CHANGED to blue
                     yaxis='y2' # Assign to the secondary y-axis
                 ))
 
                 # --- LAYOUT UPDATE ---
                 fig.update_layout(
-                    barmode='stack',
-                    title=chart_title, # Use new dynamic title
-                    xaxis_title=xaxis_title, # Use new dynamic axis label
+                    barmode='stack', # This handles pos/neg stacking
+                    title=chart_title, 
+                    xaxis_title=xaxis_title,
                     yaxis_title='Parts (Output & Loss)',
                     yaxis2=dict(
-                        title='Target Output (Parts)', # CHANGED
+                        title='Target Output (Parts)', 
                         overlaying='y',
                         side='right'
                     ),
