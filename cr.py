@@ -250,18 +250,18 @@ if uploaded_file is not None:
                     # Resample by week (summing all columns)
                     # 'W' stands for Weekly, ending on Sunday
                     agg_df = results_df.resample('W').sum()
-                    chart_title = "Weekly Output & Losses vs. Optimal Output"
+                    chart_title = "Weekly Output & Losses vs. Target Output"
                     xaxis_title = "Week"
                     display_df = agg_df
                 elif data_frequency == 'Monthly':
                     # Resample by month end (summing all columns)
                     agg_df = results_df.resample('ME').sum()
-                    chart_title = "Monthly Output & Losses vs. Optimal Output"
+                    chart_title = "Monthly Output & Losses vs. Target Output"
                     xaxis_title = "Month"
                     display_df = agg_df
                 else: # Daily
                     display_df = results_df # Use the original daily df
-                    chart_title = "Daily Output & Losses vs. Optimal Output"
+                    chart_title = "Daily Output & Losses vs. Target Output"
                     xaxis_title = "Date"
                 
                 chart_df = display_df.reset_index()
@@ -273,44 +273,46 @@ if uploaded_file is not None:
                 # Create the figure with a secondary y-axis
                 fig = go.Figure()
 
-                # Add stacked bars for Actual Output and Losses
+                # --- STACKED BAR CHART ---
+                # --- UPDATED COLORS ---
                 fig.add_trace(go.Bar(
                     x=chart_df['Date'],
                     y=chart_df['Actual Output'],
                     name='Actual Output',
-                    marker_color='#4e79a7' # Blue
+                    marker_color='green' # CHANGED
                 ))
                 fig.add_trace(go.Bar(
                     x=chart_df['Date'],
                     y=chart_df['Availability Loss'],
                     name='Availability Loss',
-                    marker_color='#f28e2b' # Orange
+                    marker_color='red' # CHANGED
                 ))
                 fig.add_trace(go.Bar(
                     x=chart_df['Date'],
                     y=chart_df['Slow Cycle Loss'],
                     name='Slow Cycle Loss',
-                    marker_color='#e15759' # Red
+                    marker_color='gold' # CHANGED (from e15759)
                 ))
 
-                # Add line chart for Optimal Output on secondary y-axis
+                # --- OVERLAY LINE ---
+                # --- UPDATED DATA & NAME ---
                 fig.add_trace(go.Scatter(
                     x=chart_df['Date'],
-                    y=chart_df['Optimal Output'],
-                    name='Optimal Output',
+                    y=chart_df['Target Output'], # CHANGED
+                    name='Target Output', # CHANGED
                     mode='lines+markers',
                     line=dict(color='black', dash='dash'),
                     yaxis='y2' # Assign to the secondary y-axis
                 ))
 
-                # Update layout
+                # --- LAYOUT UPDATE ---
                 fig.update_layout(
                     barmode='stack',
                     title=chart_title, # Use new dynamic title
                     xaxis_title=xaxis_title, # Use new dynamic axis label
                     yaxis_title='Parts (Output & Loss)',
                     yaxis2=dict(
-                        title='Optimal Output (Parts)',
+                        title='Target Output (Parts)', # CHANGED
                         overlaying='y',
                         side='right'
                     ),
