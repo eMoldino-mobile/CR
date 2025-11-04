@@ -302,14 +302,23 @@ if uploaded_file is not None:
                     marker_color='limegreen' # A light, distinct green
                 ))
 
-                # --- OVERLAY LINE ---
+                # --- OVERLAY LINES (BOTH ON PRIMARY Y-AXIS) ---
                 fig.add_trace(go.Scatter(
                     x=chart_df['Date'],
                     y=chart_df['Target Output'], 
                     name='Target Output', 
-                    mode='lines+markers',
-                    line=dict(color='blue', dash='dash'), # CHANGED to blue
-                    yaxis='y2' # Assign to the secondary y-axis
+                    mode='lines',
+                    line=dict(color='blue', dash='dash'), 
+                    # yaxis='y2' REMOVED
+                ))
+                
+                fig.add_trace(go.Scatter(
+                    x=chart_df['Date'],
+                    y=chart_df['Optimal Output'], 
+                    name='Optimal Output (100%)', 
+                    mode='lines',
+                    line=dict(color='black', dash='dot'), 
+                    # yaxis='y2' REMOVED
                 ))
 
                 # --- LAYOUT UPDATE ---
@@ -317,12 +326,8 @@ if uploaded_file is not None:
                     barmode='stack', # This handles pos/neg stacking
                     title=chart_title, 
                     xaxis_title=xaxis_title,
-                    yaxis_title='Parts (Output & Loss)',
-                    yaxis2=dict(
-                        title='Target Output (Parts)', 
-                        overlaying='y',
-                        side='right'
-                    ),
+                    yaxis_title='Parts (Output, Loss & Targets)', # CHANGED
+                    # yaxis2 block removed
                     legend_title='Metric',
                     hovermode="x unified"
                 )
