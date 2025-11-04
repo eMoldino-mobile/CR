@@ -169,16 +169,7 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, target_outp
     final_df['Date'] = pd.to_datetime(final_df['Date'])
     final_df = final_df.set_index('Date') # Set Date as the index
     
-    # Re-order columns for clarity
-    column_order = [
-        'Total Shots (all)', 'VALID SHOTS', 'Invalid Shots (999.9 sec)',
-        'Total Run Time (sec)', 'Actual Cycle Time Total (sec)', 'Downtime (sec)',
-        'Actual Output', 'Availability Loss', 'Slow Cycle Loss', 'Gap',
-        'Optimal Output', 'Target Output'
-    ]
-    # Filter for columns that actually exist (in case one was skipped)
-    final_columns = [col for col in column_order if col in final_df.columns]
-    final_df = final_df[final_columns]
+    # --- NO LONGER re-ordering columns here, will do it in main app ---
     
     return final_df
 
@@ -256,10 +247,9 @@ if uploaded_file is not None:
             
             if results_df is not None and not results_df.empty:
                 
-                # --- NEW: Aggregate data based on frequency selection ---
+                # --- Aggregate data based on frequency selection ---
                 if data_frequency == 'Weekly':
                     # Resample by week (summing all columns)
-                    # 'W' stands for Weekly, ending on Sunday
                     agg_df = results_df.resample('W').sum()
                     chart_title = "Weekly Capacity Report"
                     xaxis_title = "Week"
@@ -275,8 +265,36 @@ if uploaded_file is not None:
                     chart_title = "Daily Capacity Report"
                     xaxis_title = "Date"
                 
+                # --- NEW: Calculate Percentage Columns AFTER aggregation ---
+                # Wrap in np.where to avoid divide-by-zero errors
+                display_df['VALID SHOTS (%)'] = np.where(
+                    display_df['Total Shots (all)'] > 0, 
+                    display_df['VALID SHOTS'] / display_df['Total Shots (all)'], 0
+                )
+                display_df['Actual Cycle Time Total (%)'] = np.where(
+                    display_df['Total Run Time (sec)'] > 0, 
+                    display_df['Actual Cycle Time Total (sec)'] / display_df['Total Run Time (sec)'], 0
+                )
+                display_df['Downtime (%)'] = np.where(
+                    display_df['Total Run Time (sec)'] > 0, 
+                    display_df['Downtime (sec)'] / display_df['Total Run Time (sec)'], 0
+                )
+                display_df['Availability Loss (%)'] = np.where(
+                    display_df['Optimal Output'] > 0, 
+                    display_df['Availability Loss'] / display_df['Optimal Output'], 0
+                )
+                display_df['Slow Cycle Loss (%)'] = np.where(
+                    display_df['Optimal Output'] > 0, 
+                    display_df['Slow Cycle Loss'] / display_df['Optimal Output'], 0
+                )
+                display_df['Gap (%)'] = np.where(
+                    display_df['Optimal Output'] > 0, 
+                    display_df['Gap'] / display_df['Optimal Output'], 0
+                )
+                display_df['Target Output (%)'] = target_output_perc / 100.0
+                # --- END NEW PERCENTAGE LOGIC ---
+
                 chart_df = display_df.reset_index()
-                # --- END NEW LOGIC ---
 
                 # --- Performance Breakdown Chart (using Plotly) ---
                 st.header(f"{data_frequency} Performance Breakdown")
@@ -289,19 +307,27 @@ if uploaded_file is not None:
                     x=chart_df['Date'],
                     y=chart_df['Actual Output'],
                     name='Actual Output',
-                    marker_color='green'
+                    marker_color='green',
+                    # NEW: Custom hovertemplate
+                    hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Actual Output: %{y:,.0f}<extra></extra>'
                 ))
                 fig.add_trace(go.Bar(
                     x=chart_df['Date'],
                     y=chart_df['Availability Loss'],
                     name='Availability Loss',
-                    marker_color='red'
+                    marker_color='red',
+                    # NEW: Custom hovertemplate with percentage
+                    customdata=chart_df['Availability Loss (%)'],
+                    hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Availability Loss: %{y:,.0f} (%{customdata:.1%})<extra></extra>'
                 ))
                 fig.add_trace(go.Bar(
                     x=chart_df['Date'],
                     y=chart_df['Slow Cycle Loss'],
                     name='Slow Cycle Loss',
-                    marker_color='gold'
+                    marker_color='gold',
+                    # NEW: Custom hovertemplate with percentage
+                    customdata=chart_df['Slow Cycle Loss (%)'],
+                    hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Slow Cycle Loss: %{y:,.0f} (%{customdata:.1%})<extra></extra>'
                 ))
                                 
                 # --- EFFICIENCY GAIN REMOVED ---
@@ -312,7 +338,10 @@ if uploaded_file is not None:
                     y=chart_df['Target Output'], 
                     name='Target Output', 
                     mode='lines',
-                    line=dict(color='blue', dash='dash'), 
+                    line=dict(color='blue', dash='dash'),
+                    # NEW: Custom hovertemplate with percentage
+                    customdata=chart_df['Target Output (%)'],
+                    hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Target Output: %{y:,.0f} (%{customdata:.0%})<extra></extra>'
                 ))
                 
                 fig.add_trace(go.Scatter(
@@ -320,7 +349,9 @@ if uploaded_file is not None:
                     y=chart_df['Optimal Output'], 
                     name='Optimal Output (100%)', 
                     mode='lines',
-                    line=dict(color='darkgrey', dash='dot'), 
+                    line=dict(color='darkgrey', dash='dot'),
+                    # NEW: Custom hovertemplate
+                    hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Optimal Output: %{y:,.0f}<extra></extra>'
                 ))
                 
                 # --- LAYOUT UPDATE ---
@@ -330,7 +361,7 @@ if uploaded_file is not None:
                     xaxis_title=xaxis_title,
                     yaxis_title='Parts (Output & Loss)',
                     legend_title='Metric',
-                    hovermode="x unified"
+                    hovermode="closest" # CHANGED from 'x unified'
                 )
 
                 st.plotly_chart(fig, use_container_width=True)
@@ -338,9 +369,36 @@ if uploaded_file is not None:
                 # --- Full Data Table (Open by Default) ---
                 st.header(f"Full {data_frequency} Report")
                 
-                # Display the aggregated dataframe
+                # --- NEW: Re-order columns for display and add formatting ---
+                column_order = [
+                    'Total Shots (all)', 
+                    'VALID SHOTS', 'VALID SHOTS (%)', 
+                    'Invalid Shots (999.9 sec)',
+                    'Total Run Time (sec)', 
+                    'Actual Cycle Time Total (sec)', 'Actual Cycle Time Total (%)', 
+                    'Downtime (sec)', 'Downtime (%)',
+                    'Actual Output', 
+                    'Availability Loss', 'Availability Loss (%)', 
+                    'Slow Cycle Loss', 'Slow Cycle Loss (%)', 
+                    'Gap', 'Gap (%)',
+                    'Optimal Output', 
+                    'Target Output', 'Target Output (%)'
+                ]
+                
+                # Filter for columns that actually exist
+                final_columns = [col for col in column_order if col in display_df.columns]
+                display_df_final = display_df[final_columns]
+                
+                # Create a format dictionary for all columns
+                format_dict = {}
+                for col in display_df_final.columns:
+                    if "(%)" in col:
+                        format_dict[col] = "{:.1%}"
+                    else:
+                        format_dict[col] = "{:,.2f}"
+
                 st.dataframe(
-                    display_df.style.format("{:,.2f}"),
+                    display_df_final.style.format(format_dict, na_rep="N/A"),
                     use_container_width=True
                 )
 
