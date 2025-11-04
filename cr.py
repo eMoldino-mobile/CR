@@ -273,8 +273,7 @@ if uploaded_file is not None:
                 # Create the figure
                 fig = go.Figure()
 
-                # --- STACKED BAR CHART (Positive Values) ---
-                # Reverting to go.Bar
+                # --- CLUSTERED BAR CHART (Positive Values) ---
                 fig.add_trace(go.Bar(
                     x=chart_df['Date'],
                     y=chart_df['Actual Output'],
@@ -294,6 +293,14 @@ if uploaded_file is not None:
                     marker_color='gold'
                 ))
                 
+                # --- NEW: Add Target Output as a cluster bar ---
+                fig.add_trace(go.Bar(
+                    x=chart_df['Date'],
+                    y=chart_df['Target Output'],
+                    name='Target Output',
+                    marker_color='blue'
+                ))
+                
                 # --- EFFICIENCY GAIN AS A NEGATIVE BAR ---
                 # We multiply by -1 so it stacks "down"
                 fig.add_trace(go.Bar(
@@ -303,26 +310,11 @@ if uploaded_file is not None:
                     marker_color='cornflowerblue' # A distinct, non-green color
                 ))
 
-                # --- OVERLAY LINES (BOTH ON PRIMARY Y-AXIS) ---
-                fig.add_trace(go.Scatter(
-                    x=chart_df['Date'],
-                    y=chart_df['Target Output'], 
-                    name='Target Output', 
-                    mode='lines',
-                    line=dict(color='black', dash='dash'), 
-                ))
+                # --- OVERLAY LINES REMOVED ---
                 
-                fig.add_trace(go.Scatter(
-                    x=chart_df['Date'],
-                    y=chart_df['Optimal Output'], 
-                    name='Optimal Output (100%)', 
-                    mode='lines',
-                    line=dict(color='blue', dash='dot'), 
-                ))
-
                 # --- LAYOUT UPDATE ---
                 fig.update_layout(
-                    barmode='stack', # Changed back to stack for bars
+                    barmode='group', # CHANGED to 'group'
                     title=chart_title, 
                     xaxis_title=xaxis_title,
                     yaxis_title='Parts (Output, Loss & Targets)',
