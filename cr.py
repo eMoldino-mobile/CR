@@ -46,7 +46,7 @@ def load_data(uploaded_file):
 def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_output_perc):
     """
     Main function to process the raw DataFrame and calculate all Capacity Risk fields
-    using the "Net Loss" model (v4.8).
+    using the "Net Loss" model.
     
     This version groups the calculations by day.
     
@@ -144,7 +144,6 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
 
         # --- 7. Calculate Per-Shot Metrics (for this day) ---
         
-        # --- RE-INTRODUCED 'parts_gain' ---
         df_valid['parts_gain'] = np.where(
             df_valid['Actual CT'] < PERFORMANCE_BENCHMARK,
             ((PERFORMANCE_BENCHMARK - df_valid['Actual CT']) / PERFORMANCE_BENCHMARK) * max_cavities, 
@@ -315,7 +314,6 @@ if uploaded_file is not None:
                     xaxis_title = "Date"
                 
                 # --- Calculate Percentage Columns AFTER aggregation ---
-                # --- These are now just columns in the df, not separate arrays ---
                 display_df['Parts Produced (%)'] = np.where(
                     display_df['Optimal Output'] > 0, 
                     display_df['Parts Produced (parts)'] / display_df['Optimal Output'], 0
@@ -352,17 +350,11 @@ if uploaded_file is not None:
                 
                 chart_df = display_df.reset_index()
 
-                # --- Performance Breakdown Chart (v4.8 - Net Loss Model) ---
+                # --- Performance Breakdown Chart (v4.14 - Re-ordered Stack) ---
                 st.header(f"{data_frequency} Performance Breakdown")
                 fig = go.Figure()
 
-                # --- STACKED BAR CHART (Positive Values) ---
-                fig.add_trace(go.Bar(
-                    x=chart_df['Date'], y=chart_df['Parts Produced (parts)'], name='Parts Produced',
-                    marker_color='green',
-                    customdata=chart_df['Parts Produced (%)'],
-                    hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Parts Produced: %{y:,.0f} (%{customdata:.1%})<extra></extra>'
-                ))
+                # --- NEW STACK ORDER: LOSSES AT THE BOTTOM ---
                 fig.add_trace(go.Bar(
                     x=chart_df['Date'], y=chart_df['Capacity Loss (downtime) (parts)'], name='Capacity Loss (Downtime)',
                     marker_color='red',
@@ -375,8 +367,16 @@ if uploaded_file is not None:
                     customdata=chart_df['Capacity Loss (slow cycle time) (parts %)'],
                     hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Loss (Slow Cycles): %{y:,.0f} (%{customdata:.1%})<extra></extra>'
                 ))
+                
+                # --- OUTPUT IS NOW ON TOP ---
+                fig.add_trace(go.Bar(
+                    x=chart_df['Date'], y=chart_df['Parts Produced (parts)'], name='Parts Produced',
+                    marker_color='green',
+                    customdata=chart_df['Parts Produced (%)'],
+                    hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Parts Produced: %{y:,.0f} (%{customdata:.1%})<extra></extra>'
+                ))
                                 
-                # --- EFFICIENCY GAIN AS A NEGATIVE BAR ---
+                # --- GAIN REMAINS A NEGATIVE BAR ---
                 fig.add_trace(go.Bar(
                     x=chart_df['Date'],
                     y=chart_df['Capacity Gain (fast cycle time) (parts)'] * -1, 
@@ -390,12 +390,12 @@ if uploaded_file is not None:
                 fig.add_trace(go.Scatter(
                     x=chart_df['Date'], y=chart_df['Target Output'], name='Target Output', 
                     mode='lines', line=dict(color='blue', dash='dash'),
-                    customdata=chart_df['Target Output (%)'], # v4.13: Use the column from the dataframe
+                    customdata=chart_df['Target Output (%)'], 
                     hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Target Output: %{y:,.0f} (%{customdata:.0%})<extra></extra>'
                 ))
                 fig.add_trace(go.Scatter(
                     x=chart_df['Date'], y=chart_df['Optimal Output'], name='Optimal Output (100%)', 
-                    mode='lines', line=dict(color='purple', dash='dot'), 
+                    mode='lines', line=dict(color='darkgrey', dash='dot'), # No black lines
                     hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Optimal Output: %{y:,.0f}<extra></extra>'
                 ))
                 
@@ -422,7 +422,8 @@ if uploaded_file is not None:
                 report_table_1['Invalid Shots (999.9 sec)'] = display_df['Invalid Shots (999.9 sec)'].map('{:,.0f}'.format)
                 report_table_1['Total Run Duration'] = display_df.apply(lambda r: f"{format_seconds_to_dhm(r['Total Run Duration (sec)'])} ({r['Total Run Duration (sec)']:,.0f}s)", axis=1)
                 report_table_1['Actual Cycle Time Total'] = display_df.apply(lambda r: f"{format_seconds_to_dhm(r['Actual Cycle Time Total (sec)'])} ({r['Actual Cycle Time Total (time %)']:.1%})", axis=1)
-                report_table_1['Capacity Loss (downtime)'] = display_df.apply(lambda r: f"{format_seconds_to_dhm(r['Capacity Loss (downtime) (sec)'])} ({r['Capacity Loss (downtime) (time %)']:.1%})", axis=1)
+                
+                # --- v4.15 FIX: Removed Capacity Loss (downtime) from this table ---
                 
                 st.dataframe(report_table_1, use_container_width=True)
 
