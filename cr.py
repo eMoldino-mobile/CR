@@ -4,7 +4,7 @@ import numpy as np
 import plotly.graph_objects as go
 
 # ==================================================================
-#                       HELPER FUNCTIONS
+#                       HELPER FUNCTION
 # ==================================================================
 
 def format_seconds_to_dhm(total_seconds):
@@ -20,46 +20,6 @@ def format_seconds_to_dhm(total_seconds):
     if hours > 0: parts.append(f"{hours}h")
     if minutes > 0 or not parts: parts.append(f"{minutes}m")
     return " ".join(parts)
-
-# --- NEW: Copied from run_rate_app.py for consistency ---
-def create_gauge(value, title, steps=None):
-    """Creates a Plotly gauge chart."""
-    # Define the pastel colors from run_rate_app
-    PASTEL_COLORS = {
-        'red': '#ff6961',
-        'orange': '#ffb347',
-        'green': '#77dd77'
-    }
-    
-    gauge_config = {'axis': {'range': [0, 100]}}
-    if steps:
-        # Use the pastel colors for the steps
-        gauge_config['steps'] = [
-            {'range': [0, 50], 'color': PASTEL_COLORS['red']}, 
-            {'range': [50, 80], 'color': PASTEL_COLORS['orange']},
-            {'range': [80, 100], 'color': PASTEL_COLORS['green']}
-        ]
-        # Invert steps for loss
-        if "Loss" in title:
-             gauge_config['steps'] = [
-                {'range': [0, 20], 'color': PASTEL_COLORS['green']}, 
-                {'range': [20, 50], 'color': PASTEL_COLORS['orange']},
-                {'range': [50, 100], 'color': PASTEL_COLORS['red']}
-            ]
-        
-        gauge_config['bar'] = {'color': '#262730'} # Dark bar for visibility
-    else:
-        gauge_config['bar'] = {'color': "darkblue"}; gauge_config['bgcolor'] = "lightgray"
-        
-    fig = go.Figure(go.Indicator(
-        mode="gauge+number", 
-        value=value, 
-        title={'text': title}, 
-        gauge=gauge_config,
-        number={'suffix': '%'} # Add percentage suffix
-    ))
-    fig.update_layout(height=250, margin=dict(l=20, r=20, t=50, b=20))
-    return fig
 
 # ==================================================================
 #                       DATA CALCULATION
@@ -148,7 +108,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     df_production_only['date'] = df_production_only['SHOT TIME'].dt.date
     
     daily_results_list = []
-    all_valid_shots_list = []
+    all_valid_shots_list = [] 
     
     for date, daily_df in df_production_only.groupby('date'):
         
@@ -170,7 +130,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         
         PERFORMANCE_BENCHMARK = APPROVED_CT
         max_cavities = daily_df['Working Cavities'].max()
-        if max_cavities == 0 or pd.isna(max_cavities): max_cavities = 1
+        if max_cavities == 0 or pd.isna(max_cavities): max_cavities = 1 
 
         # --- 7. Calculate Per-Shot Metrics (for this day) ---
         df_valid['parts_gain'] = np.where(
@@ -197,10 +157,13 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         all_valid_shots_list.append(df_valid)
         
         # --- 8. Calculate Daily Aggregates ---
+        
+        # A. Basic Counts
         results['Total Shots (all)'] = len(daily_df)
-        results['Valid Shots (non 999.9)'] = len(df_valid)
+        results['Valid Shots (non 999.9)'] = len(df_valid) 
         results['Invalid Shots (999.9 sec)'] = results['Total Shots (all)'] - results['Valid Shots (non 999.9)']
 
+        # B. Time Calculations
         first_shot_time = daily_df['SHOT TIME'].min()
         last_shot_time = daily_df['SHOT TIME'].max()
         last_shot_ct_series = daily_df.loc[daily_df['SHOT TIME'] == last_shot_time, 'Actual CT']
@@ -213,15 +176,22 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         
         results['Capacity Loss (downtime) (sec)'] = results['Total Run Duration (sec)'] - results['Actual Cycle Time Total (sec)'] 
 
+        # C. Output Calculations
         results['Parts Produced (parts)'] = df_valid['actual_output'].sum() 
         results['Optimal Output'] = (results['Total Run Duration (sec)'] / APPROVED_CT) * max_cavities
 
+        # D. Loss & Gap Calculations
         results['Capacity Loss (downtime) (parts)'] = (results['Capacity Loss (downtime) (sec)'] / APPROVED_CT) * max_cavities 
         results['Capacity Loss (slow cycle time) (parts)'] = df_valid['parts_loss'].sum() 
         results['Capacity Gain (fast cycle time) (parts)'] = df_valid['parts_gain'].sum()
         
-        results['Total Capacity Loss (parts)'] = results['Capacity Loss (downtime) (parts)'] + results['Capacity Loss (slow cycle time) (parts)'] - results['Capacity Gain (fast cycle time) (parts)']
+        # --- NEW (v4.23): Net Performance Loss ---
+        results['Net Performance Loss (parts)'] = results['Capacity Loss (slow cycle time) (parts)'] - results['Capacity Gain (fast cycle time) (parts)']
         
+        # --- Total Capacity Loss (Net) ---
+        results['Total Capacity Loss (parts)'] = results['Capacity Loss (downtime) (parts)'] + results['Net Performance Loss (parts)']
+        
+        # F. Target
         results['Target Output'] = results['Optimal Output'] * (target_output_perc / 100.0)
         
         daily_results_list.append(results)
@@ -231,7 +201,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         st.warning("No data found to process.")
         return None, None
 
-    final_df = pd.DataFrame(daily_results_list).fillna(0)
+    final_df = pd.DataFrame(daily_results_list).fillna(0) 
     final_df['Date'] = pd.to_datetime(final_df['Date'])
     final_df = final_df.set_index('Date')
     
@@ -370,120 +340,95 @@ if uploaded_file is not None:
                 
                 _target_output_perc_array = np.full(len(display_df), target_output_perc / 100.0)
                 
-                # --- v4.20 FIX: Pre-calculate all d/h/m columns ---
                 display_df['Total Run Duration (d/h/m)'] = display_df['Total Run Duration (sec)'].apply(format_seconds_to_dhm)
                 display_df['Actual Cycle Time Total (d/h/m)'] = display_df['Actual Cycle Time Total (sec)'].apply(format_seconds_to_dhm)
                 
                 chart_df = display_df.reset_index()
 
-                # --- NEW: KPI Dashboard (v4.21) ---
-                st.header(f"Key Metrics for Selected Period ({data_frequency})")
-
-                # --- 1. Calculate Aggregates for Metrics ---
-                total_produced = display_df['Parts Produced (parts)'].sum()
-                total_loss = display_df['Total Capacity Loss (parts)'].sum()
-                total_target = display_df['Target Output'].sum()
-                total_optimal = display_df['Optimal Output'].sum()
-                total_run_sec = display_df['Total Run Duration (sec)'].sum()
-                total_run_dhm = format_seconds_to_dhm(total_run_sec)
+                # --- v4.23: NEW HORIZONTAL STACKED BAR CHART ---
+                st.header(f"Capacity Breakdown ({data_frequency})")
                 
-                # Calculate percentages for the *total* period
-                prod_perc = (total_produced / total_optimal) * 100 if total_optimal > 0 else 0
-                loss_perc = (total_loss / total_optimal) * 100 if total_optimal > 0 else 0
-
-                # --- 2. Display st.metric boxes (like run_rate_app) ---
-                with st.container(border=True):
-                    col1, col2, col3, col4 = st.columns(4)
-                    
-                    col1.metric("Total Parts Produced", f"{total_produced:,.0f}")
-                    # Use delta to show gain/loss vs. target
-                    col2.metric("Total Target Output", f"{total_target:,.0f}", 
-                                 f"{total_produced - total_target:,.0f} vs. Target",
-                                 delta_color="normal") 
-                    
-                    col3.metric("Total Capacity Loss (Net)", f"{total_loss:,.0f}", delta_color="inverse")
-                    
-                    col4.metric("Total Run Duration", total_run_dhm)
+                # We need to calculate the *total* target for the period for the vline
+                total_target_for_period = display_df['Target Output'].sum()
                 
-                # --- 3. Display Gauge charts (like run_rate_app) ---
-                with st.container(border=True):
-                    colA, colB = st.columns(2)
-
-                    # Gauge for Production vs. Optimal
-                    fig_prod = create_gauge(prod_perc, "Production vs. Optimal")
-                    colA.plotly_chart(fig_prod, use_container_width=True)
-
-                    # Gauge for Loss vs. Optimal
-                    fig_loss = create_gauge(loss_perc, "Total Loss vs. Optimal")
-                    colB.plotly_chart(fig_loss, use_container_width=True)
-                
-                # --- END NEW KPI Dashboard ---
-
-
-                # --- Performance Breakdown Chart (v4.16 - Net Loss Stack) ---
-                st.header(f"{data_frequency} Performance Breakdown")
+                # --- Create the figure ---
                 fig = go.Figure()
 
-                # --- STACKED BAR CHART ---
+                # --- STACKED HORIZONTAL BARS ---
                 fig.add_trace(go.Bar(
-                    x=chart_df['Date'],
-                    y=chart_df['Parts Produced (parts)'],
+                    y=chart_df['Date'],
+                    x=chart_df['Parts Produced (parts)'],
                     name='Parts Produced',
                     marker_color='green',
-                    customdata=np.stack((
-                        chart_df['Parts Produced (%)']
-                    ), axis=-1),
-                    hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Parts Produced: %{y:,.0f} (%{customdata[0]:.1%})<extra></extra>'
+                    orientation='h',
+                    customdata=chart_df['Parts Produced (%)'],
+                    hovertemplate='<b>%{y|%Y-%m-%d}</b><br>Parts Produced: %{x:,.0f} (%{customdata:.1%})<extra></extra>'
                 ))
+                
                 fig.add_trace(go.Bar(
-                    x=chart_df['Date'],
-                    y=chart_df['Total Capacity Loss (parts)'],
-                    name='Total Capacity Loss (Net)',
+                    y=chart_df['Date'],
+                    x=chart_df['Capacity Loss (downtime) (parts)'],
+                    name='Capacity Loss (Downtime)',
                     marker_color='red',
+                    orientation='h',
+                    customdata=chart_df['Capacity Loss (downtime) (parts %)'],
+                    hovertemplate='<b>%{y|%Y-%m-%d}</b><br>Loss (Downtime): %{x:,.0f} (%{customdata:.1%})<extra></extra>'
+                ))
+                
+                fig.add_trace(go.Bar(
+                    y=chart_df['Date'],
+                    x=chart_df['Net Performance Loss (parts)'],
+                    name='Net Performance Loss',
+                    marker_color='gold',
+                    orientation='h',
                     customdata=np.stack((
-                        chart_df['Total Capacity Loss (parts %)'],
-                        chart_df['Capacity Loss (downtime) (parts)'],
                         chart_df['Capacity Loss (slow cycle time) (parts)'],
                         chart_df['Capacity Gain (fast cycle time) (parts)']
                     ), axis=-1),
                     hovertemplate=
-                        '<b>%{x|%Y-%m-%d}</b><br>' +
-                        '<b>Total Net Loss: %{y:,.0f} (%{customdata[0]:.1%})</b><br><br>' +
-                        'Loss (Downtime): %{customdata[1]:,.0f}<br>' +
-                        'Loss (Slow Cycles): %{customdata[2]:,.0f}<br>' +
-                        'Gain (Fast Cycles): -%{customdata[3]:,.0f}<br>' +
+                        '<b>%{y|%Y-%m-%d}</b><br>' +
+                        '<b>Net Performance Loss: %{x:,.0f}</b><br><br>' +
+                        'Slow Cycle Loss: %{customdata[0]:,.0f}<br>' +
+                        'Fast Cycle Gain: -%{customdata[1]:,.0f}<br>' +
                         '<extra></extra>'
-                ))
-                                
-                # --- OVERLAY LINES (ON PRIMARY Y-AXIS) ---
-                fig.add_trace(go.Scatter(
-                    x=chart_df['Date'],
-                    y=chart_df['Target Output'],
-                    name='Target Output', 
-                    mode='lines',
-                    line=dict(color='blue', dash='dash'),
-                    customdata=_target_output_perc_array,
-                    hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Target Output: %{y:,.0f} (%{customdata:.0%})<extra></extra>'
-                ))
-                fig.add_trace(go.Scatter(
-                    x=chart_df['Date'],
-                    y=chart_df['Optimal Output'],
-                    name='Optimal Output (100%)', 
-                    mode='lines',
-                    line=dict(color='purple', dash='dot'),
-                    hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Optimal Output: %{y:,.0f}<extra></extra>'
                 ))
                 
                 # --- LAYOUT UPDATE ---
                 fig.update_layout(
                     barmode='stack', 
                     title=chart_title, 
-                    xaxis_title=xaxis_title,
-                    yaxis_title='Parts (Output & Loss)',
+                    yaxis_title=xaxis_title, # Y-axis is now Date/Week/Month
+                    xaxis_title='Parts (Output & Loss)', # X-axis is now Parts
                     legend_title='Metric',
-                    hovermode="x unified" 
+                    hovermode="closest" # 'closest' is better for h-bars
                 )
+                
+                # --- Add Target Line ---
+                # We add this after layout to ensure it's on top
+                # This shows the target for the *entire period* as a single line
+                fig.add_vline(
+                    x=total_target_for_period, 
+                    line_width=3, 
+                    line_dash="dash", 
+                    line_color="blue",
+                    name=f"Total Target ({total_target_for_period:,.0f})"
+                )
+                
+                # If we're on Daily, Weekly, or Monthly, we can show individual targets
+                if data_frequency != "Total Period":
+                     fig.add_trace(go.Scatter(
+                         y=chart_df['Date'],
+                         x=chart_df['Target Output'],
+                         name='Target Output (per period)',
+                         mode='lines+markers',
+                         line=dict(color='blue', dash='dash'),
+                         marker=dict(color='blue', size=8),
+                         orientation='h',
+                         hovertemplate='<b>%{y|%Y-%m-%d}</b><br>Target: %{x:,.0f}<extra></extra>'
+                     ))
+
                 st.plotly_chart(fig, use_container_width=True)
+
                 
                 # --- Full Data Table (Open by Default) ---
                 
@@ -491,7 +436,6 @@ if uploaded_file is not None:
                 st.header(f"Production Totals Report ({data_frequency})")
                 report_table_1 = pd.DataFrame(index=display_df.index)
                 
-                # --- v4.20 FIX: Read from the pre-calculated columns ---
                 report_table_1['Total Shots (all)'] = display_df['Total Shots (all)'].map('{:,.0f}'.format)
                 report_table_1['Valid Shots (non 999.9)'] = display_df.apply(lambda r: f"{r['Valid Shots (non 999.9)']:,.0f} ({r['Valid Shots (non 999.9) (%)']:.1%})", axis=1)
                 report_table_1['Invalid Shots (999.9 sec)'] = display_df['Invalid Shots (999.9 sec)'].map('{:,.0f}'.format)
@@ -504,14 +448,14 @@ if uploaded_file is not None:
                 st.header(f"Capacity Loss & Gain Report ({data_frequency})")
                 report_table_2 = pd.DataFrame(index=display_df.index)
                 
-                # --- v4.20 FIX: Read from the pre-calculated columns ---
                 report_table_2['Optimal Output'] = display_df['Optimal Output'].map('{:,.2f}'.format)
-                report_table_2['Target Output'] = display_df.apply(lambda r: f"{r['Target Output']:,.2f} ({target_output_perc / 100.0:.0%})", axis=1) # Use the var directly
+                report_table_2['Target Output'] = display_df.apply(lambda r: f"{r['Target Output']:,.2f} ({target_output_perc / 100.0:.0%})", axis=1) 
                 report_table_2['Parts Produced'] = display_df.apply(lambda r: f"{r['Parts Produced (parts)']:,.2f} ({r['Parts Produced (%)']:.1%})", axis=1)
                 report_table_2['Capacity Loss (downtime)'] = display_df.apply(lambda r: f"{r['Capacity Loss (downtime) (parts)']:,.2f} ({r['Capacity Loss (downtime) (parts %)']:.1%})", axis=1)
                 report_table_2['Capacity Loss (slow cycles)'] = display_df.apply(lambda r: f"{r['Capacity Loss (slow cycle time) (parts)']:,.2f} ({r['Capacity Loss (slow cycle time) (parts %)']:.1%})", axis=1)
                 report_table_2['Capacity Gain (fast cycles)'] = display_df.apply(lambda r: f"{r['Capacity Gain (fast cycle time) (parts)']:,.2f} ({r['Capacity Gain (fast cycle time) (parts %)']:.1%})", axis=1)
                 report_table_2['Total Capacity Loss (Net)'] = display_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
+                report_table_2['Net Performance Loss'] = display_df.apply(lambda r: f"{r['Net Performance Loss (parts)']:,.2f}", axis=1)
 
                 st.dataframe(report_table_2, use_container_width=True)
 
