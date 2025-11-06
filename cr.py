@@ -116,7 +116,8 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     df_production_only['date'] = df_production_only['SHOT TIME'].dt.date
     
     daily_results_list = []
-    # ... (Lines 1-100) ...
+    # --- V4.12 FIX: Initialize the missing list ---
+    all_valid_shots_list = [] 
     
     # Iterate over each day's data
     for date, daily_df in df_production_only.groupby('date'):
@@ -143,6 +144,8 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         if max_cavities == 0 or pd.isna(max_cavities): max_cavities = 1 # Fallback
 
         # --- 7. Calculate Per-Shot Metrics (for this day) ---
+        
+        # --- RE-INTRODUCED 'parts_gain' ---
         df_valid['parts_gain'] = np.where(
             df_valid['Actual CT'] < PERFORMANCE_BENCHMARK,
             ((PERFORMANCE_BENCHMARK - df_valid['Actual CT']) / PERFORMANCE_BENCHMARK) * max_cavities, 
@@ -183,7 +186,10 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         results['Total Run Duration (sec)'] = time_span_sec + last_shot_ct
         
         results['Actual Cycle Time Total (sec)'] = df_valid['Actual CT'].sum()
+        
+        # --- RENAMED METRICS (v4.8) ---
         results['Capacity Loss (downtime) (sec)'] = results['Total Run Duration (sec)'] - results['Actual Cycle Time Total (sec)'] 
+        results['Capacity Loss (downtime) (shots)'] = results['Capacity Loss (downtime) (sec)'] / APPROVED_CT
 
         # C. Output Calculations
         results['Parts Produced (parts)'] = df_valid['actual_output'].sum() 
@@ -192,8 +198,10 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         # D. Loss & Gap Calculations (RENAMED v4.8)
         results['Capacity Loss (downtime) (parts)'] = (results['Capacity Loss (downtime) (sec)'] / APPROVED_CT) * max_cavities 
         results['Capacity Loss (slow cycle time) (parts)'] = df_valid['parts_loss'].sum() 
-        # ... (Lines 101-180) ...
+        results['Capacity Gain (fast cycle time) (parts)'] = df_valid['parts_gain'].sum() # RE-INTRODUCED
         
+        results['Capacity Loss (slow cycle time) (shots)'] = (df_valid['parts_loss'] / max_cavities).sum()
+
         # --- NEW: Total Capacity Loss (Net) ---
         results['Total Capacity Loss (parts)'] = results['Capacity Loss (downtime) (parts)'] + results['Capacity Loss (slow cycle time) (parts)'] - results['Capacity Gain (fast cycle time) (parts)']
         
@@ -310,7 +318,6 @@ if uploaded_file is not None:
                     xaxis_title = "Date"
                 
                 # --- Calculate Percentage Columns AFTER aggregation ---
-                # These are temporary for building the combined columns
                 _parts_prod_perc = np.where(display_df['Optimal Output'] > 0, display_df['Parts Produced (parts)'] / display_df['Optimal Output'], 0)
                 _shots_prod_perc = np.where(display_df['Total Shots (all)'] > 0, display_df['Parts Produced (shots)'] / display_df['Total Shots (all)'], 0)
                 _act_time_perc = np.where(display_df['Total Run Duration (sec)'] > 0, display_df['Actual Cycle Time Total (sec)'] / display_df['Total Run Duration (sec)'], 0)
@@ -331,19 +338,19 @@ if uploaded_file is not None:
 
                 # --- STACKED BAR CHART (Positive Values) ---
                 fig.add_trace(go.Bar(
-                    x=chart_df['Date'], y=display_df['Parts Produced (parts)'], name='Parts Produced',
+                    x=chart_df['Date'], y=chart_df['Parts Produced (parts)'], name='Parts Produced',
                     marker_color='green',
                     customdata=_parts_prod_perc,
                     hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Parts Produced: %{y:,.0f} (%{customdata:.1%})<extra></extra>'
                 ))
                 fig.add_trace(go.Bar(
-                    x=chart_df['Date'], y=display_df['Capacity Loss (downtime) (parts)'], name='Capacity Loss (Downtime)',
+                    x=chart_df['Date'], y=chart_df['Capacity Loss (downtime) (parts)'], name='Capacity Loss (Downtime)',
                     marker_color='red',
                     customdata=_downtime_parts_perc,
                     hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Loss (Downtime): %{y:,.0f} (%{customdata:.1%})<extra></extra>'
                 ))
                 fig.add_trace(go.Bar(
-                    x=chart_df['Date'], y=display_df['Capacity Loss (slow cycle time) (parts)'], name='Capacity Loss (Slow Cycles)',
+                    x=chart_df['Date'], y=chart_df['Capacity Loss (slow cycle time) (parts)'], name='Capacity Loss (Slow Cycles)',
                     marker_color='gold',
                     customdata=_slow_loss_parts_perc,
                     hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Loss (Slow Cycles): %{y:,.0f} (%{customdata:.1%})<extra></extra>'
@@ -352,7 +359,7 @@ if uploaded_file is not None:
                 # --- EFFICIENCY GAIN AS A NEGATIVE BAR ---
                 fig.add_trace(go.Bar(
                     x=chart_df['Date'],
-                    y=display_df['Capacity Gain (fast cycle time) (parts)'] * -1, 
+                    y=chart_df['Capacity Gain (fast cycle time) (parts)'] * -1, 
                     name='Capacity Gain (Fast Cycles)',
                     marker_color='cornflowerblue', # A distinct, non-green color
                     customdata=_fast_gain_parts_perc,
@@ -361,14 +368,14 @@ if uploaded_file is not None:
 
                 # --- OVERLAY LINES (ON PRIMARY Y-AXIS) ---
                 fig.add_trace(go.Scatter(
-                    x=chart_df['Date'], y=display_df['Target Output'], name='Target Output', 
+                    x=chart_df['Date'], y=chart_df['Target Output'], name='Target Output', 
                     mode='lines', line=dict(color='blue', dash='dash'),
                     # --- V4.11 FIX: Pass the array, not the single number ---
                     customdata=_target_output_perc, 
                     hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Target Output: %{y:,.0f} (%{customdata:.0%})<extra></extra>'
                 ))
                 fig.add_trace(go.Scatter(
-                    x=chart_df['Date'], y=display_df['Optimal Output'], name='Optimal Output (100%)', 
+                    x=chart_df['Date'], y=chart_df['Optimal Output'], name='Optimal Output (100%)', 
                     mode='lines', line=dict(color='purple', dash='dot'), 
                     hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Optimal Output: %{y:,.0f}<extra></extra>'
                 ))
@@ -380,7 +387,7 @@ if uploaded_file is not None:
                     xaxis_title=xaxis_title,
                     yaxis_title='Parts (Output, Loss & Targets)',
                     legend_title='Metric',
-                    hovermode="x unified"
+                    hovermode="x unified" # Switched back to unified for better comparison
                 )
 
                 st.plotly_chart(fig, use_container_width=True)
@@ -440,7 +447,7 @@ if uploaded_file is not None:
                     )
                     
                     # Filter the shot data to the selected day
-                    # ... (Lines 400-450) ...
+                    df_day_shots = all_shots_df[all_shots_df['date'] == selected_date].copy()
                     
                     if df_day_shots.empty:
                         st.warning(f"No valid shots found for {selected_date}.")
