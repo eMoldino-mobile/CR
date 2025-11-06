@@ -352,6 +352,10 @@ if uploaded_file is not None:
                 
                 _target_output_perc_array = np.full(len(display_df), target_output_perc / 100.0)
                 
+                # --- v4.20 FIX: Pre-calculate all d/h/m columns ---
+                display_df['Total Run Duration (d/h/m)'] = display_df['Total Run Duration (sec)'].apply(format_seconds_to_dhm)
+                display_df['Actual Cycle Time Total (d/h/m)'] = display_df['Actual Cycle Time Total (sec)'].apply(format_seconds_to_dhm)
+                
                 chart_df = display_df.reset_index()
 
                 # --- Performance Breakdown Chart (v4.16 - Net Loss Stack) ---
@@ -425,7 +429,7 @@ if uploaded_file is not None:
                 st.header(f"Production Totals Report ({data_frequency})")
                 report_table_1 = pd.DataFrame(index=display_df.index)
                 
-                # --- v4.19 FIX: Use the column from the row 'r' for all lookups ---
+                # --- v4.20 FIX: Read from the pre-calculated columns ---
                 report_table_1['Total Shots (all)'] = display_df['Total Shots (all)'].map('{:,.0f}'.format)
                 report_table_1['Valid Shots (non 999.9)'] = display_df.apply(lambda r: f"{r['Valid Shots (non 999.9)']:,.0f} ({r['Valid Shots (non 999.9) (%)']:.1%})", axis=1)
                 report_table_1['Invalid Shots (999.9 sec)'] = display_df['Invalid Shots (999.9 sec)'].map('{:,.0f}'.format)
@@ -438,9 +442,9 @@ if uploaded_file is not None:
                 st.header(f"Capacity Loss & Gain Report ({data_frequency})")
                 report_table_2 = pd.DataFrame(index=display_df.index)
                 
-                # --- v4.19 FIX: Use the column from the row 'r' for all lookups ---
+                # --- v4.20 FIX: Read from the pre-calculated columns ---
                 report_table_2['Optimal Output'] = display_df['Optimal Output'].map('{:,.2f}'.format)
-                report_table_2['Target Output'] = display_df.apply(lambda r: f"{r['Target Output']:,.2f} ({r['Target Output (%)']:.0%})", axis=1)
+                report_table_2['Target Output'] = display_df.apply(lambda r: f"{r['Target Output']:,.2f} ({target_output_perc / 100.0:.0%})", axis=1) # Use the var directly
                 report_table_2['Parts Produced'] = display_df.apply(lambda r: f"{r['Parts Produced (parts)']:,.2f} ({r['Parts Produced (%)']:.1%})", axis=1)
                 report_table_2['Capacity Loss (downtime)'] = display_df.apply(lambda r: f"{r['Capacity Loss (downtime) (parts)']:,.2f} ({r['Capacity Loss (downtime) (parts %)']:.1%})", axis=1)
                 report_table_2['Capacity Loss (slow cycles)'] = display_df.apply(lambda r: f"{r['Capacity Loss (slow cycle time) (parts)']:,.2f} ({r['Capacity Loss (slow cycle time) (parts %)']:.1%})", axis=1)
