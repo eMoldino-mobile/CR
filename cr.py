@@ -102,8 +102,8 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, target_outp
         # Create the final 'valid' dataframe (for cycle calcs)
         df_valid = daily_df[daily_df['Actual CT'] < 999.9].copy()
 
-        if df_valid.empty:
-            # Add a row of zeros or NaNs if a day has no valid shots
+        if df_valid.empty or len(daily_df) < 2:
+            # Add a row of zeros or NaNs if a day has no valid shots or < 2 shots
             results['Total Shots (all)'] = len(daily_df)
             results['VALID SHOTS'] = 0
             # ... add other keys as 0 or np.nan
@@ -117,13 +117,15 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, target_outp
             APPROVED_CT = daily_df['Approved CT'].mode().iloc[0]
         
         PERFORMANCE_BENCHMARK = APPROVED_CT
+        # Get max cavities for the day (for opportunity loss calcs)
+        max_cavities = daily_df['Working Cavities'].max()
 
         # --- 7. Calculate Per-Shot Metrics (for this day) ---
-        # REMOVED 'parts_gain' calculation
         
+        # --- LOGIC CHANGE V3.4: 'parts_loss' now uses max_cavities to align with other metrics ---
         df_valid['parts_loss'] = np.where(
             df_valid['Actual CT'] > PERFORMANCE_BENCHMARK,
-            ((df_valid['Actual CT'] - PERFORMANCE_BENCHMARK) / PERFORMANCE_BENCHMARK) * df_valid['Working Cavities'],
+            ((df_valid['Actual CT'] - PERFORMANCE_BENCHMARK) / PERFORMANCE_BENCHMARK) * max_cavities, # CHANGED
             0
         )
         df_valid['actual_output'] = df_valid['Working Cavities']
@@ -136,22 +138,33 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, target_outp
         results['Invalid Shots (999.9 sec)'] = results['Total Shots (all)'] - results['VALID SHOTS']
 
         # B. Time Calculations
-        results['Total Run Time (sec)'] = (daily_df['SHOT TIME'].max() - daily_df['SHOT TIME'].min()).total_seconds()
+        
+        # --- LOGIC CHANGE V3.4: 'Total Run Time' now includes the CT of the last shot ---
+        first_shot_time = daily_df['SHOT TIME'].min()
+        last_shot_time = daily_df['SHOT TIME'].max()
+        # Find the CT of the very last shot (by timestamp)
+        last_shot_ct = daily_df.loc[daily_df['SHOT TIME'] == last_shot_time, 'Actual CT'].iloc[0]
+        
+        time_span_sec = (last_shot_time - first_shot_time).total_seconds()
+        
+        # Add the last shot's CT to the span to get the true end-to-end run time
+        results['Total Run Time (sec)'] = time_span_sec + last_shot_ct
+        # --- END LOGIC CHANGE V3.4 ---
+        
         results['Actual Cycle Time Total (sec)'] = df_valid['Actual CT'].sum()
+        
+        # This formula is now mathematically correct
         results['Downtime (sec)'] = results['Total Run Time (sec)'] - results['Actual Cycle Time Total (sec)']
 
         # C. Output Calculations
-        results['Actual Output'] = df_valid['actual_output'].sum()
-        max_cavities = daily_df['Working Cavities'].max()
+        results['Parts Produced'] = df_valid['actual_output'].sum() # RENAMED
         results['Optimal Output'] = (results['Total Run Time (sec)'] / APPROVED_CT) * max_cavities
 
         # D. Loss & Gap Calculations
-        # --- LOGIC FIX: Availability Loss must be multiplied by max_cavities ---
         results['Availability Loss'] = (results['Downtime (sec)'] / APPROVED_CT) * max_cavities
         results['Slow Cycle Loss'] = df_valid['parts_loss'].sum()
-        # REMOVED 'Efficiency Gain'
         
-        # --- LOGIC FIX: Gap is now the sum of the two gross losses ---
+        # Gap is now the sum of the two gross losses
         results['Gap'] = results['Availability Loss'] + results['Slow Cycle Loss']
         
         # F. Target
@@ -168,8 +181,6 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, target_outp
     # --- IMPORTANT: Convert Date to datetime for resampling ---
     final_df['Date'] = pd.to_datetime(final_df['Date'])
     final_df = final_df.set_index('Date') # Set Date as the index
-    
-    # --- NO LONGER re-ordering columns here, will do it in main app ---
     
     return final_df
 
@@ -267,6 +278,10 @@ if uploaded_file is not None:
                 
                 # --- NEW: Calculate Percentage Columns AFTER aggregation ---
                 # Wrap in np.where to avoid divide-by-zero errors
+                display_df['Parts Produced (%)'] = np.where(  # RENAMED
+                    display_df['Optimal Output'] > 0, 
+                    display_df['Parts Produced'] / display_df['Optimal Output'], 0
+                )
                 display_df['VALID SHOTS (%)'] = np.where(
                     display_df['Total Shots (all)'] > 0, 
                     display_df['VALID SHOTS'] / display_df['Total Shots (all)'], 0
@@ -305,11 +320,12 @@ if uploaded_file is not None:
                 # --- NEW "GROSS LOSS" STACKED BAR CHART ---
                 fig.add_trace(go.Bar(
                     x=chart_df['Date'],
-                    y=chart_df['Actual Output'],
-                    name='Actual Output',
+                    y=chart_df['Parts Produced'], # RENAMED
+                    name='Parts Produced', # RENAMED
                     marker_color='green',
-                    # NEW: Custom hovertemplate
-                    hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Actual Output: %{y:,.0f}<extra></extra>'
+                    # NEW: Custom hovertemplate with percentage
+                    customdata=chart_df['Parts Produced (%)'], # RENAMED
+                    hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Parts Produced: %{y:,.0f} (%{customdata:.1%})<extra></extra>' # RENAMED
                 ))
                 fig.add_trace(go.Bar(
                     x=chart_df['Date'],
@@ -329,8 +345,6 @@ if uploaded_file is not None:
                     customdata=chart_df['Slow Cycle Loss (%)'],
                     hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Slow Cycle Loss: %{y:,.0f} (%{customdata:.1%})<extra></extra>'
                 ))
-                                
-                # --- EFFICIENCY GAIN REMOVED ---
 
                 # --- OVERLAY LINES (BOTH ON PRIMARY Y-AXIS) ---
                 fig.add_trace(go.Scatter(
@@ -349,7 +363,7 @@ if uploaded_file is not None:
                     y=chart_df['Optimal Output'], 
                     name='Optimal Output (100%)', 
                     mode='lines',
-                    line=dict(color='darkgrey', dash='dot'),
+                    line=dict(color='purple', dash='dot'), 
                     # NEW: Custom hovertemplate
                     hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Optimal Output: %{y:,.0f}<extra></extra>'
                 ))
@@ -377,7 +391,7 @@ if uploaded_file is not None:
                     'Total Run Time (sec)', 
                     'Actual Cycle Time Total (sec)', 'Actual Cycle Time Total (%)', 
                     'Downtime (sec)', 'Downtime (%)',
-                    'Actual Output', 
+                    'Parts Produced', 'Parts Produced (%)', # RENAMED
                     'Availability Loss', 'Availability Loss (%)', 
                     'Slow Cycle Loss', 'Slow Cycle Loss (%)', 
                     'Gap', 'Gap (%)',
@@ -407,4 +421,3 @@ if uploaded_file is not None:
 
 else:
     st.info("Please upload a data file to begin.")
-
