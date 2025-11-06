@@ -431,45 +431,27 @@ if uploaded_file is not None:
                 final_columns = [col for col in column_order if col in display_df.columns]
                 display_df_final = display_df[final_columns]
                 
-                # --- V4.5: Robust manual formatting fix ---
+                # --- V4.6: ROBUST FORMATTING FIX ---
                 
-                # Create a copy to modify for display
-                display_df_formatted = display_df_final.copy()
-                
-                # Create the format dictionary
+                # Create a format dictionary for all numeric columns
                 format_dict = {}
-                for col in display_df_formatted.columns:
+                for col in display_df_final.columns:
                     if "(%)" in col:
                         format_dict[col] = "{:.1%}"
-                    elif "(d/h/m)" in col:
-                        pass # This is already a string
                     elif "shots" in col:
                         format_dict[col] = "{:,.0f}"
                     elif "(sec)" in col:
                         format_dict[col] = "{:,.0f}"
-                    else:
+                    elif "(d/h/m)" not in col: # Check to explicitly skip strings
                         # Default for parts, Gap, Output, etc.
                         format_dict[col] = "{:,.2f}"
-
-                # Apply the formatting column by column
-                for col, fmt_str in format_dict.items():
-                    # Skip columns that are already strings
-                    if "(d/h/m)" in col:
-                        continue
-                        
-                    if col in display_df_formatted.columns:
-                        try:
-                            # Use .apply() on the column to format each value
-                            display_df_formatted[col] = display_df_formatted[col].apply(
-                                lambda x: fmt_str.format(x) if pd.notna(x) else "N/A"
-                            )
-                        except (ValueError, TypeError):
-                             # Fallback for any unexpected type
-                             display_df_formatted[col] = display_df_formatted[col].astype(str)
-
-                # Display the now string-formatted DataFrame
-                st.dataframe(display_df_formatted, use_container_width=True)
-                # --- END V4.5 FORMATTING ---
+                
+                # Use .style.format() with the correctly built dictionary
+                st.dataframe(
+                    display_df_final.style.format(format_dict, na_rep="N/A"),
+                    use_container_width=True
+                )
+                # --- END V4.6 FORMATTING ---
                 
                 # --- 2. NEW: SHOT-BY-SHOT ANALYSIS ---
                 st.divider()
