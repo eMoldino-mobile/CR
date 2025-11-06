@@ -43,7 +43,7 @@ def load_data(uploaded_file):
 
 # --- V4.2 UPDATE: Re-added caching decorator ---
 @st.cache_data
-def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, target_output_perc):
+def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_output_perc):
     """
     Main function to process the raw DataFrame and calculate all Capacity Risk fields
     using the "Gross Loss" model.
@@ -56,7 +56,7 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, target_outp
     """
     
     # --- 1. Standardize and Prepare Data ---
-    df = df_raw.copy()
+    df = _df_raw.copy()
     col_map = {
         'SHOT TIME': 'SHOT TIME', 'APPROVED CT': 'Approved CT', 'ACTUAL CT': 'Actual CT',
         'Working Cavities': 'Working Cavities', 'Plant Area': 'Plant Area'
@@ -140,6 +140,7 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, target_outp
         
         PERFORMANCE_BENCHMARK = APPROVED_CT
         max_cavities = daily_df['Working Cavities'].max()
+        if max_cavities == 0 or pd.isna(max_cavities): max_cavities = 1 # Fallback
 
         # --- 7. Calculate Per-Shot Metrics (for this day) ---
         df_valid['parts_loss'] = np.where(
@@ -170,7 +171,10 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, target_outp
         # B. Time Calculations
         first_shot_time = daily_df['SHOT TIME'].min()
         last_shot_time = daily_df['SHOT TIME'].max()
-        last_shot_ct = daily_df.loc[daily_df['SHOT TIME'] == last_shot_time, 'Actual CT'].iloc[0]
+        # Find last shot's CT, handle potential errors
+        last_shot_ct_series = daily_df.loc[daily_df['SHOT TIME'] == last_shot_time, 'Actual CT']
+        last_shot_ct = last_shot_ct_series.iloc[0] if not last_shot_ct_series.empty else 0
+        
         time_span_sec = (last_shot_time - first_shot_time).total_seconds()
         results['Total Run Duration (sec)'] = time_span_sec + last_shot_ct
         
@@ -201,7 +205,7 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, target_outp
         st.warning("No data found to process.")
         return None, None
 
-    final_df = pd.DataFrame(daily_results_list)
+    final_df = pd.DataFrame(daily_results_list).fillna(0) # Fill NaNs with 0
     final_df['Date'] = pd.to_datetime(final_df['Date'])
     final_df = final_df.set_index('Date')
     
@@ -304,31 +308,16 @@ if uploaded_file is not None:
                     xaxis_title = "Date"
                 
                 # --- Calculate Percentage Columns AFTER aggregation ---
+                # --- V4.3: Simplified % columns ---
                 display_df['Parts Produced (%)'] = np.where(
                     display_df['Optimal Output'] > 0, 
                     display_df['Parts Produced (parts)'] / display_df['Optimal Output'], 0
                 )
-                display_df['Parts Produced (shots) (%)'] = np.where(
-                    display_df['Total Shots (all)'] > 0, 
-                    display_df['Parts Produced (shots)'] / display_df['Total Shots (all)'], 0
-                )
-                
-                # --- V4.2 RENAMED ---
-                display_df['Actual Cycle Time Total (time %)'] = np.where(
-                    display_df['Total Run Duration (sec)'] > 0, 
-                    display_df['Actual Cycle Time Total (sec)'] / display_df['Total Run Duration (sec)'], 0
-                )
-                display_df['Availability Loss (time %)'] = np.where(
-                    display_df['Total Run Duration (sec)'] > 0, 
-                    display_df['Availability Loss (sec)'] / display_df['Total Run Duration (sec)'], 0
-                )
-                # --- END V4.2 ---
-                
-                display_df['Availability Loss (parts %)'] = np.where(
+                display_df['Availability Loss (%)'] = np.where(
                     display_df['Optimal Output'] > 0, 
                     display_df['Availability Loss (parts)'] / display_df['Optimal Output'], 0
                 )
-                display_df['Slow Cycle Loss (parts %)'] = np.where(
+                display_df['Slow Cycle Loss (%)'] = np.where(
                     display_df['Optimal Output'] > 0, 
                     display_df['Slow Cycle Loss (parts)'] / display_df['Optimal Output'], 0
                 )
@@ -338,8 +327,8 @@ if uploaded_file is not None:
                 )
                 display_df['Target Output (%)'] = target_output_perc / 100.0
                 
+                # --- Add human-readable duration columns ---
                 display_df['Total Run Duration (d/h/m)'] = display_df['Total Run Duration (sec)'].apply(format_seconds_to_dhm)
-                # --- V4.2 ADDED ---
                 display_df['Actual Cycle Time Total (d/h/m)'] = display_df['Actual Cycle Time Total (sec)'].apply(format_seconds_to_dhm)
                 display_df['Availability Loss (d/h/m)'] = display_df['Availability Loss (sec)'].apply(format_seconds_to_dhm)
                 
@@ -358,13 +347,13 @@ if uploaded_file is not None:
                 fig.add_trace(go.Bar(
                     x=chart_df['Date'], y=chart_df['Availability Loss (parts)'], name='Availability Loss',
                     marker_color='red',
-                    customdata=chart_df['Availability Loss (parts %)'],
+                    customdata=chart_df['Availability Loss (%)'],
                     hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Availability Loss: %{y:,.0f} (%{customdata:.1%})<extra></extra>'
                 ))
                 fig.add_trace(go.Bar(
                     x=chart_df['Date'], y=chart_df['Slow Cycle Loss (parts)'], name='Slow Cycle Loss',
                     marker_color='gold',
-                    customdata=chart_df['Slow Cycle Loss (parts %)'],
+                    customdata=chart_df['Slow Cycle Loss (%)'],
                     hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Slow Cycle Loss: %{y:,.0f} (%{customdata:.1%})<extra></extra>'
                 ))
                 fig.add_trace(go.Scatter(
@@ -388,19 +377,16 @@ if uploaded_file is not None:
                 # --- Full Data Table (Open by Default) ---
                 st.header(f"Full {data_frequency} Report")
                 
-                # --- V4.2: New logical column order ---
+                # --- V4.3: New simplified logical column order ---
                 column_order = [
                     # Shot Totals
                     'Total Shots (all)', 
-                    'Parts Produced (shots)', 'Parts Produced (shots) (%)', 
+                    'Parts Produced (shots)', 
                     'Invalid Shots (999.9 sec)',
                     
                     # Duration Totals
-                    'Total Run Duration (sec)', 
                     'Total Run Duration (d/h/m)', 
-                    'Actual Cycle Time Total (sec)', 
-                    'Actual Cycle Time Total (d/h/m)',
-                    'Actual Cycle Time Total (time %)', 
+                    'Actual Cycle Time Total (d/h/m)', 
                     
                     # Output & Targets
                     'Optimal Output', 
@@ -410,20 +396,16 @@ if uploaded_file is not None:
                     'Parts Produced (parts)', 'Parts Produced (%)', 
                     
                     # Availability Loss
-                    'Availability Loss (sec)', 
                     'Availability Loss (d/h/m)',
-                    'Availability Loss (time %)',
-                    'Availability Loss (parts)', 'Availability Loss (parts %)',
-                    'Availability Loss (shots)',
+                    'Availability Loss (parts)', 'Availability Loss (%)',
                     
                     # Performance Loss
-                    'Slow Cycle Loss (parts)', 'Slow Cycle Loss (parts %)',
-                    'Slow Cycle Loss (shots)',
+                    'Slow Cycle Loss (parts)', 'Slow Cycle Loss (%)',
 
                     # Gap Totals
                     'Gap', 'Gap (%)',
                 ]
-                # --- END V4.2 ---
+                # --- END V4.3 ---
                 
                 final_columns = [col for col in column_order if col in display_df.columns]
                 display_df_final = display_df[final_columns]
