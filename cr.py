@@ -423,21 +423,21 @@ if uploaded_file is not None:
                         # --- Create the Plotly Scatter Chart ---
                         fig_ct = go.Figure()
 
-                        # Define colors for each shot type
+                        # --- UPDATED: Define NEW colors for each shot type ---
                         color_map = {
-                            'Slow': 'gold',
-                            'Fast': 'cornflowerblue',
-                            'On Target': 'green'
+                            'Slow': 'red',
+                            'Fast': 'gold',
+                            'On Target': 'darkblue'
                         }
                         
                         # Add traces for each shot type
                         for shot_type, color in color_map.items():
                             df_subset = df_day_shots[df_day_shots['Shot Type'] == shot_type]
                             if not df_subset.empty:
-                                fig_ct.add_trace(go.Scatter(
+                                # --- UPDATED: Changed to go.Bar ---
+                                fig_ct.add_trace(go.Bar(
                                     x=df_subset['SHOT TIME'],
                                     y=df_subset['Actual CT'],
-                                    mode='markers',
                                     name=shot_type,
                                     marker_color=color,
                                     hovertemplate='<b>%{x|%H:%M:%S}</b><br>Actual CT: %{y:.2f}s<extra></extra>'
@@ -454,14 +454,13 @@ if uploaded_file is not None:
                             name=f'Approved CT ({approved_ct_for_day}s)'
                         )
                         
-                        # --- REMOVED the 999.9s line as it was confusing ---
-
                         fig_ct.update_layout(
                             title=f'Shot-by-Shot Cycle Time for {selected_date}',
                             xaxis_title='Time of Day',
                             yaxis_title='Actual Cycle Time (sec)',
                             hovermode="closest",
-                            yaxis_range=[0, y_axis_max] # --- NEW: Apply the zoom ---
+                            yaxis_range=[0, y_axis_max], # Apply the zoom
+                            barmode='overlay' # Ensure bars draw from 0
                         )
                         st.plotly_chart(fig_ct, use_container_width=True)
 
