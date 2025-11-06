@@ -29,10 +29,12 @@ def load_data(uploaded_file):
     """Loads data from the uploaded file (Excel or CSV) into a DataFrame."""
     try:
         if uploaded_file.name.endswith('.csv'):
-            df = pd.read_csv(uploaded_file)
+            # Use header=0 to explicitly tell pandas to use the first row as headers.
+            # If no header, it will use 0, 1, 2... and our str() cast will fix it.
+            df = pd.read_csv(uploaded_file, header=0)
         elif uploaded_file.name.endswith(('.xls', '.xlsx')):
             # Requires openpyxl
-            df = pd.read_excel(uploaded_file)
+            df = pd.read_excel(uploaded_file, header=0)
         else:
             st.error("Error: Unsupported file format. Please upload a CSV or Excel file.")
             return None
@@ -64,7 +66,8 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     rename_dict = {}
     for col in df.columns:
         for standard_name in col_map.values():
-            if col.strip().lower() == standard_name.strip().lower():
+            # --- v4.19 FIX: Cast col to str() to handle non-string headers (like 0, 1, 2)
+            if str(col).strip().lower() == standard_name.strip().lower():
                 rename_dict[col] = standard_name
                 
     df.rename(columns=rename_dict, inplace=True)
@@ -98,7 +101,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         df['Approved CT'] = pd.to_numeric(df['Approved CT'])
         df['Working Cavities'] = pd.to_numeric(df['Working Cavities'])
     except Exception as e:
-        st.error(f"Error converting data types: {e}")
+        st.error(f"Error converting data types: {e}. Check for non-numeric values in CT or Cavities columns.")
         return None, None
         
     # --- 4. Apply Filters (The Toggle) ---
@@ -347,7 +350,6 @@ if uploaded_file is not None:
                     display_df['Total Capacity Loss (parts)'] / display_df['Optimal Output'], 0
                 )
                 
-                # --- V4.11 FIX: Create an array for the target % customdata ---
                 _target_output_perc_array = np.full(len(display_df), target_output_perc / 100.0)
                 
                 chart_df = display_df.reset_index()
@@ -362,7 +364,6 @@ if uploaded_file is not None:
                     y=chart_df['Parts Produced (parts)'],
                     name='Parts Produced',
                     marker_color='green',
-                    # --- v4.17 FIX: Custom data ---
                     customdata=np.stack((
                         chart_df['Parts Produced (%)']
                     ), axis=-1),
@@ -373,7 +374,6 @@ if uploaded_file is not None:
                     y=chart_df['Total Capacity Loss (parts)'],
                     name='Total Capacity Loss (Net)',
                     marker_color='red',
-                    # --- v4.17 FIX: Custom data breakdown ---
                     customdata=np.stack((
                         chart_df['Total Capacity Loss (parts %)'],
                         chart_df['Capacity Loss (downtime) (parts)'],
@@ -396,7 +396,6 @@ if uploaded_file is not None:
                     name='Target Output', 
                     mode='lines',
                     line=dict(color='blue', dash='dash'),
-                    # --- v4.11 FIX: Use the array for customdata ---
                     customdata=_target_output_perc_array,
                     hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Target Output: %{y:,.0f} (%{customdata:.0%})<extra></extra>'
                 ))
@@ -425,8 +424,9 @@ if uploaded_file is not None:
                 # --- Create Table 1 (Totals Report) ---
                 st.header(f"Production Totals Report ({data_frequency})")
                 report_table_1 = pd.DataFrame(index=display_df.index)
+                
+                # --- v4.19 FIX: Use the column from the row 'r' for all lookups ---
                 report_table_1['Total Shots (all)'] = display_df['Total Shots (all)'].map('{:,.0f}'.format)
-                # --- v4.18 FIX: Use the column from the row 'r' ---
                 report_table_1['Valid Shots (non 999.9)'] = display_df.apply(lambda r: f"{r['Valid Shots (non 999.9)']:,.0f} ({r['Valid Shots (non 999.9) (%)']:.1%})", axis=1)
                 report_table_1['Invalid Shots (999.9 sec)'] = display_df['Invalid Shots (999.9 sec)'].map('{:,.0f}'.format)
                 report_table_1['Total Run Duration'] = display_df.apply(lambda r: f"{r['Total Run Duration (d/h/m)']} ({r['Total Run Duration (sec)']:,.0f}s)", axis=1)
@@ -437,9 +437,10 @@ if uploaded_file is not None:
                 # --- Create Table 2 (Capacity Loss Report) ---
                 st.header(f"Capacity Loss & Gain Report ({data_frequency})")
                 report_table_2 = pd.DataFrame(index=display_df.index)
+                
+                # --- v4.19 FIX: Use the column from the row 'r' for all lookups ---
                 report_table_2['Optimal Output'] = display_df['Optimal Output'].map('{:,.2f}'.format)
                 report_table_2['Target Output'] = display_df.apply(lambda r: f"{r['Target Output']:,.2f} ({r['Target Output (%)']:.0%})", axis=1)
-                # --- v4.18 FIX: Use the column from the row 'r' ---
                 report_table_2['Parts Produced'] = display_df.apply(lambda r: f"{r['Parts Produced (parts)']:,.2f} ({r['Parts Produced (%)']:.1%})", axis=1)
                 report_table_2['Capacity Loss (downtime)'] = display_df.apply(lambda r: f"{r['Capacity Loss (downtime) (parts)']:,.2f} ({r['Capacity Loss (downtime) (parts %)']:.1%})", axis=1)
                 report_table_2['Capacity Loss (slow cycles)'] = display_df.apply(lambda r: f"{r['Capacity Loss (slow cycle time) (parts)']:,.2f} ({r['Capacity Loss (slow cycle time) (parts %)']:.1%})", axis=1)
