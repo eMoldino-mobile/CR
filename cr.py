@@ -432,16 +432,18 @@ if uploaded_file is not None:
                 final_columns = [col for col in column_order if col in display_df.columns]
                 display_df_final = display_df[final_columns]
                 
-                # --- V4.4: Robust .style.format() fix ---
+                # --- V4.5: Robust manual formatting fix ---
                 
-                # Create a format dictionary for all columns
+                # Create a copy to modify for display
+                display_df_formatted = display_df_final.copy()
+                
+                # Create the format dictionary
                 format_dict = {}
-                for col in display_df_final.columns:
+                for col in display_df_formatted.columns:
                     if "(%)" in col:
                         format_dict[col] = "{:.1%}"
                     elif "(d/h/m)" in col:
-                        # Pass-through for strings
-                        pass 
+                        pass # This is already a string
                     elif "shots" in col:
                         format_dict[col] = "{:,.0f}"
                     elif "(sec)" in col:
@@ -450,11 +452,19 @@ if uploaded_file is not None:
                         # Default for parts, Gap, Output, etc.
                         format_dict[col] = "{:,.2f}"
 
-                st.dataframe(
-                    display_df_final.style.format(format_dict, na_rep="N/A"),
-                    use_container_width=True
-                )
-                # --- END V4.4 FORMATTING ---
+                # Apply the formatting column by column
+                for col, fmt_str in format_dict.items():
+                    if col in display_df_formatted.columns and col != 'Total Run Duration (d/h/m)' and col != 'Actual Cycle Time Total (d/h/m)' and col != 'Availability Loss (d/h/m)':
+                        try:
+                            display_df_formatted[col] = display_df_formatted[col].apply(
+                                lambda x: fmt_str.format(x) if pd.notna(x) else "N/A"
+                            )
+                        except (ValueError, TypeError):
+                             st.warning(f"Could not format column {col}. Skipping.")
+
+                # Display the now string-formatted DataFrame
+                st.dataframe(display_df_formatted, use_container_width=True)
+                # --- END V4.5 FORMATTING ---
                 
                 # --- 2. NEW: SHOT-BY-SHOT ANALYSIS ---
                 st.divider()
