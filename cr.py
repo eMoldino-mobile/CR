@@ -23,6 +23,7 @@ def load_data(uploaded_file):
         st.error(f"Error loading file: {e}")
         return None
 
+@st.cache_data
 def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, target_output_perc):
     """
     Main function to process the raw DataFrame and calculate all Capacity Risk fields
@@ -158,14 +159,17 @@ def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, target_outp
         last_shot_time = daily_df['SHOT TIME'].max()
         last_shot_ct = daily_df.loc[daily_df['SHOT TIME'] == last_shot_time, 'Actual CT'].iloc[0]
         time_span_sec = (last_shot_time - first_shot_time).total_seconds()
-        results['Total Run Time (sec)'] = time_span_sec + last_shot_ct
+        # --- RENAMED ---
+        results['Total Run Duration (sec)'] = time_span_sec + last_shot_ct
         
         results['Actual Cycle Time Total (sec)'] = df_valid['Actual CT'].sum()
-        results['Downtime (sec)'] = results['Total Run Time (sec)'] - results['Actual Cycle Time Total (sec)']
+        # --- UPDATED ---
+        results['Downtime (sec)'] = results['Total Run Duration (sec)'] - results['Actual Cycle Time Total (sec)']
 
         # C. Output Calculations
         results['Parts Produced'] = df_valid['actual_output'].sum() # RENAMED
-        results['Optimal Output'] = (results['Total Run Time (sec)'] / APPROVED_CT) * max_cavities
+        # --- UPDATED ---
+        results['Optimal Output'] = (results['Total Run Duration (sec)'] / APPROVED_CT) * max_cavities
 
         # D. Loss & Gap Calculations
         results['Availability Loss'] = (results['Downtime (sec)'] / APPROVED_CT) * max_cavities
@@ -295,13 +299,14 @@ if uploaded_file is not None:
                     display_df['Total Shots (all)'] > 0, 
                     display_df['VALID SHOTS'] / display_df['Total Shots (all)'], 0
                 )
+                # --- UPDATED ---
                 display_df['Actual Cycle Time Total (%)'] = np.where(
-                    display_df['Total Run Time (sec)'] > 0, 
-                    display_df['Actual Cycle Time Total (sec)'] / display_df['Total Run Time (sec)'], 0
+                    display_df['Total Run Duration (sec)'] > 0, 
+                    display_df['Actual Cycle Time Total (sec)'] / display_df['Total Run Duration (sec)'], 0
                 )
                 display_df['Downtime (%)'] = np.where(
-                    display_df['Total Run Time (sec)'] > 0, 
-                    display_df['Downtime (sec)'] / display_df['Total Run Time (sec)'], 0
+                    display_df['Total Run Duration (sec)'] > 0, 
+                    display_df['Downtime (sec)'] / display_df['Total Run Duration (sec)'], 0
                 )
                 display_df['Availability Loss (%)'] = np.where(
                     display_df['Optimal Output'] > 0, 
@@ -364,7 +369,7 @@ if uploaded_file is not None:
                     'Total Shots (all)', 
                     'VALID SHOTS', 'VALID SHOTS (%)', 
                     'Invalid Shots (999.9 sec)',
-                    'Total Run Time (sec)', 
+                    'Total Run Duration (sec)', # RENAMED
                     'Actual Cycle Time Total (sec)', 'Actual Cycle Time Total (%)', 
                     'Downtime (sec)', 'Downtime (%)',
                     'Parts Produced', 'Parts Produced (%)', 
