@@ -454,13 +454,19 @@ if uploaded_file is not None:
 
                 # Apply the formatting column by column
                 for col, fmt_str in format_dict.items():
-                    if col in display_df_formatted.columns and col != 'Total Run Duration (d/h/m)' and col != 'Actual Cycle Time Total (d/h/m)' and col != 'Availability Loss (d/h/m)':
+                    # Skip columns that are already strings
+                    if "(d/h/m)" in col:
+                        continue
+                        
+                    if col in display_df_formatted.columns:
                         try:
+                            # Use .apply() on the column to format each value
                             display_df_formatted[col] = display_df_formatted[col].apply(
                                 lambda x: fmt_str.format(x) if pd.notna(x) else "N/A"
                             )
                         except (ValueError, TypeError):
-                             st.warning(f"Could not format column {col}. Skipping.")
+                             # Fallback for any unexpected type
+                             display_df_formatted[col] = display_df_formatted[col].astype(str)
 
                 # Display the now string-formatted DataFrame
                 st.dataframe(display_df_formatted, use_container_width=True)
