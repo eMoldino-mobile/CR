@@ -41,7 +41,7 @@ def load_data(uploaded_file):
         st.error(f"Error loading file: {e}")
         return None
 
-# --- V4.3 UPDATE: Re-added caching decorator ---
+# --- Re-added caching decorator ---
 @st.cache_data
 def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_output_perc):
     """
@@ -427,7 +427,6 @@ if uploaded_file is not None:
                     # Gap Totals
                     'Gap', 'Gap (%)',
                 ]
-                # --- END V4.2 ---
                 
                 final_columns = [col for col in column_order if col in display_df.columns]
                 display_df_final = display_df[final_columns]
