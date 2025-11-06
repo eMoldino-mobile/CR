@@ -431,27 +431,52 @@ if uploaded_file is not None:
                 final_columns = [col for col in column_order if col in display_df.columns]
                 display_df_final = display_df[final_columns]
                 
-                # --- V4.6: ROBUST FORMATTING FIX ---
+                # --- V4.7: NEW ROBUST FORMATTING FIX ---
                 
-                # Create a format dictionary for all numeric columns
-                format_dict = {}
-                for col in display_df_final.columns:
-                    if "(%)" in col:
-                        format_dict[col] = "{:.1%}"
-                    elif "shots" in col:
-                        format_dict[col] = "{:,.0f}"
-                    elif "(sec)" in col:
-                        format_dict[col] = "{:,.0f}"
-                    elif "(d/h/m)" not in col: # Check to explicitly skip strings
-                        # Default for parts, Gap, Output, etc.
-                        format_dict[col] = "{:,.2f}"
+                # 1. Define the formatters
+                format_dict = {
+                    # Percentages
+                    'Parts Produced (%)': '{:.1%}',
+                    'Parts Produced (shots) (%)': '{:.1%}',
+                    'Actual Cycle Time Total (time %)': '{:.1%}',
+                    'Availability Loss (time %)': '{:.1%}',
+                    'Availability Loss (parts %)': '{:.1%}',
+                    'Slow Cycle Loss (parts %)': '{:.1%}',
+                    'Gap (%)': '{:.1%}',
+                    'Target Output (%)': '{:.1%}',
+
+                    # Integers (shots, sec)
+                    'Total Shots (all)': '{:,.0f}',
+                    'Parts Produced (shots)': '{:,.0f}',
+                    'Invalid Shots (999.9 sec)': '{:,.0f}',
+                    'Total Run Duration (sec)': '{:,.0f}',
+                    'Actual Cycle Time Total (sec)': '{:,.0f}',
+                    'Availability Loss (sec)': '{:,.0f}',
+                    'Availability Loss (shots)': '{:,.0f}',
+                    'Slow Cycle Loss (shots)': '{:,.0f}',
+                    
+                    # Floats (parts, output)
+                    'Optimal Output': '{:,.2f}',
+                    'Target Output': '{:,.2f}',
+                    'Parts Produced (parts)': '{:,.2f}',
+                    'Availability Loss (parts)': '{:,.2f}',
+                    'Slow Cycle Loss (parts)': '{:,.2f}',
+                    'Gap': '{:,.2f}'
+                }
+
+                # 2. Get only the columns that actually exist in the dataframe
+                #    and are not the string (d/h/m) columns
+                cols_to_format = {}
+                for col, fmt_str in format_dict.items():
+                    if col in display_df_final.columns:
+                        cols_to_format[col] = fmt_str
                 
-                # Use .style.format() with the correctly built dictionary
+                # 3. Apply the formatting
                 st.dataframe(
-                    display_df_final.style.format(format_dict, na_rep="N/A"),
+                    display_df_final.style.format(cols_to_format, na_rep="N/A"),
                     use_container_width=True
                 )
-                # --- END V4.6 FORMATTING ---
+                # --- END V4.7 FORMATTING ---
                 
                 # --- 2. NEW: SHOT-BY-SHOT ANALYSIS ---
                 st.divider()
