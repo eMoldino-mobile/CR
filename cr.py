@@ -4,7 +4,7 @@ import numpy as np
 import plotly.graph_objects as go
 
 # ==================================================================
-#                       HELPER FUNCTION
+#                       HELPER FUNCTIONS
 # ==================================================================
 
 def format_seconds_to_dhm(total_seconds):
@@ -21,6 +21,46 @@ def format_seconds_to_dhm(total_seconds):
     if minutes > 0 or not parts: parts.append(f"{minutes}m")
     return " ".join(parts)
 
+# --- NEW: Copied from run_rate_app.py for consistency ---
+def create_gauge(value, title, steps=None):
+    """Creates a Plotly gauge chart."""
+    # Define the pastel colors from run_rate_app
+    PASTEL_COLORS = {
+        'red': '#ff6961',
+        'orange': '#ffb347',
+        'green': '#77dd77'
+    }
+    
+    gauge_config = {'axis': {'range': [0, 100]}}
+    if steps:
+        # Use the pastel colors for the steps
+        gauge_config['steps'] = [
+            {'range': [0, 50], 'color': PASTEL_COLORS['red']}, 
+            {'range': [50, 80], 'color': PASTEL_COLORS['orange']},
+            {'range': [80, 100], 'color': PASTEL_COLORS['green']}
+        ]
+        # Invert steps for loss
+        if "Loss" in title:
+             gauge_config['steps'] = [
+                {'range': [0, 20], 'color': PASTEL_COLORS['green']}, 
+                {'range': [20, 50], 'color': PASTEL_COLORS['orange']},
+                {'range': [50, 100], 'color': PASTEL_COLORS['red']}
+            ]
+        
+        gauge_config['bar'] = {'color': '#262730'} # Dark bar for visibility
+    else:
+        gauge_config['bar'] = {'color': "darkblue"}; gauge_config['bgcolor'] = "lightgray"
+        
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number", 
+        value=value, 
+        title={'text': title}, 
+        gauge=gauge_config,
+        number={'suffix': '%'} # Add percentage suffix
+    ))
+    fig.update_layout(height=250, margin=dict(l=20, r=20, t=50, b=20))
+    return fig
+
 # ==================================================================
 #                       DATA CALCULATION
 # ==================================================================
@@ -29,11 +69,8 @@ def load_data(uploaded_file):
     """Loads data from the uploaded file (Excel or CSV) into a DataFrame."""
     try:
         if uploaded_file.name.endswith('.csv'):
-            # Use header=0 to explicitly tell pandas to use the first row as headers.
-            # If no header, it will use 0, 1, 2... and our str() cast will fix it.
             df = pd.read_csv(uploaded_file, header=0)
         elif uploaded_file.name.endswith(('.xls', '.xlsx')):
-            # Requires openpyxl
             df = pd.read_excel(uploaded_file, header=0)
         else:
             st.error("Error: Unsupported file format. Please upload a CSV or Excel file.")
@@ -49,12 +86,6 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     """
     Main function to process the raw DataFrame and calculate all Capacity Risk fields
     using the "Net Loss" model.
-    
-    This version groups the calculations by day.
-    
-    RETURNS:
-    - final_df (DataFrame): The aggregated daily report.
-    - all_shots_df (DataFrame): The raw, filtered, shot-by-shot data with 'Shot Type'.
     """
     
     # --- 1. Standardize and Prepare Data ---
@@ -66,7 +97,6 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     rename_dict = {}
     for col in df.columns:
         for standard_name in col_map.values():
-            # --- v4.19 FIX: Cast col to str() to handle non-string headers (like 0, 1, 2)
             if str(col).strip().lower() == standard_name.strip().lower():
                 rename_dict[col] = standard_name
                 
@@ -115,19 +145,16 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         return None, None
 
     # --- 5. NEW: Group by Day ---
-    # Create a 'date' column for grouping
     df_production_only['date'] = df_production_only['SHOT TIME'].dt.date
     
     daily_results_list = []
-    all_valid_shots_list = [] # Fixed: Initialized list
+    all_valid_shots_list = []
     
-    # Iterate over each day's data
     for date, daily_df in df_production_only.groupby('date'):
         
         results = {}
         results['Date'] = date
         
-        # Create the final 'valid' dataframe (for cycle calcs)
         df_valid = daily_df[daily_df['Actual CT'] < 999.9].copy()
 
         if df_valid.empty or len(daily_df) < 2:
@@ -143,10 +170,9 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         
         PERFORMANCE_BENCHMARK = APPROVED_CT
         max_cavities = daily_df['Working Cavities'].max()
-        if max_cavities == 0 or pd.isna(max_cavities): max_cavities = 1 # Fallback
+        if max_cavities == 0 or pd.isna(max_cavities): max_cavities = 1
 
         # --- 7. Calculate Per-Shot Metrics (for this day) ---
-        
         df_valid['parts_gain'] = np.where(
             df_valid['Actual CT'] < PERFORMANCE_BENCHMARK,
             ((PERFORMANCE_BENCHMARK - df_valid['Actual CT']) / PERFORMANCE_BENCHMARK) * max_cavities, 
@@ -171,13 +197,10 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         all_valid_shots_list.append(df_valid)
         
         # --- 8. Calculate Daily Aggregates ---
-        
-        # A. Basic Counts
         results['Total Shots (all)'] = len(daily_df)
-        results['Valid Shots (non 999.9)'] = len(df_valid) # RENAMED
+        results['Valid Shots (non 999.9)'] = len(df_valid)
         results['Invalid Shots (999.9 sec)'] = results['Total Shots (all)'] - results['Valid Shots (non 999.9)']
 
-        # B. Time Calculations
         first_shot_time = daily_df['SHOT TIME'].min()
         last_shot_time = daily_df['SHOT TIME'].max()
         last_shot_ct_series = daily_df.loc[daily_df['SHOT TIME'] == last_shot_time, 'Actual CT']
@@ -189,22 +212,16 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         results['Actual Cycle Time Total (sec)'] = df_valid['Actual CT'].sum()
         
         results['Capacity Loss (downtime) (sec)'] = results['Total Run Duration (sec)'] - results['Actual Cycle Time Total (sec)'] 
-        results['Capacity Loss (downtime) (shots)'] = results['Capacity Loss (downtime) (sec)'] / APPROVED_CT
 
-        # C. Output Calculations
         results['Parts Produced (parts)'] = df_valid['actual_output'].sum() 
         results['Optimal Output'] = (results['Total Run Duration (sec)'] / APPROVED_CT) * max_cavities
 
-        # D. Loss & Gap Calculations
         results['Capacity Loss (downtime) (parts)'] = (results['Capacity Loss (downtime) (sec)'] / APPROVED_CT) * max_cavities 
         results['Capacity Loss (slow cycle time) (parts)'] = df_valid['parts_loss'].sum() 
         results['Capacity Gain (fast cycle time) (parts)'] = df_valid['parts_gain'].sum()
         
-        results['Capacity Loss (slow cycle time) (shots)'] = (df_valid['parts_loss'] / max_cavities).sum()
-
         results['Total Capacity Loss (parts)'] = results['Capacity Loss (downtime) (parts)'] + results['Capacity Loss (slow cycle time) (parts)'] - results['Capacity Gain (fast cycle time) (parts)']
         
-        # F. Target
         results['Target Output'] = results['Optimal Output'] * (target_output_perc / 100.0)
         
         daily_results_list.append(results)
@@ -214,7 +231,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         st.warning("No data found to process.")
         return None, None
 
-    final_df = pd.DataFrame(daily_results_list).fillna(0) # Fill NaNs with 0
+    final_df = pd.DataFrame(daily_results_list).fillna(0)
     final_df['Date'] = pd.to_datetime(final_df['Date'])
     final_df = final_df.set_index('Date')
     
@@ -317,11 +334,12 @@ if uploaded_file is not None:
                     xaxis_title = "Date"
                 
                 # --- Calculate Percentage Columns AFTER aggregation ---
+                # These are used in the tables
                 display_df['Parts Produced (%)'] = np.where(
                     display_df['Optimal Output'] > 0, 
                     display_df['Parts Produced (parts)'] / display_df['Optimal Output'], 0
                 )
-                display_df['Valid Shots (non 999.9) (%)'] = np.where( # RENAMED
+                display_df['Valid Shots (non 999.9) (%)'] = np.where( 
                     display_df['Total Shots (all)'] > 0, 
                     display_df['Valid Shots (non 999.9)'] / display_df['Total Shots (all)'], 0
                 )
@@ -357,6 +375,50 @@ if uploaded_file is not None:
                 display_df['Actual Cycle Time Total (d/h/m)'] = display_df['Actual Cycle Time Total (sec)'].apply(format_seconds_to_dhm)
                 
                 chart_df = display_df.reset_index()
+
+                # --- NEW: KPI Dashboard (v4.21) ---
+                st.header(f"Key Metrics for Selected Period ({data_frequency})")
+
+                # --- 1. Calculate Aggregates for Metrics ---
+                total_produced = display_df['Parts Produced (parts)'].sum()
+                total_loss = display_df['Total Capacity Loss (parts)'].sum()
+                total_target = display_df['Target Output'].sum()
+                total_optimal = display_df['Optimal Output'].sum()
+                total_run_sec = display_df['Total Run Duration (sec)'].sum()
+                total_run_dhm = format_seconds_to_dhm(total_run_sec)
+                
+                # Calculate percentages for the *total* period
+                prod_perc = (total_produced / total_optimal) * 100 if total_optimal > 0 else 0
+                loss_perc = (total_loss / total_optimal) * 100 if total_optimal > 0 else 0
+
+                # --- 2. Display st.metric boxes (like run_rate_app) ---
+                with st.container(border=True):
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    col1.metric("Total Parts Produced", f"{total_produced:,.0f}")
+                    # Use delta to show gain/loss vs. target
+                    col2.metric("Total Target Output", f"{total_target:,.0f}", 
+                                 f"{total_produced - total_target:,.0f} vs. Target",
+                                 delta_color="normal") 
+                    
+                    col3.metric("Total Capacity Loss (Net)", f"{total_loss:,.0f}", delta_color="inverse")
+                    
+                    col4.metric("Total Run Duration", total_run_dhm)
+                
+                # --- 3. Display Gauge charts (like run_rate_app) ---
+                with st.container(border=True):
+                    colA, colB = st.columns(2)
+
+                    # Gauge for Production vs. Optimal
+                    fig_prod = create_gauge(prod_perc, "Production vs. Optimal")
+                    colA.plotly_chart(fig_prod, use_container_width=True)
+
+                    # Gauge for Loss vs. Optimal
+                    fig_loss = create_gauge(loss_perc, "Total Loss vs. Optimal")
+                    colB.plotly_chart(fig_loss, use_container_width=True)
+                
+                # --- END NEW KPI Dashboard ---
+
 
                 # --- Performance Breakdown Chart (v4.16 - Net Loss Stack) ---
                 st.header(f"{data_frequency} Performance Breakdown")
