@@ -4,6 +4,24 @@ import numpy as np
 import plotly.graph_objects as go
 
 # ==================================================================
+#                       HELPER FUNCTION
+# ==================================================================
+
+def format_seconds_to_dhm(total_seconds):
+    """Converts total seconds into a 'Xd Yh Zm' string."""
+    if pd.isna(total_seconds) or total_seconds < 0: return "N/A"
+    total_minutes = int(total_seconds / 60)
+    days = total_minutes // (60 * 24)
+    remaining_minutes = total_minutes % (60 * 24)
+    hours = remaining_minutes // 60
+    minutes = remaining_minutes % 60
+    parts = []
+    if days > 0: parts.append(f"{days}d")
+    if hours > 0: parts.append(f"{hours}h")
+    if minutes > 0 or not parts: parts.append(f"{minutes}m")
+    return " ".join(parts)
+
+# ==================================================================
 #                       DATA CALCULATION
 # ==================================================================
 
@@ -321,6 +339,10 @@ if uploaded_file is not None:
                     display_df['Gap'] / display_df['Optimal Output'], 0
                 )
                 display_df['Target Output (%)'] = target_output_perc / 100.0
+                
+                # --- NEW: Add human-readable duration column ---
+                display_df['Total Run Duration (d/h/m)'] = display_df['Total Run Duration (sec)'].apply(format_seconds_to_dhm)
+                # --- END NEW LOGIC ---
 
                 chart_df = display_df.reset_index()
 
@@ -369,7 +391,8 @@ if uploaded_file is not None:
                     'Total Shots (all)', 
                     'VALID SHOTS', 'VALID SHOTS (%)', 
                     'Invalid Shots (999.9 sec)',
-                    'Total Run Duration (sec)', # RENAMED
+                    'Total Run Duration (sec)', 
+                    'Total Run Duration (d/h/m)', # ADDED
                     'Actual Cycle Time Total (sec)', 'Actual Cycle Time Total (%)', 
                     'Downtime (sec)', 'Downtime (%)',
                     'Parts Produced', 'Parts Produced (%)', 
@@ -384,7 +407,10 @@ if uploaded_file is not None:
                 format_dict = {}
                 for col in display_df_final.columns:
                     if "(%)" in col: format_dict[col] = "{:.1%}"
+                    # NEW: Don't format the d/h/m string
+                    elif "(d/h/m)" in col: format_dict[col] = None
                     else: format_dict[col] = "{:,.2f}"
+
                 st.dataframe(
                     display_df_final.style.format(format_dict, na_rep="N/A"),
                     use_container_width=True
