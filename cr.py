@@ -116,7 +116,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     df_production_only['date'] = df_production_only['SHOT TIME'].dt.date
     
     daily_results_list = []
-    all_valid_shots_list = [] # NEW: To store shot-by-shot data
+    # ... (Lines 1-100) ...
     
     # Iterate over each day's data
     for date, daily_df in df_production_only.groupby('date'):
@@ -192,7 +192,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         # D. Loss & Gap Calculations (RENAMED v4.8)
         results['Capacity Loss (downtime) (parts)'] = (results['Capacity Loss (downtime) (sec)'] / APPROVED_CT) * max_cavities 
         results['Capacity Loss (slow cycle time) (parts)'] = df_valid['parts_loss'].sum() 
-        results['Capacity Gain (fast cycle time) (parts)'] = df_valid['parts_gain'].sum() # RE-INTRODUCED
+        # ... (Lines 101-180) ...
         
         # --- NEW: Total Capacity Loss (Net) ---
         results['Total Capacity Loss (parts)'] = results['Capacity Loss (downtime) (parts)'] + results['Capacity Loss (slow cycle time) (parts)'] - results['Capacity Gain (fast cycle time) (parts)']
@@ -320,6 +320,9 @@ if uploaded_file is not None:
                 _fast_gain_parts_perc = np.where(display_df['Optimal Output'] > 0, display_df['Capacity Gain (fast cycle time) (parts)'] / display_df['Optimal Output'], 0)
                 _total_loss_parts_perc = np.where(display_df['Optimal Output'] > 0, display_df['Total Capacity Loss (parts)'] / display_df['Optimal Output'], 0)
                 
+                # --- V4.11 FIX: Create the target percentage array ---
+                _target_output_perc = np.full(len(display_df), target_output_perc / 100.0)
+                
                 chart_df = display_df.reset_index()
 
                 # --- Performance Breakdown Chart (v4.8 - Net Loss Model) ---
@@ -360,7 +363,8 @@ if uploaded_file is not None:
                 fig.add_trace(go.Scatter(
                     x=chart_df['Date'], y=display_df['Target Output'], name='Target Output', 
                     mode='lines', line=dict(color='blue', dash='dash'),
-                    customdata=target_output_perc / 100.0,
+                    # --- V4.11 FIX: Pass the array, not the single number ---
+                    customdata=_target_output_perc, 
                     hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Target Output: %{y:,.0f} (%{customdata:.0%})<extra></extra>'
                 ))
                 fig.add_trace(go.Scatter(
@@ -436,7 +440,7 @@ if uploaded_file is not None:
                     )
                     
                     # Filter the shot data to the selected day
-                    df_day_shots = all_shots_df[all_shots_df['date'] == selected_date].copy()
+                    # ... (Lines 400-450) ...
                     
                     if df_day_shots.empty:
                         st.warning(f"No valid shots found for {selected_date}.")
