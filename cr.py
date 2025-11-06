@@ -41,6 +41,7 @@ def load_data(uploaded_file):
         st.error(f"Error loading file: {e}")
         return None
 
+# --- V4.2 UPDATE: Re-added caching decorator ---
 @st.cache_data
 def calculate_capacity_risk(df_raw, toggle_filter, default_cavities, target_output_perc):
     """
@@ -311,7 +312,9 @@ if uploaded_file is not None:
                     display_df['Total Shots (all)'] > 0, 
                     display_df['Parts Produced (shots)'] / display_df['Total Shots (all)'], 0
                 )
-                display_df['Actual Cycle Time Total (%)'] = np.where(
+                
+                # --- V4.2 RENAMED ---
+                display_df['Actual Cycle Time Total (time %)'] = np.where(
                     display_df['Total Run Duration (sec)'] > 0, 
                     display_df['Actual Cycle Time Total (sec)'] / display_df['Total Run Duration (sec)'], 0
                 )
@@ -319,6 +322,8 @@ if uploaded_file is not None:
                     display_df['Total Run Duration (sec)'] > 0, 
                     display_df['Availability Loss (sec)'] / display_df['Total Run Duration (sec)'], 0
                 )
+                # --- END V4.2 ---
+                
                 display_df['Availability Loss (parts %)'] = np.where(
                     display_df['Optimal Output'] > 0, 
                     display_df['Availability Loss (parts)'] / display_df['Optimal Output'], 0
@@ -334,6 +339,8 @@ if uploaded_file is not None:
                 display_df['Target Output (%)'] = target_output_perc / 100.0
                 
                 display_df['Total Run Duration (d/h/m)'] = display_df['Total Run Duration (sec)'].apply(format_seconds_to_dhm)
+                # --- V4.2 ADDED ---
+                display_df['Actual Cycle Time Total (d/h/m)'] = display_df['Actual Cycle Time Total (sec)'].apply(format_seconds_to_dhm)
                 display_df['Availability Loss (d/h/m)'] = display_df['Availability Loss (sec)'].apply(format_seconds_to_dhm)
                 
                 chart_df = display_df.reset_index()
@@ -381,7 +388,7 @@ if uploaded_file is not None:
                 # --- Full Data Table (Open by Default) ---
                 st.header(f"Full {data_frequency} Report")
                 
-                # --- UPDATED: New logical column order ---
+                # --- V4.2: New logical column order ---
                 column_order = [
                     # Shot Totals
                     'Total Shots (all)', 
@@ -391,7 +398,9 @@ if uploaded_file is not None:
                     # Duration Totals
                     'Total Run Duration (sec)', 
                     'Total Run Duration (d/h/m)', 
-                    'Actual Cycle Time Total (sec)', 'Actual Cycle Time Total (%)', 
+                    'Actual Cycle Time Total (sec)', 
+                    'Actual Cycle Time Total (d/h/m)',
+                    'Actual Cycle Time Total (time %)', 
                     
                     # Output & Targets
                     'Optimal Output', 
@@ -401,10 +410,11 @@ if uploaded_file is not None:
                     'Parts Produced (parts)', 'Parts Produced (%)', 
                     
                     # Availability Loss
+                    'Availability Loss (sec)', 
+                    'Availability Loss (d/h/m)',
+                    'Availability Loss (time %)',
                     'Availability Loss (parts)', 'Availability Loss (parts %)',
                     'Availability Loss (shots)',
-                    'Availability Loss (sec)', 'Availability Loss (d/h/m)',
-                    'Availability Loss (time %)',
                     
                     # Performance Loss
                     'Slow Cycle Loss (parts)', 'Slow Cycle Loss (parts %)',
@@ -413,6 +423,7 @@ if uploaded_file is not None:
                     # Gap Totals
                     'Gap', 'Gap (%)',
                 ]
+                # --- END V4.2 ---
                 
                 final_columns = [col for col in column_order if col in display_df.columns]
                 display_df_final = display_df[final_columns]
