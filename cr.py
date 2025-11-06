@@ -296,6 +296,123 @@ if uploaded_file is not None:
             
             if results_df is not None and not results_df.empty:
                 
+                # --- [NEW] All-Time Summary Chart ---
+                # This new section adds the summary chart you requested
+                st.header("Actual vs Optimal Production Output (All Time)")
+                
+                # 1. Calculate totals from the daily results dataframe
+                total_produced = results_df['Parts Produced (parts)'].sum()
+                total_downtime_loss = results_df['Capacity Loss (downtime) (parts)'].sum()
+                total_slow_loss = results_df['Capacity Loss (slow cycle time) (parts)'].sum()
+                total_fast_gain = results_df['Capacity Gain (fast cycle time) (parts)'].sum()
+                
+                # This is the "Slow/Fast" combined loss
+                total_net_cycle_loss = total_slow_loss - total_fast_gain 
+                
+                total_optimal = results_df['Optimal Output'].sum()
+
+                # Create the chart categories
+                categories = [
+                    'Actual Production Output', 
+                    'Net Cycle Time Loss', 
+                    'Downtime Loss', 
+                    f'Optimal Output ({target_output_perc:.0f}% Target)' # Use target % as in your request
+                ]
+                
+                # Create the figure
+                fig_summary = go.Figure()
+
+                # --- Bar 1: Actual Production ---
+                fig_summary.add_trace(go.Bar(
+                    x=[categories[0]],
+                    y=[total_produced],
+                    name='Actual Parts',
+                    marker_color='green',
+                    text=[f"{total_produced:,.0f}<br>Actual Parts"],
+                    textposition='auto',
+                    hoverinfo='x+y'
+                ))
+
+                # --- Bar 2: Net Cycle Loss (Stacked) ---
+                # Base (faint produced)
+                fig_summary.add_trace(go.Bar(
+                    x=[categories[1]],
+                    y=[total_produced],
+                    name='Base (Produced)',
+                    marker_color='rgba(0, 128, 0, 0.2)', # Faint green
+                    showlegend=False,
+                    hoverinfo='none'
+                ))
+                # Top (Net Loss)
+                fig_summary.add_trace(go.Bar(
+                    x=[categories[1]],
+                    y=[total_net_cycle_loss],
+                    name='Net Cycle Loss',
+                    marker_color='gold',
+                    text=[f"{total_net_cycle_loss:,.0f}<br>Parts Lost"],
+                    textposition='auto',
+                    hovertemplate='<b>Net Cycle Time Loss</b><br>Slow Loss: %{customdata[0]:,.0f}<br>Fast Gain: -%{customdata[1]:,.0f}<br><b>Net: %{y:,.0f}</b><extra></extra>',
+                    customdata=np.array([[total_slow_loss, total_fast_gain]])
+                ))
+                
+                # --- Bar 3: Downtime Loss (Stacked) ---
+                # Base (faint produced)
+                fig_summary.add_trace(go.Bar(
+                    x=[categories[2]],
+                    y=[total_produced],
+                    name='Base (Produced)',
+                    marker_color='rgba(0, 128, 0, 0.2)', # Faint green
+                    showlegend=False,
+                    hoverinfo='none'
+                ))
+                # Base (faint cycle loss)
+                fig_summary.add_trace(go.Bar(
+                    x=[categories[2]],
+                    y=[total_net_cycle_loss],
+                    name='Base (Cycle Loss)',
+                    marker_color='rgba(255, 215, 0, 0.2)', # Faint gold
+                    showlegend=False,
+                    hoverinfo='none'
+                ))
+                # Top (Downtime Loss)
+                fig_summary.add_trace(go.Bar(
+                    x=[categories[2]],
+                    y=[total_downtime_loss],
+                    name='Downtime Loss',
+                    marker_color='red',
+                    text=[f"{total_downtime_loss:,.0f}<br>Parts Lost"],
+                    textposition='auto',
+                    hoverinfo='x+y'
+                ))
+                
+                # --- Bar 4: Optimal Output ---
+                fig_summary.add_trace(go.Bar(
+                    x=[categories[3]],
+                    y=[total_optimal],
+                    name='Optimal Output',
+                    marker_color='grey',
+                    text=[f"{total_optimal:,.0f}<br>Optimal"],
+                    textposition='auto',
+                    hoverinfo='x+y'
+                ))
+
+                # --- Layout Updates ---
+                fig_summary.update_layout(
+                    barmode='stack',
+                    title='Actual vs Optimal Production Output (All Time)',
+                    yaxis_title='Parts',
+                    showlegend=True,
+                    legend_title='Metric',
+                    xaxis=dict(
+                        categoryorder='array', # Enforce the category order
+                        categoryarray=categories
+                    )
+                )
+                
+                st.plotly_chart(fig_summary, use_container_width=True)
+                
+                st.divider() # Add a divider before the next section
+                
                 # --- 1. AGGREGATED REPORT (Chart & Table) ---
                 
                 # --- Aggregate data based on frequency selection ---
