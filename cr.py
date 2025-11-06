@@ -432,44 +432,29 @@ if uploaded_file is not None:
                 final_columns = [col for col in column_order if col in display_df.columns]
                 display_df_final = display_df[final_columns]
                 
-                # --- V4.3: Robust manual formatting fix ---
-                # Create a copy to format and ensure it's object type for strings
-                formatted_df = display_df_final.astype(object)
+                # --- V4.4: Robust .style.format() fix ---
+                
+                # Create a format dictionary for all columns
+                format_dict = {}
+                for col in display_df_final.columns:
+                    if "(%)" in col:
+                        format_dict[col] = "{:.1%}"
+                    elif "(d/h/m)" in col:
+                        # Pass-through for strings
+                        pass 
+                    elif "shots" in col:
+                        format_dict[col] = "{:,.0f}"
+                    elif "(sec)" in col:
+                        format_dict[col] = "{:,.0f}"
+                    else:
+                        # Default for parts, Gap, Output, etc.
+                        format_dict[col] = "{:,.2f}"
 
-                # Iterate and apply string formatting
-                for col in formatted_df.columns:
-                    for idx in formatted_df.index:
-                        value = formatted_df.at[idx, col]
-                        
-                        # Skip if already formatted or is None/NA
-                        if pd.isna(value) or isinstance(value, str):
-                            if pd.isna(value):
-                                formatted_df.at[idx, col] = "N/A"
-                            continue 
-                        
-                        # Apply formatting based on column name
-                        try:
-                            if "(%)" in col:
-                                formatted_df.at[idx, col] = f"{value:.1%}"
-                            elif "(d/h/m)" in col:
-                                # Value is already a string, this is a fallback
-                                formatted_df.at[idx, col] = str(value) 
-                            elif "shots" in col:
-                                formatted_df.at[idx, col] = f"{value:,.0f}"
-                            elif "(sec)" in col:
-                                formatted_df.at[idx, col] = f"{value:,.0f}"
-                            else:
-                                formatted_df.at[idx, col] = f"{value:,.2f}"
-                        except (ValueError, TypeError):
-                            formatted_df.at[idx, col] = str(value) # Fallback
-
-                # 4. Display the string-formatted DataFrame
-                # We don't use .style.format() at all now.
                 st.dataframe(
-                    formatted_df,
+                    display_df_final.style.format(format_dict, na_rep="N/A"),
                     use_container_width=True
                 )
-                # --- END V4.3 FORMATTING ---
+                # --- END V4.4 FORMATTING ---
                 
                 # --- 2. NEW: SHOT-BY-SHOT ANALYSIS ---
                 st.divider()
