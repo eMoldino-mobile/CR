@@ -41,7 +41,7 @@ def load_data(uploaded_file):
         st.error(f"Error loading file: {e}")
         return None
 
-# --- V4.2 UPDATE: Re-added caching decorator ---
+# --- V4.3 UPDATE: Re-added caching decorator ---
 @st.cache_data
 def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_output_perc):
     """
@@ -308,16 +308,29 @@ if uploaded_file is not None:
                     xaxis_title = "Date"
                 
                 # --- Calculate Percentage Columns AFTER aggregation ---
-                # --- V4.3: Simplified % columns ---
                 display_df['Parts Produced (%)'] = np.where(
                     display_df['Optimal Output'] > 0, 
                     display_df['Parts Produced (parts)'] / display_df['Optimal Output'], 0
                 )
-                display_df['Availability Loss (%)'] = np.where(
+                display_df['Parts Produced (shots) (%)'] = np.where(
+                    display_df['Total Shots (all)'] > 0, 
+                    display_df['Parts Produced (shots)'] / display_df['Total Shots (all)'], 0
+                )
+                
+                display_df['Actual Cycle Time Total (time %)'] = np.where(
+                    display_df['Total Run Duration (sec)'] > 0, 
+                    display_df['Actual Cycle Time Total (sec)'] / display_df['Total Run Duration (sec)'], 0
+                )
+                display_df['Availability Loss (time %)'] = np.where(
+                    display_df['Total Run Duration (sec)'] > 0, 
+                    display_df['Availability Loss (sec)'] / display_df['Total Run Duration (sec)'], 0
+                )
+                
+                display_df['Availability Loss (parts %)'] = np.where(
                     display_df['Optimal Output'] > 0, 
                     display_df['Availability Loss (parts)'] / display_df['Optimal Output'], 0
                 )
-                display_df['Slow Cycle Loss (%)'] = np.where(
+                display_df['Slow Cycle Loss (parts %)'] = np.where(
                     display_df['Optimal Output'] > 0, 
                     display_df['Slow Cycle Loss (parts)'] / display_df['Optimal Output'], 0
                 )
@@ -347,13 +360,13 @@ if uploaded_file is not None:
                 fig.add_trace(go.Bar(
                     x=chart_df['Date'], y=chart_df['Availability Loss (parts)'], name='Availability Loss',
                     marker_color='red',
-                    customdata=chart_df['Availability Loss (%)'],
+                    customdata=chart_df['Availability Loss (parts %)'],
                     hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Availability Loss: %{y:,.0f} (%{customdata:.1%})<extra></extra>'
                 ))
                 fig.add_trace(go.Bar(
                     x=chart_df['Date'], y=chart_df['Slow Cycle Loss (parts)'], name='Slow Cycle Loss',
                     marker_color='gold',
-                    customdata=chart_df['Slow Cycle Loss (%)'],
+                    customdata=chart_df['Slow Cycle Loss (parts %)'],
                     hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Slow Cycle Loss: %{y:,.0f} (%{customdata:.1%})<extra></extra>'
                 ))
                 fig.add_trace(go.Scatter(
@@ -377,16 +390,24 @@ if uploaded_file is not None:
                 # --- Full Data Table (Open by Default) ---
                 st.header(f"Full {data_frequency} Report")
                 
-                # --- V4.3: New simplified logical column order ---
+                # --- V4.2: New logical column order ---
                 column_order = [
                     # Shot Totals
                     'Total Shots (all)', 
-                    'Parts Produced (shots)', 
+                    'Parts Produced (shots)', 'Parts Produced (shots) (%)', 
                     'Invalid Shots (999.9 sec)',
                     
                     # Duration Totals
+                    'Total Run Duration (sec)', 
                     'Total Run Duration (d/h/m)', 
-                    'Actual Cycle Time Total (d/h/m)', 
+                    
+                    'Actual Cycle Time Total (sec)', 
+                    'Actual Cycle Time Total (d/h/m)',
+                    'Actual Cycle Time Total (time %)', 
+                    
+                    'Availability Loss (sec)', 
+                    'Availability Loss (d/h/m)',
+                    'Availability Loss (time %)',
                     
                     # Output & Targets
                     'Optimal Output', 
@@ -396,33 +417,59 @@ if uploaded_file is not None:
                     'Parts Produced (parts)', 'Parts Produced (%)', 
                     
                     # Availability Loss
-                    'Availability Loss (d/h/m)',
-                    'Availability Loss (parts)', 'Availability Loss (%)',
+                    'Availability Loss (parts)', 'Availability Loss (parts %)',
+                    'Availability Loss (shots)',
                     
                     # Performance Loss
-                    'Slow Cycle Loss (parts)', 'Slow Cycle Loss (%)',
+                    'Slow Cycle Loss (parts)', 'Slow Cycle Loss (parts %)',
+                    'Slow Cycle Loss (shots)',
 
                     # Gap Totals
                     'Gap', 'Gap (%)',
                 ]
-                # --- END V4.3 ---
+                # --- END V4.2 ---
                 
                 final_columns = [col for col in column_order if col in display_df.columns]
                 display_df_final = display_df[final_columns]
                 
-                # Create a format dictionary for all columns
-                format_dict = {}
-                for col in display_df_final.columns:
-                    if "(%)" in col: format_dict[col] = "{:.1%}"
-                    elif "(d/h/m)" in col: format_dict[col] = None # No formatting
-                    elif "shots" in col: format_dict[col] = "{:,.0f}" # Whole numbers
-                    elif "(sec)" in col: format_dict[col] = "{:,.0f}" # Whole numbers
-                    else: format_dict[col] = "{:,.2f}" # Default to 2 decimals
+                # --- V4.3: Robust manual formatting fix ---
+                # Create a copy to format and ensure it's object type for strings
+                formatted_df = display_df_final.astype(object)
 
+                # Iterate and apply string formatting
+                for col in formatted_df.columns:
+                    for idx in formatted_df.index:
+                        value = formatted_df.at[idx, col]
+                        
+                        # Skip if already formatted or is None/NA
+                        if pd.isna(value) or isinstance(value, str):
+                            if pd.isna(value):
+                                formatted_df.at[idx, col] = "N/A"
+                            continue 
+                        
+                        # Apply formatting based on column name
+                        try:
+                            if "(%)" in col:
+                                formatted_df.at[idx, col] = f"{value:.1%}"
+                            elif "(d/h/m)" in col:
+                                # Value is already a string, this is a fallback
+                                formatted_df.at[idx, col] = str(value) 
+                            elif "shots" in col:
+                                formatted_df.at[idx, col] = f"{value:,.0f}"
+                            elif "(sec)" in col:
+                                formatted_df.at[idx, col] = f"{value:,.0f}"
+                            else:
+                                formatted_df.at[idx, col] = f"{value:,.2f}"
+                        except (ValueError, TypeError):
+                            formatted_df.at[idx, col] = str(value) # Fallback
+
+                # 4. Display the string-formatted DataFrame
+                # We don't use .style.format() at all now.
                 st.dataframe(
-                    display_df_final.style.format(format_dict, na_rep="N/A"),
+                    formatted_df,
                     use_container_width=True
                 )
+                # --- END V4.3 FORMATTING ---
                 
                 # --- 2. NEW: SHOT-BY-SHOT ANALYSIS ---
                 st.divider()
