@@ -343,7 +343,6 @@ if uploaded_file is not None:
                     display_df['Optimal Output'] > 0, 
                     display_df['Capacity Loss (slow cycle time) (parts)'] / display_df['Optimal Output'], 0
                 )
-                # --- RE-INTRODUCED ---
                 display_df['Capacity Gain (fast cycle time) (parts %)'] = np.where(
                     display_df['Optimal Output'] > 0, 
                     display_df['Capacity Gain (fast cycle time) (parts)'] / display_df['Optimal Output'], 0
@@ -421,52 +420,44 @@ if uploaded_file is not None:
                 st.plotly_chart(fig, use_container_width=True)
                 
                 # --- Full Data Table (Open by Default) ---
-                st.header(f"Full {data_frequency} Report")
+                # --- V4.9: SPLIT INTO TWO TABLES ---
                 
-                # --- V4.8: New logical column order ---
-                column_order = [
-                    # Shot Totals
+                # --- TABLE 1: Totals Report ---
+                st.header(f"Total Shots & Duration Report ({data_frequency})")
+                
+                column_order_1 = [
                     'Total Shots (all)', 
                     'Parts Produced (shots)', 'Parts Produced (shots) (%)', 
                     'Invalid Shots (999.9 sec)',
-                    
-                    # Duration Totals
                     'Total Run Duration (sec)', 
                     'Total Run Duration (d/h/m)', 
-                    
                     'Actual Cycle Time Total (sec)', 
                     'Actual Cycle Time Total (d/h/m)',
                     'Actual Cycle Time Total (time %)', 
-                    
                     'Capacity Loss (downtime) (sec)', 
                     'Capacity Loss (downtime) (d/h/m)',
                     'Capacity Loss (downtime) (time %)',
-                    
-                    # Output & Targets
+                ]
+                final_columns_1 = [col for col in column_order_1 if col in display_df.columns]
+                display_df_1 = display_df[final_columns_1]
+
+                # --- TABLE 2: Capacity Loss Report ---
+                st.header(f"Capacity Loss & Production Report ({data_frequency})")
+                
+                column_order_2 = [
                     'Optimal Output', 
                     'Target Output', 'Target Output (%)',
-                    
-                    # Production
                     'Parts Produced (parts)', 'Parts Produced (%)', 
-                    
-                    # Availability Loss (Downtime)
                     'Capacity Loss (downtime) (parts)', 'Capacity Loss (downtime) (parts %)',
                     'Capacity Loss (downtime) (shots)',
-                    
-                    # Performance Loss (Slow)
                     'Capacity Loss (slow cycle time) (parts)', 'Capacity Loss (slow cycle time) (parts %)',
                     'Capacity Loss (slow cycle time) (shots)',
-                    
-                    # Performance Gain (Fast)
                     'Capacity Gain (fast cycle time) (parts)', 'Capacity Gain (fast cycle time) (parts %)',
-
-                    # Gap Totals
                     'Total Capacity Loss (parts)', 'Total Capacity Loss (parts %)',
                 ]
-                
-                final_columns = [col for col in column_order if col in display_df.columns]
-                display_df_final = display_df[final_columns]
-                
+                final_columns_2 = [col for col in column_order_2 if col in display_df.columns]
+                display_df_2 = display_df[final_columns_2]
+
                 # --- V4.7: ROBUST FORMATTING ---
                 
                 # 1. Define the formatters
@@ -504,14 +495,23 @@ if uploaded_file is not None:
 
                 # 2. Get only the columns that actually exist in the dataframe
                 #    and are not the string (d/h/m) columns
-                cols_to_format = {}
+                cols_to_format_1 = {}
                 for col, fmt_str in format_dict.items():
-                    if col in display_df_final.columns:
-                        cols_to_format[col] = fmt_str
+                    if col in display_df_1.columns:
+                        cols_to_format_1[col] = fmt_str
+                        
+                cols_to_format_2 = {}
+                for col, fmt_str in format_dict.items():
+                    if col in display_df_2.columns:
+                        cols_to_format_2[col] = fmt_str
                 
                 # 3. Apply the formatting
                 st.dataframe(
-                    display_df_final.style.format(cols_to_format, na_rep="N/A"),
+                    display_df_1.style.format(cols_to_format_1, na_rep="N/A"),
+                    use_container_width=True
+                )
+                st.dataframe(
+                    display_df_2.style.format(cols_to_format_2, na_rep="N/A"),
                     use_container_width=True
                 )
                 # --- END V4.7 FORMATTING ---
