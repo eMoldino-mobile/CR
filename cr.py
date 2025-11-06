@@ -400,6 +400,17 @@ if uploaded_file is not None:
                         format_func=lambda d: d.strftime('%Y-%m-%d') # Format for display
                     )
                     
+                    # --- NEW: Add Y-Axis Zoom Slider ---
+                    st.subheader("Chart Controls")
+                    y_axis_max = st.slider(
+                        "Zoom Y-Axis (sec)",
+                        min_value=10,
+                        max_value=1000, # Max to see all outliers
+                        value=50, # Default to a "zoomed in" view
+                        step=10,
+                        help="Adjust the max Y-axis to zoom in on the cluster. (Set to 1000 to see all outliers)."
+                    )
+                    
                     # Filter the shot data to the selected day
                     df_day_shots = all_shots_df[all_shots_df['date'] == selected_date].copy()
                     
@@ -443,22 +454,14 @@ if uploaded_file is not None:
                             name=f'Approved CT ({approved_ct_for_day}s)'
                         )
                         
-                        # Add a red line for the invalid cutoff
-                        fig_ct.add_shape(
-                            type='line',
-                            x0=df_day_shots['SHOT TIME'].min(),
-                            x1=df_day_shots['SHOT TIME'].max(),
-                            y0=999.9,
-                            y1=999.9,
-                            line=dict(color='red', dash='dot'),
-                            name='Invalid Cutoff (999.9s)'
-                        )
+                        # --- REMOVED the 999.9s line as it was confusing ---
 
                         fig_ct.update_layout(
                             title=f'Shot-by-Shot Cycle Time for {selected_date}',
                             xaxis_title='Time of Day',
                             yaxis_title='Actual Cycle Time (sec)',
-                            hovermode="closest"
+                            hovermode="closest",
+                            yaxis_range=[0, y_axis_max] # --- NEW: Apply the zoom ---
                         )
                         st.plotly_chart(fig_ct, use_container_width=True)
 
