@@ -22,7 +22,7 @@ def format_seconds_to_dhm(total_seconds):
     if hours > 0: parts.append(f"{hours}h")
     if minutes > 0 or not parts: parts.append(f"{minutes}m")
     
-    # Handle the case where total_seconds is a tiny negative float close to zero (for display only)
+    # Handle the case where total_seconds is a tiny float close to zero for display
     if not parts and total_seconds < 0.1 and total_seconds > -0.1:
         return "0m" 
     
@@ -216,7 +216,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         # A. Basic Counts
         results['Total Shots (all)'] = len(daily_df)
         results['Valid Shots (non 999.9)'] = len(df_valid) 
-        results['Invalid Shots (999.9 removed)'] = results['Total Shots (all)'] - results['Valid Shots (non 999.9)'] 
+        results['Invalid Shots (999.9 removed)'] = results['Total Shots (all)'] - results['Valid Shots (non 999.9)']
 
         # B. Time Calculations
         first_shot_time = daily_df['SHOT TIME'].min()
@@ -229,7 +229,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         
         results['Actual Cycle Time Total (sec)'] = df_valid['Actual CT'].sum()
         
-        # Capacity Loss (downtime) (sec) - ENSURE non-negative using np.maximum(0, ...)
+        # Capacity Loss (downtime) (sec) - ENSURE non-negative
         calculated_downtime_loss_sec = results['Filtered Run Time (sec)'] - results['Actual Cycle Time Total (sec)']
         results['Capacity Loss (downtime) (sec)'] = np.maximum(0, calculated_downtime_loss_sec)
 
@@ -420,6 +420,7 @@ if uploaded_file is not None:
                     total_loss_vs_target_parts = results_df['Capacity Loss (vs Target) (parts)'].sum()
 
                     loss_vs_target_time_perc_val = (total_loss_vs_target_sec / run_time_sec_total) if run_time_sec_total > 0 else 0
+                    # Loss vs Target % is relative to Target
                     loss_vs_target_parts_perc_val = (total_loss_vs_target_parts / total_target) if total_target > 0 else 0
                     
                     with col3:
@@ -445,7 +446,7 @@ if uploaded_file is not None:
                     daily_summary_df['Total Capacity Loss (time %)'] = np.where( daily_summary_df['Filtered Run Time (sec)'] > 0, daily_summary_df['Total Capacity Loss (sec)'] / daily_summary_df['Filtered Run Time (sec)'], 0 )
                     daily_summary_df['Total Capacity Loss (parts %)'] = np.where( daily_summary_df['Optimal Output (parts)'] > 0, daily_summary_df['Total Capacity Loss (parts)'] / daily_summary_df['Optimal Output (parts)'], 0 )
                     
-                    # Gap to Target & Loss vs Target %
+                    # Capacity Loss vs Target %
                     daily_summary_df['Capacity Loss (vs Target) (parts %)'] = np.where( daily_summary_df['Target Output (parts)'] > 0, daily_summary_df['Capacity Loss (vs Target) (parts)'] / daily_summary_df['Target Output (parts)'], 0 )
                     daily_summary_df['Capacity Loss (vs Target) (time %)'] = np.where( daily_summary_df['Filtered Run Time (sec)'] > 0, daily_summary_df['Capacity Loss (vs Target) (sec)'] / daily_summary_df['Filtered Run Time (sec)'], 0 )
                     
@@ -493,11 +494,10 @@ if uploaded_file is not None:
                     benchmark_value = total_target
                     benchmark_text = "Target"
 
-                # Dynamic calculation for loss bars based on Target being surpassed
+                # Dynamic check to zero out loss bars if Target is surpassed (for visual cleanliness)
                 temp_net_cycle_loss = total_net_cycle_loss
                 temp_downtime_loss = total_downtime_loss
                 
-                # If Target is met or exceeded, capacity loss vs target should be zero for this visual build-up
                 if benchmark_view == 'Target Output' and total_produced >= total_target:
                     temp_net_cycle_loss = 0
                     temp_downtime_loss = 0
@@ -637,6 +637,9 @@ if uploaded_file is not None:
                     display_df['Filtered Run Time (sec)'] > 0, 
                     display_df['Actual Cycle Time Total (sec)'] / display_df['Filtered Run Time (sec)'], 0
                 )
+                
+                
+                # Individual Loss components vs Optimal
                 display_df['Capacity Loss (downtime) (parts %)'] = np.where(
                     display_df['Optimal Output (parts)'] > 0, 
                     display_df['Capacity Loss (downtime) (parts)'] / display_df['Optimal Output (parts)'], 0
@@ -773,15 +776,28 @@ if uploaded_file is not None:
                 report_table_2['Actual Output (parts)'] = display_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
                 
                 if benchmark_view == "Optimal Output":
-                    # Re-calculate individual percentages on the aggregated level (only for display)
+                    # Individual percentages on the aggregated level (Series based for correct string concatenation)
                     downtime_parts_perc = display_df['Capacity Loss (downtime) (parts)'] / display_df['Optimal Output (parts)']
                     slow_parts_perc = display_df['Capacity Loss (slow cycle time) (parts)'] / display_df['Optimal Output (parts)']
                     fast_parts_perc = display_df['Capacity Gain (fast cycle time) (parts)'] / display_df['Optimal Output (parts)']
-                    
-                    report_table_2['Capacity Loss (downtime)'] = display_df.apply(lambda r: f"{r['Capacity Loss (downtime) (parts)']:,.2f}", axis=1) + ' (' + (downtime_parts_perc * 100).map('{:.1f}%').fillna('N/A') + ')'
-                    report_table_2['Capacity Loss (slow cycles)'] = display_df.apply(lambda r: f"{r['Capacity Loss (slow cycle time) (parts)']:,.2f}", axis=1) + ' (' + (slow_parts_perc * 100).map('{:.1f}%').fillna('N/A') + ')'
-                    report_table_2['Capacity Gain (fast cycles)'] = display_df.apply(lambda r: f"{r['Capacity Gain (fast cycle time) (parts)']:,.2f}", axis=1) + ' (' + (fast_parts_perc * 100).map('{:.1f}%').fillna('N/A') + ')'
-                    report_table_2['Total Capacity Loss (Net)'] = display_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f}", axis=1) + ' (' + (display_df['Total Capacity Loss (parts)'] / display_df['Optimal Output (parts)'] * 100).map('{:.1f}%').fillna('N/A') + ')'
+                    total_loss_parts_perc = display_df['Total Capacity Loss (parts)'] / display_df['Optimal Output (parts)']
+
+                    report_table_2['Capacity Loss (downtime)'] = (
+                        display_df['Capacity Loss (downtime) (parts)'].map('{:,.2f}'.format) + 
+                        ' (' + (downtime_parts_perc * 100).map('{:.1f}%').fillna('N/A') + ')'
+                    )
+                    report_table_2['Capacity Loss (slow cycles)'] = (
+                        display_df['Capacity Loss (slow cycle time) (parts)'].map('{:,.2f}'.format) + 
+                        ' (' + (slow_parts_perc * 100).map('{:.1f}%').fillna('N/A') + ')'
+                    )
+                    report_table_2['Capacity Gain (fast cycles)'] = (
+                        display_df['Capacity Gain (fast cycle time) (parts)'].map('{:,.2f}'.format) + 
+                        ' (' + (fast_parts_perc * 100).map('{:.1f}%').fillna('N/A') + ')'
+                    )
+                    report_table_2['Total Capacity Loss (Net)'] = (
+                        display_df['Total Capacity Loss (parts)'].map('{:,.2f}'.format) + 
+                        ' (' + (total_loss_parts_perc * 100).map('{:.1f}%').fillna('N/A') + ')'
+                    )
                 else: # Target View
                     report_table_2['Capacity Loss (vs Target) (parts)'] = display_df.apply(lambda r: f"{r['Capacity Loss (vs Target) (parts)']:,.2f} ({r['Capacity Loss (vs Target) (parts %)']:.1%})", axis=1)
 
