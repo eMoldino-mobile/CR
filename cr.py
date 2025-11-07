@@ -342,7 +342,7 @@ if uploaded_file is not None:
                 total_slow_loss = results_df['Capacity Loss (slow cycle time) (parts)'].sum()
                 total_fast_gain = results_df['Capacity Gain (fast cycle time) (parts)'].sum()
                 total_net_cycle_loss = total_slow_loss - total_fast_gain
-                
+
                 # [FIXED v4.31] Total positive net cycle loss for stacked chart only
                 total_positive_net_cycle_loss = np.maximum(0, total_net_cycle_loss)
 
@@ -392,7 +392,7 @@ if uploaded_file is not None:
                         total_loss_vs_target_sec = results_df['Capacity Loss (vs Target) (sec)'].sum()
                         total_loss_vs_target_dhm = format_seconds_to_dhm(total_loss_vs_target_sec)
                         total_loss_vs_target_parts = results_df['Capacity Loss (vs Target) (parts)'].sum()
-                        
+
                         loss_vs_target_time_perc_val = (total_loss_vs_target_sec / run_time_sec_total) if run_time_sec_total > 0 else 0
                         # Loss vs Target % is relative to Target
                         loss_vs_target_parts_perc_val = (total_loss_vs_target_parts / total_target) if total_target > 0 else 0
@@ -462,15 +462,15 @@ if uploaded_file is not None:
                 # This chart shows physical capacity used/lost vs the benchmark
                 downtime_loss_chart = total_downtime_loss
                 net_cycle_loss_chart = total_net_cycle_loss
-                
-                # If Actual Output exceeds the Target, the capacity loss is visually zero
+
+                # If Actual Output exceeds the Target, the capacity loss components are visually zero
                 if benchmark_view == 'Target Output' and total_produced > total_target:
                     downtime_loss_chart = 0
                     net_cycle_loss_chart = 0
-                
+
                 # Ensure net cycle loss for the stacked chart is at least 0 (no negative stacking)
                 positive_net_cycle_loss_chart = np.maximum(0, net_cycle_loss_chart)
-                
+
                 # --- Bar Build-up Chart ---
                 categories = [
                     'Actual Output (parts)',
@@ -495,9 +495,9 @@ if uploaded_file is not None:
                 ))
                 fig_summary.add_trace(go.Bar(
                     x=[categories[1]], y=[positive_net_cycle_loss_chart], name='Capacity Loss (slow/fast cycle time)',
-                    marker_color='gold', 
+                    marker_color='gold',
                     text=[f"{positive_net_cycle_loss_chart:,.0f}<br>Parts Lost"] if positive_net_cycle_loss_chart > 0 else None,
-                    textposition='auto', 
+                    textposition='auto',
                     # Use actual net loss for hover, even if chart draws 0
                     hovertemplate='<b>Capacity Loss (slow/fast cycle time)</b><br>Slow Loss: %{customdata[0]:,.0f}<br>Fast Gain: -%{customdata[1]:,.0f}<br><b>Net: %{customdata[2]:,.0f}</b><extra></extra>',
                     customdata=np.array([[total_slow_loss, total_fast_gain, total_net_cycle_loss]])
@@ -514,7 +514,7 @@ if uploaded_file is not None:
                 ))
                 fig_summary.add_trace(go.Bar(
                     x=[categories[2]], y=[downtime_loss_chart], name='Capacity Loss (downtime)',
-                    marker_color='red', 
+                    marker_color='red',
                     text=[f"{downtime_loss_chart:,.0f}<br>Parts Lost"] if downtime_loss_chart > 0 else None,
                     textposition='auto', hovertemplate='<b>Capacity Loss (downtime)</b><br>Parts: %{y:,.0f}<extra></extra>'
                 ))
@@ -755,11 +755,7 @@ if uploaded_file is not None:
 
                 # --- Dynamic Columns ---
                 if benchmark_view == "Optimal Output":
-                    downtime_parts_perc = display_df['Capacity Loss (downtime) (parts %)'].fillna(0)
-                    slow_parts_perc = display_df['Capacity Loss (slow cycle time) (parts %)'].fillna(0)
-                    fast_parts_perc = display_df['Capacity Gain (fast cycle time) (parts %)'].fillna(0)
-                    total_loss_parts_perc = display_df['Total Capacity Loss (parts %)'].fillna(0)
-                    
+
                     report_table_2['Capacity Loss (downtime)'] = display_df.apply(lambda r: f"{r['Capacity Loss (downtime) (parts)']:,.2f} ({r['Capacity Loss (downtime) (parts %)']:.1%})", axis=1)
                     report_table_2['Capacity Loss (slow cycles)'] = display_df.apply(lambda r: f"{r['Capacity Loss (slow cycle time) (parts)']:,.2f} ({r['Capacity Loss (slow cycle time) (parts %)']:.1%})", axis=1)
                     report_table_2['Capacity Gain (fast cycles)'] = display_df.apply(lambda r: f"{r['Capacity Gain (fast cycle time) (parts)']:,.2f} ({r['Capacity Gain (fast cycle time) (parts %)']:.1%})", axis=1)
