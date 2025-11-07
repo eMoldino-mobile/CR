@@ -388,7 +388,7 @@ if uploaded_file is not None:
                 
                 # --- [NEW] Collapsed Daily Summary Tables ---
                 with st.expander("View Daily Summary Data"):
-                    st.subheader("Daily Production Totals")
+                    st.subheader("Daily KPI Summary") # UPDATED Title
                     # We need to format a copy of the raw results_df for this daily view
                     daily_summary_df = results_df.copy()
                     
@@ -425,31 +425,49 @@ if uploaded_file is not None:
                         daily_summary_df['Optimal Output (parts)'] > 0, 
                         daily_summary_df['Total Capacity Loss (parts)'] / daily_summary_df['Optimal Output (parts)'], 0
                     )
+                    
+                    # --- ADDED: Calculations for new KPI table ---
+                    daily_summary_df['Total Capacity Loss (time %)'] = np.where(
+                        daily_summary_df['Filtered Run Time (sec)'] > 0, 
+                        daily_summary_df['Total Capacity Loss (sec)'] / daily_summary_df['Filtered Run Time (sec)'], 0
+                    )
+                    daily_summary_df['Total Capacity Loss (d/h/m)'] = daily_summary_df['Total Capacity Loss (sec)'].apply(format_seconds_to_dhm)
+                    
+                    # --- d/h/m columns (already exist, just ensuring they're here) ---
                     daily_summary_df['Filtered Run Time (d/h/m)'] = daily_summary_df['Filtered Run Time (sec)'].apply(format_seconds_to_dhm)
                     daily_summary_df['Overall Run Time (d/h/m)'] = daily_summary_df['Overall Run Time (sec)'].apply(format_seconds_to_dhm)
                     daily_summary_df['Actual Cycle Time Total (d/h/m)'] = daily_summary_df['Actual Cycle Time Total (sec)'].apply(format_seconds_to_dhm)
 
-                    # --- Create Table 1 (Totals Report) ---
-                    daily_table_1 = pd.DataFrame(index=daily_summary_df.index)
-                    daily_table_1['Overall Run Time'] = daily_summary_df.apply(lambda r: f"{r['Overall Run Time (d/h/m)']} ({r['Overall Run Time (sec)']:,.0f}s)", axis=1)
-                    daily_table_1['Total Shots (Overall)'] = daily_summary_df['Total Shots (Overall)'].map('{:,.0f}'.format)
-                    daily_table_1['Valid Shots (non 999.9)'] = daily_summary_df.apply(lambda r: f"{r['Valid Shots (non 999.9)']:,.0f} ({r['Valid Shots (non 999.9) (%)']:.1%})", axis=1)
-                    daily_table_1['Invalid Shots (999.9 removed)'] = daily_summary_df['Invalid Shots (999.9 removed)'].map('{:,.0f}'.format)
-                    daily_table_1['Filtered Run Time'] = daily_summary_df.apply(lambda r: f"{r['Filtered Run Time (d/h/m)']} ({r['Filtered Run Time (sec)']:,.0f}s)", axis=1)
-                    daily_table_1['Actual Cycle Time Total'] = daily_summary_df.apply(lambda r: f"{r['Actual Cycle Time Total (d/h/m)']} ({r['Actual Cycle Time Total (time %)']:.1%})", axis=1)
-                    st.dataframe(daily_table_1, use_container_width=True)
+                    # --- [NEW] Create the Daily KPI Table ---
+                    daily_kpi_table = pd.DataFrame(index=daily_summary_df.index)
+                    
+                    # Define runtime cols based on toggle
+                    run_time_sec_col = 'Filtered Run Time (sec)' if toggle_filter else 'Overall Run Time (sec)'
+                    run_time_dhm_col = 'Filtered Run Time (d/h/m)' if toggle_filter else 'Overall Run Time (d/h/m)'
+                    run_time_label = "Filtered Run Time" if toggle_filter else "Overall Run Time"
+                    target_perc_label = f"({target_output_perc / 100.0:.0%})"
 
-                    # --- Create Table 2 (Capacity Loss Report) ---
-                    st.subheader("Daily Capacity Loss & Gain")
-                    daily_table_2 = pd.DataFrame(index=daily_summary_df.index)
-                    daily_table_2['Optimal Output (parts)'] = daily_summary_df['Optimal Output (parts)'].map('{:,.2f}'.format)
-                    daily_table_2['Target Output (parts)'] = daily_summary_df.apply(lambda r: f"{r['Target Output (parts)']:,.2f} ({target_output_perc / 100.0:.0%})", axis=1)
-                    daily_table_2['Actual Output (parts)'] = daily_summary_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
-                    daily_table_2['Capacity Loss (downtime)'] = daily_summary_df.apply(lambda r: f"{r['Capacity Loss (downtime) (parts)']:,.2f} ({r['Capacity Loss (downtime) (parts %)']:.1%})", axis=1)
-                    daily_table_2['Capacity Loss (slow cycles)'] = daily_summary_df.apply(lambda r: f"{r['Capacity Loss (slow cycle time) (parts)']:,.2f} ({r['Capacity Loss (slow cycle time) (parts %)']:.1%})", axis=1)
-                    daily_table_2['Capacity Gain (fast cycles)'] = daily_summary_df.apply(lambda r: f"{r['Capacity Gain (fast cycle time) (parts)']:,.2f} ({r['Capacity Gain (fast cycle time) (parts %)']:.1%})", axis=1)
-                    daily_table_2['Total Capacity Loss (Net)'] = daily_summary_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
-                    st.dataframe(daily_table_2, use_container_width=True)
+                    # Populate the table
+                    daily_kpi_table[run_time_label] = daily_summary_df.apply(lambda r: f"{r[run_time_dhm_col]} ({r[run_time_sec_col]:,.0f}s)", axis=1)
+                    daily_kpi_table['Actual Cycle Time Total'] = daily_summary_df.apply(lambda r: f"{r['Actual Cycle Time Total (d/h/m)']} ({r['Actual Cycle Time Total (time %)']:.1%})", axis=1)
+                    daily_kpi_table['Total Capacity Loss (Time)'] = daily_summary_df.apply(lambda r: f"{r['Total Capacity Loss (d/h/m)']} ({r['Total Capacity Loss (time %)']:.1%})", axis=1)
+                    daily_kpi_table['Target Output (parts)'] = daily_summary_df.apply(lambda r: f"{r['Target Output (parts)']:,.2f} {target_perc_label}", axis=1)
+                    daily_kpi_table['Actual Output (parts)'] = daily_summary_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
+                    daily_kpi_table['Total Capacity Loss (parts)'] = daily_summary_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
+
+                    # Display the new table
+                    st.dataframe(daily_kpi_table, use_container_width=True)
+
+                    # --- REMOVED Old Table 1 ---
+                    # daily_table_1 = pd.DataFrame(index=daily_summary_df.index)
+                    # ...
+                    # st.dataframe(daily_table_1, use_container_width=True)
+
+                    # --- REMOVED Old Table 2 ---
+                    # st.subheader("Daily Capacity Loss & Gain")
+                    # daily_table_2 = pd.DataFrame(index=daily_summary_df.index)
+                    # ...
+                    # st.dataframe(daily_table_2, use_container_width=True)
 
                 
                 st.divider() # Add a divider before the chart
