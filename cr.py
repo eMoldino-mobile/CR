@@ -216,7 +216,9 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         
         results['Actual Cycle Time Total (sec)'] = df_valid['Actual CT'].sum()
         
-        results['Capacity Loss (downtime) (sec)'] = results['Filtered Run Time (sec)'] - results['Actual Cycle Time Total (sec)'] 
+        # Calculate downtime, ensuring it cannot be negative due to floating point errors
+        downtime_sec = results['Filtered Run Time (sec)'] - results['Actual Cycle Time Total (sec)']
+        results['Capacity Loss (downtime) (sec)'] = np.maximum(0, downtime_sec)
 
         # C. Output Calculations
         results['Actual Output (parts)'] = df_valid['actual_output'].sum() 
