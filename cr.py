@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "4.5" # UPDATED VERSION
+__version__ = "4.6" # UPDATED VERSION
 # ==================================================================
 
 # ==================================================================
@@ -672,7 +672,7 @@ if uploaded_file is not None:
 
                 # --- Dynamic Chart Logic ---
                 if benchmark_view == "Optimal Output":
-                    # --- STACKED BAR CHART ---
+                    # --- STACKED BAR CHART (vs Optimal) ---
                     fig.add_trace(go.Bar(
                         x=chart_df['Date'],
                         y=chart_df['Actual Output (parts)'],
@@ -703,8 +703,18 @@ if uploaded_file is not None:
                             '<extra></extra>'
                     ))
                     fig.update_layout(barmode='stack')
-                else: # Target View
-                    # Show the Loss vs Target (negative values will appear below 0)
+                else: # Target View (FIXED: Added Actual Output Bar)
+                    
+                    # 1. ACTUAL OUTPUT (Stack Base for Loss/Gain Bar)
+                    fig.add_trace(go.Bar(
+                        x=chart_df['Date'],
+                        y=chart_df['Actual Output (parts)'],
+                        name='Actual Output (parts)',
+                        marker_color='green',
+                        hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Actual Output (parts): %{y:,.0f}<extra></extra>'
+                    ))
+                    
+                    # 2. Capacity Loss/Gain (vs Target) - Drawn relative to Actual Output
                     fig.add_trace(go.Bar(
                         x=chart_df['Date'],
                         y=chart_df['Capacity Loss (vs Target) (parts)'],
@@ -714,12 +724,14 @@ if uploaded_file is not None:
                         ), axis=-1),
                         hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Capacity Loss (vs Target): %{y:,.0f} (%{customdata[0]:.1%})<extra></extra>'
                     ))
-                    # Color the bars red or blue based on value
+                    
+                    # Color the Loss/Gain bars red or blue based on value
                     fig.update_traces(
                         selector=dict(name='Capacity Loss (vs Target)'),
-                        marker_color=['red' if v > 0 else 'blue' for v in chart_df['Capacity Loss (vs Target) (parts)']] # Red if loss > 0, Blue if loss <= 0
+                        marker_color=['red' if v > 0 else 'blue' for v in chart_df['Capacity Loss (vs Target) (parts)']] 
                     )
-                    fig.update_layout(barmode='relative') # Show positive/negative
+                    
+                    fig.update_layout(barmode='relative') # Stacks the Loss/Gain bar on top of the Actual Output bar
 
 
                 # --- OVERLAY LINES (ON PRIMARY Y-AXIS) ---
