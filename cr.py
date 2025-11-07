@@ -351,6 +351,7 @@ if uploaded_file is not None:
                 total_optimal = results_df['Optimal Output (parts)'].sum() # Moved up
                 
                 total_loss_sec = results_df['Total Capacity Loss (sec)'].sum()
+                total_loss_dhm = format_seconds_to_dhm(total_loss_sec) # <-- ADDED THIS LINE
                 
                 run_time_sec = results_df['Filtered Run Time (sec)'].sum() if toggle_filter else results_df['Overall Run Time (sec)'].sum()
                 run_time_dhm = format_seconds_to_dhm(run_time_sec)
