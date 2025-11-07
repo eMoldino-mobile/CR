@@ -59,16 +59,28 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     
     # --- 1. Standardize and Prepare Data ---
     df = _df_raw.copy()
-    col_map = {
-        'SHOT TIME': 'SHOT TIME', 'APPROVED CT': 'Approved CT', 'ACTUAL CT': 'Actual CT',
-        'Working Cavities': 'Working Cavities', 'Plant Area': 'Plant Area'
+    
+    # NEW: More robust column mapping.
+    # Maps standard names to a list of possible variations (case-insensitive).
+    column_variations = {
+        'SHOT TIME': ['shot time', 'shot_time'],
+        'Approved CT': ['approved ct', 'approved_ct', 'approved cycle time'],
+        'Actual CT': ['actual ct', 'actual_ct', 'actual cycle time'],
+        'Working Cavities': ['working cavities', 'working_cavities'],
+        'Plant Area': ['plant area', 'plant_area']
     }
+
     rename_dict = {}
-    for col in df.columns:
-        for standard_name in col_map.values():
-            # --- v4.19 FIX: Cast col to str() to handle non-string headers (like 0, 1, 2)
-            if str(col).strip().lower() == standard_name.strip().lower():
-                rename_dict[col] = standard_name
+    found_cols = {std_name: False for std_name in column_variations.keys()}
+
+    for col_in_file in df.columns:
+        col_clean = str(col_in_file).strip().lower()
+        
+        for std_name, variations in column_variations.items():
+            if col_clean in variations:
+                rename_dict[col_in_file] = std_name # Map the original name to the standard one
+                found_cols[std_name] = True
+                break # Found a match for this file column, move to next file column
                 
     df.rename(columns=rename_dict, inplace=True)
 
