@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "4.4" 
+__version__ = "4.5" # UPDATED VERSION
 # ==================================================================
 
 # ==================================================================
@@ -31,8 +31,6 @@ def format_seconds_to_dhm(total_seconds):
 #                        DATA CALCULATION
 # ==================================================================
 
-# No caching decorator here, as this function is quick and called 
-# before the main, expensive calculation.
 def load_data(uploaded_file):
     """Loads data from the uploaded file (Excel or CSV) into a DataFrame."""
     try:
@@ -51,7 +49,6 @@ def load_data(uploaded_file):
         return None
 
 # Caching is REMOVED from the core calculation function.
-# It is now applied to the wrapper function 'run_capacity_calculation' below
 def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_output_perc):
     """
     Core function to process the raw DataFrame and calculate all Capacity Risk fields
@@ -260,8 +257,6 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
 #                        CACHING WRAPPER
 # ==================================================================
 
-# This wrapper function is now cached. Streamlit will use the inputs 
-# (which include the raw dataframe contents) to determine if a rerun is needed.
 @st.cache_data
 def run_capacity_calculation(raw_data_df, toggle, cavities, target_perc):
     return calculate_capacity_risk(
@@ -298,9 +293,10 @@ data_frequency = st.sidebar.radio(
 
 st.sidebar.markdown("---")
 
+# --- DEFAULT UPDATED: value=False ---
 toggle_filter = st.sidebar.toggle(
     "Remove Maintenance/Warehouse Shots",
-    value=True,
+    value=False, # <-- SET TO FALSE (OFF)
     help="If ON, all calculations will exclude shots where 'Plant Area' is 'Maintenance' or 'Warehouse'."
 )
 
@@ -314,28 +310,27 @@ default_cavities = st.sidebar.number_input(
 st.sidebar.markdown("---")
 st.sidebar.subheader("Target & View")
 
-# --- Global Benchmark Selector ---
+# --- Global Benchmark Selector (Default is Optimal Output) ---
 benchmark_view = st.sidebar.radio(
     "Select Report Benchmark",
     ['Optimal Output', 'Target Output'],
-    index=0,
+    index=0, # <-- SET TO 0 (Optimal Output)
     horizontal=False,
     help="Select the benchmark to compare against (e.g., 'Total Capacity Loss' vs 'Optimal' or 'Target')."
 )
 
 # --- CONDITIONAL SLIDER ---
 if benchmark_view == "Target Output":
+    # --- DEFAULT UPDATED: value=90.0 ---
     target_output_perc = st.sidebar.slider(
         "Target Output % (of Optimal)",
         min_value=0.0, max_value=100.0,
-        value=85.0,
+        value=90.0, # <-- SET TO 90%
         step=1.0,
         format="%.0f%%",
         help="Sets the 'Target Output (parts)' goal as a percentage of 'Optimal Output (parts)'."
     )
 else:
-    # Set to 100% when Optimal is selected, ensuring 'Target Output (parts)' equals 'Optimal Output (parts)'
-    # in the calculation function, but the metrics won't display it.
     target_output_perc = 100.0 
     
 st.sidebar.caption(f"App Version: **{__version__}**")
