@@ -835,7 +835,7 @@ if uploaded_file is not None:
                             x0=df_day_shots['SHOT TIME'].min(),
                             x1=df_day_shots['SHOT TIME'].max(),
                             y0=approved_ct_for_day,
-                            y1=approved_ci,
+                            y1=approved_ct_for_day,
                             line=dict(color='green', dash='dash'),
                             name=f'Approved CT ({approved_ct_for_day}s)'
                         )
