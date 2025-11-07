@@ -342,12 +342,12 @@ if uploaded_file is not None:
                 total_optimal = results_df['Optimal Output (parts)'].sum()
                 total_target = results_df['Target Output (parts)'].sum()
 
-                # Create the chart categories
+                # Create the chart categories - UPDATED for consistency
                 categories = [
-                    'Actual Production Output', 
-                    'Net Cycle Time Loss', 
-                    'Downtime Loss', 
-                    f'Optimal Output (parts) ({target_output_perc:.0f}% Target)' # Use target % as in your request
+                    'Actual Output (parts)', 
+                    'Capacity Loss (slow/fast cycle time)', 
+                    'Capacity Loss (downtime)', 
+                    f'Optimal Output (parts) ({target_output_perc:.0f}% Target)'
                 ]
                 
                 # Create the figure
@@ -378,11 +378,11 @@ if uploaded_file is not None:
                 fig_summary.add_trace(go.Bar(
                     x=[categories[1]],
                     y=[total_net_cycle_loss],
-                    name='Net Cycle Loss',
+                    name='Capacity Loss (slow/fast cycle time)',
                     marker_color='gold',
                     text=[f"{total_net_cycle_loss:,.0f}<br>Parts Lost"],
                     textposition='auto',
-                    hovertemplate='<b>Net Cycle Time Loss</b><br>Slow Loss: %{customdata[0]:,.0f}<br>Fast Gain: -%{customdata[1]:,.0f}<br><b>Net: %{y:,.0f}</b><extra></extra>',
+                    hovertemplate='<b>Capacity Loss (slow/fast cycle time)</b><br>Slow Loss: %{customdata[0]:,.0f}<br>Fast Gain: -%{customdata[1]:,.0f}<br><b>Net: %{y:,.0f}</b><extra></extra>',
                     customdata=np.array([[total_slow_loss, total_fast_gain]])
                 ))
                 
@@ -409,7 +409,7 @@ if uploaded_file is not None:
                 fig_summary.add_trace(go.Bar(
                     x=[categories[2]],
                     y=[total_downtime_loss],
-                    name='Downtime Loss',
+                    name='Capacity Loss (downtime)',
                     marker_color='red',
                     text=[f"{total_downtime_loss:,.0f}<br>Parts Lost"],
                     textposition='auto',
