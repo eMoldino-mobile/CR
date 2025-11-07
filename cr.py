@@ -241,6 +241,9 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         # F. Target
         results['Target Output (parts)'] = results['Optimal Output (parts)'] * (target_output_perc / 100.0) # RENAMED
         
+        # --- [NEW] Gap to Target ---
+        results['Gap to Target (parts)'] = results['Actual Output (parts)'] - results['Target Output (parts)']
+        
         daily_results_list.append(results)
 
     # --- 9. Format and Return Final DataFrame ---
@@ -284,8 +287,6 @@ data_frequency = st.sidebar.radio(
     horizontal=True
 )
 
-st.sidebar.markdown("---")
-
 toggle_filter = st.sidebar.toggle(
     "Remove Maintenance/Warehouse Shots", 
     value=True, 
@@ -300,7 +301,7 @@ default_cavities = st.sidebar.number_input(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("Target")
+st.sidebar.subheader("Target & View")
 
 target_output_perc = st.sidebar.slider(
     "Target Output % (of Optimal)", 
@@ -309,6 +310,15 @@ target_output_perc = st.sidebar.slider(
     step=1.0,
     format="%.0f%%",
     help="Sets the 'Target Output (parts)' goal as a percentage of 'Optimal Output (parts)'."
+)
+
+# --- [NEW] Global Benchmark Selector ---
+benchmark_view = st.sidebar.radio(
+    "Select Report Benchmark",
+    ["Optimal Output", "Target Output"],
+    index=0,
+    horizontal=True,
+    help="Select the benchmark to compare against (100% Optimal vs. Target)."
 )
 
 
@@ -344,9 +354,10 @@ if uploaded_file is not None:
                 total_loss_parts = results_df['Total Capacity Loss (parts)'].sum()
                 total_optimal = results_df['Optimal Output (parts)'].sum()
                 total_target = results_df['Target Output (parts)'].sum()
+                total_gap_to_target = results_df['Gap to Target (parts)'].sum()
                 
                 total_loss_sec = results_df['Total Capacity Loss (sec)'].sum()
-                total_loss_dhm = format_seconds_to_dhm(total_loss_sec) # <-- FIX: Added this line
+                total_loss_dhm = format_seconds_to_dhm(total_loss_sec)
                 
                 run_time_sec = results_df['Filtered Run Time (sec)'].sum() if toggle_filter else results_df['Overall Run Time (sec)'].sum()
                 run_time_dhm = format_seconds_to_dhm(run_time_sec)
@@ -361,10 +372,12 @@ if uploaded_file is not None:
                 
                 output_perc_val = (total_produced / total_optimal) if total_optimal > 0 else 0
                 loss_parts_perc_val = (total_loss_parts / total_optimal) if total_optimal > 0 else 0
+                gap_parts_perc_val = (total_gap_to_target / total_target) if total_target > 0 else 0
+                
                 target_perc_label = f"({target_output_perc / 100.0:.0%})"
 
 
-                # 3. Display Metrics
+                # 3. Display Metrics (Dynamic based on benchmark_view)
                 col1, col2, col3 = st.columns(3)
                 with col1:
                     st.metric(run_time_label, run_time_dhm)
@@ -372,15 +385,29 @@ if uploaded_file is not None:
                 with col2:
                     st.metric(f"Actual Cycle Time Total ({time_perc_val:.1%})", ct_total_dhm)
                     st.metric(f"Actual Output (parts) ({output_perc_val:.1%})", f"{total_produced:,.0f}")
+                
+                # --- Dynamic 3rd Column ---
                 with col3:
-                    st.metric(f"Total Capacity Loss (Time) ({loss_time_perc_val:.1%})", total_loss_dhm)
-                    st.metric(f"Total Capacity Loss (parts) ({loss_parts_perc_val:.1%})", f"{total_loss_parts:,.0f}", delta=f"{-total_loss_parts:,.0f}", delta_color="inverse")
+                    if benchmark_view == "Optimal Output":
+                        st.metric(f"Total Capacity Loss (Time) ({loss_time_perc_val:.1%})", total_loss_dhm)
+                        st.metric(f"Total Capacity Loss (parts) ({loss_parts_perc_val:.1%})", f"{total_loss_parts:,.0f}", delta=f"{-total_loss_parts:,.0f}", delta_color="inverse")
+                    else: # Target Output
+                        gap_time_sec = (total_gap_to_target / total_optimal) * run_time_sec if total_optimal > 0 else 0
+                        gap_time_dhm = format_seconds_to_dhm(gap_time_sec)
+                        gap_time_perc = (gap_time_sec / run_time_sec) if run_time_sec > 0 else 0
+                        
+                        st.metric(f"Gap to Target (Time) ({gap_time_perc:.1%})", gap_time_dhm)
+                        st.metric(
+                            f"Gap to Target (parts) ({gap_parts_perc_val:.1%})", 
+                            f"{total_gap_to_target:,.0f}", 
+                            delta=f"{total_gap_to_target:,.0f}",
+                            delta_color=("inverse" if total_gap_to_target < 0 else "normal")
+                        )
 
                 
                 # --- [NEW] Collapsed Daily Summary Tables ---
                 with st.expander("View Daily Summary Data"):
-                    st.subheader("Daily KPI Summary") # UPDATED Title
-                    # We need to format a copy of the raw results_df for this daily view
+                    st.subheader("Daily KPI Summary")
                     daily_summary_df = results_df.copy()
                     
                     # --- Calculate Percentage Columns needed for this table ---
@@ -396,23 +423,25 @@ if uploaded_file is not None:
                         daily_summary_df['Optimal Output (parts)'] > 0, 
                         daily_summary_df['Total Capacity Loss (parts)'] / daily_summary_df['Optimal Output (parts)'], 0
                     )
-                    
-                    # --- ADDED: Calculations for new KPI table ---
                     daily_summary_df['Total Capacity Loss (time %)'] = np.where(
                         daily_summary_df['Filtered Run Time (sec)'] > 0, 
                         daily_summary_df['Total Capacity Loss (sec)'] / daily_summary_df['Filtered Run Time (sec)'], 0
                     )
                     daily_summary_df['Total Capacity Loss (d/h/m)'] = daily_summary_df['Total Capacity Loss (sec)'].apply(format_seconds_to_dhm)
                     
-                    # --- d/h/m columns (already exist, just ensuring they're here) ---
+                    # --- [NEW] Gap to Target % ---
+                    daily_summary_df['Gap to Target (parts %)'] = np.where(
+                        daily_summary_df['Target Output (parts)'] > 0,
+                        daily_summary_df['Gap to Target (parts)'] / daily_summary_df['Target Output (parts)'], 0
+                    )
+                    
                     daily_summary_df['Filtered Run Time (d/h/m)'] = daily_summary_df['Filtered Run Time (sec)'].apply(format_seconds_to_dhm)
-                    daily_summary_df['Overall Run Time (d/h/m)'] = daily_summary_df['Overall Run Time (sec)'].apply(format_seconds_to_dhm) # Make sure this exists
+                    daily_summary_df['Overall Run Time (d/h/m)'] = daily_summary_df['Overall Run Time (sec)'].apply(format_seconds_to_dhm)
                     daily_summary_df['Actual Cycle Time Total (d/h/m)'] = daily_summary_df['Actual Cycle Time Total (sec)'].apply(format_seconds_to_dhm)
 
                     # --- [NEW] Create the Daily KPI Table ---
                     daily_kpi_table = pd.DataFrame(index=daily_summary_df.index)
                     
-                    # Define runtime cols based on toggle
                     run_time_sec_col = 'Filtered Run Time (sec)' if toggle_filter else 'Overall Run Time (sec)'
                     run_time_dhm_col = 'Filtered Run Time (d/h/m)' if toggle_filter else 'Overall Run Time (d/h/m)'
                     # run_time_label is defined above
@@ -421,125 +450,101 @@ if uploaded_file is not None:
                     # Populate the table
                     daily_kpi_table[run_time_label] = daily_summary_df.apply(lambda r: f"{r[run_time_dhm_col]} ({r[run_time_sec_col]:,.0f}s)", axis=1)
                     daily_kpi_table['Actual Cycle Time Total'] = daily_summary_df.apply(lambda r: f"{r['Actual Cycle Time Total (d/h/m)']} ({r['Actual Cycle Time Total (time %)']:.1%})", axis=1)
-                    daily_kpi_table['Total Capacity Loss (Time)'] = daily_summary_df.apply(lambda r: f"{r['Total Capacity Loss (d/h/m)']} ({r['Total Capacity Loss (time %)']:.1%})", axis=1)
                     daily_kpi_table['Target Output (parts)'] = daily_summary_df.apply(lambda r: f"{r['Target Output (parts)']:,.2f} {target_perc_label}", axis=1)
                     daily_kpi_table['Actual Output (parts)'] = daily_summary_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
-                    daily_kpi_table['Total Capacity Loss (parts)'] = daily_summary_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
+                    
+                    # --- Dynamic Last Column ---
+                    if benchmark_view == "Optimal Output":
+                        daily_kpi_table['Total Capacity Loss (Time)'] = daily_summary_df.apply(lambda r: f"{r['Total Capacity Loss (d/h/m)']} ({r['Total Capacity Loss (time %)']:.1%})", axis=1)
+                        daily_kpi_table['Total Capacity Loss (parts)'] = daily_summary_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
+                    else: # Target Output
+                        daily_kpi_table['Gap to Target (parts)'] = daily_summary_df.apply(lambda r: f"{r['Gap to Target (parts)']:,.2f} ({r['Gap to Target (parts %)']:.1%})", axis=1)
 
-                    # Display the new table
                     st.dataframe(daily_kpi_table, use_container_width=True)
 
                 
-                st.divider() # Add a divider before the next section
+                st.divider() 
                 
-                # --- [NEW] All-Time Summary Chart ---
+                # --- All-Time Summary Chart ---
                 st.header("Production Output Overview (parts)")
                 
-                # --- [NEW] Benchmark Selector ---
-                chart_benchmark = st.radio(
-                    "Select Chart Benchmark",
-                    ["Optimal Output", "Target Output"],
-                    index=0,
-                    horizontal=True,
-                    label_visibility="collapsed"
-                )
+                # --- Logic is now dynamic based on benchmark_view ---
+                if benchmark_view == "Optimal Output":
+                    # --- Bar Build-up Chart (vs. Optimal) ---
+                    categories = [
+                        'Actual Output (parts)', 
+                        'Capacity Loss (slow/fast cycle time)', 
+                        'Capacity Loss (downtime)', 
+                        'Optimal Output (parts)'
+                    ]
+                    
+                    fig_summary = go.Figure()
+
+                    fig_summary.add_trace(go.Bar(
+                        x=[categories[0]], y=[total_produced], name='Actual Output (parts)',
+                        marker_color='green', text=[f"{total_produced:,.0f}<br>Actual Output"],
+                        textposition='auto', hovertemplate='<b>Actual Output (parts)</b><br>Parts: %{y:,.0f}<extra></extra>'
+                    ))
+                    fig_summary.add_trace(go.Bar(
+                        x=[categories[1]], y=[total_produced], name='Base (Produced)',
+                        marker_color='rgba(0, 128, 0, 0.2)', showlegend=False, hoverinfo='none'
+                    ))
+                    fig_summary.add_trace(go.Bar(
+                        x=[categories[1]], y=[total_net_cycle_loss], name='Capacity Loss (slow/fast cycle time)',
+                        marker_color='gold', text=[f"{total_net_cycle_loss:,.0f}<br>Parts Lost"],
+                        textposition='auto', hovertemplate='<b>Capacity Loss (slow/fast cycle time)</b><br>Slow Loss: %{customdata[0]:,.0f}<br>Fast Gain: -%{customdata[1]:,.0f}<br><b>Net: %{y:,.0f}</b><extra></extra>',
+                        customdata=np.array([[total_slow_loss, total_fast_gain]])
+                    ))
+                    fig_summary.add_trace(go.Bar(
+                        x=[categories[2]], y=[total_produced], name='Base (Produced)',
+                        marker_color='rgba(0, 128, 0, 0.2)', showlegend=False, hoverinfo='none'
+                    ))
+                    fig_summary.add_trace(go.Bar(
+                        x=[categories[2]], y=[total_net_cycle_loss], name='Base (Cycle Loss)',
+                        marker_color='rgba(255, 215, 0, 0.2)', showlegend=False, hoverinfo='none'
+                    ))
+                    fig_summary.add_trace(go.Bar(
+                        x=[categories[2]], y=[total_downtime_loss], name='Capacity Loss (downtime)',
+                        marker_color='red', text=[f"{total_downtime_loss:,.0f}<br>Parts Lost"],
+                        textposition='auto', hovertemplate='<b>Capacity Loss (downtime)</b><br>Parts: %{y:,.0f}<extra></extra>'
+                    ))
+                    fig_summary.add_trace(go.Bar(
+                        x=[categories[3]], y=[total_optimal], name='Optimal Output (parts)',
+                        marker_color='grey', text=[f"{total_optimal:,.0f}<br>Optimal"],
+                        textposition='auto', hovertemplate=f'<b>Optimal Output (parts)</b><br>Parts: %{{y:,.0f}}<extra></extra>'
+                    ))
+                    
+                    fig_summary.update_layout(barmode='stack')
                 
-                # Define benchmark-dependent values
-                if chart_benchmark == "Optimal Output":
-                    benchmark_value = total_optimal
-                    benchmark_label = "Optimal Output (parts)"
-                    benchmark_text = f"{total_optimal:,.0f}<br>Optimal"
                 else:
-                    benchmark_value = total_target
-                    benchmark_label = f"Target Output (parts) {target_perc_label}"
-                    benchmark_text = f"{total_target:,.0f}<br>Target"
-                
-                # Create the chart categories
-                categories = [
-                    'Actual Output (parts)', 
-                    'Capacity Loss (slow/fast cycle time)', 
-                    'Capacity Loss (downtime)', 
-                    benchmark_label # Dynamic 4th category
-                ]
-                
-                # Create the figure
-                fig_summary = go.Figure()
+                    # --- Bar Comparison Chart (vs. Target) ---
+                    categories = ['Actual Output (parts)', 'Target Output (parts)', 'Gap to Target']
+                    
+                    gap_color = 'blue' if total_gap_to_target >= 0 else 'red'
+                    gap_text = "Gain" if total_gap_to_target >= 0 else "Loss"
 
-                # --- Bar 1: Actual Production ---
-                fig_summary.add_trace(go.Bar(
-                    x=[categories[0]],
-                    y=[total_produced],
-                    name='Actual Output (parts)',
-                    marker_color='green',
-                    text=[f"{total_produced:,.0f}<br>Actual Output"],
-                    textposition='auto',
-                    hovertemplate='<b>Actual Output (parts)</b><br>Parts: %{y:,.0f}<extra></extra>'
-                ))
+                    fig_summary = go.Figure()
+                    
+                    fig_summary.add_trace(go.Bar(
+                        x=[categories[0]], y=[total_produced], name='Actual Output (parts)',
+                        marker_color='green', text=[f"{total_produced:,.0f}<br>Actual"],
+                        textposition='auto', hovertemplate='<b>Actual Output (parts)</b><br>Parts: %{y:,.0f}<extra></extra>'
+                    ))
+                    fig_summary.add_trace(go.Bar(
+                        x=[categories[1]], y=[total_target], name=f'Target Output (parts) {target_perc_label}',
+                        marker_color='grey', text=[f"{total_target:,.0f}<br>Target"],
+                        textposition='auto', hovertemplate=f'<b>Target Output (parts)</b><br>Parts: %{{y:,.0f}}<extra></extra>'
+                    ))
+                    fig_summary.add_trace(go.Bar(
+                        x=[categories[2]], y=[total_gap_to_target], name='Gap to Target',
+                        marker_color=gap_color, text=[f"{total_gap_to_target:,.0f}<br>{gap_text}"],
+                        textposition='auto', hovertemplate=f'<b>Gap to Target</b><br>Parts: %{{y:,.0f}}<extra></extra>'
+                    ))
+                    
+                    fig_summary.update_layout(barmode='group')
+                
 
-                # --- Bar 2: Net Cycle Loss (Stacked) ---
-                # Base (faint produced)
-                fig_summary.add_trace(go.Bar(
-                    x=[categories[1]],
-                    y=[total_produced],
-                    name='Base (Produced)',
-                    marker_color='rgba(0, 128, 0, 0.2)', # Faint green
-                    showlegend=False,
-                    hoverinfo='none'
-                ))
-                # Top (Net Loss)
-                fig_summary.add_trace(go.Bar(
-                    x=[categories[1]],
-                    y=[total_net_cycle_loss],
-                    name='Capacity Loss (slow/fast cycle time)',
-                    marker_color='gold',
-                    text=[f"{total_net_cycle_loss:,.0f}<br>Parts Lost"],
-                    textposition='auto',
-                    hovertemplate='<b>Capacity Loss (slow/fast cycle time)</b><br>Slow Loss: %{customdata[0]:,.0f}<br>Fast Gain: -%{customdata[1]:,.0f}<br><b>Net: %{y:,.0f}</b><extra></extra>',
-                    customdata=np.array([[total_slow_loss, total_fast_gain]])
-                ))
-                
-                # --- Bar 3: Downtime Loss (Stacked) ---
-                # Base (faint produced)
-                fig_summary.add_trace(go.Bar(
-                    x=[categories[2]],
-                    y=[total_produced],
-                    name='Base (Produced)',
-                    marker_color='rgba(0, 128, 0, 0.2)', # Faint green
-                    showlegend=False,
-                    hoverinfo='none'
-                ))
-                # Base (faint cycle loss)
-                fig_summary.add_trace(go.Bar(
-                    x=[categories[2]],
-                    y=[total_net_cycle_loss],
-                    name='Base (Cycle Loss)',
-                    marker_color='rgba(255, 215, 0, 0.2)', # Faint gold
-                    showlegend=False,
-                    hoverinfo='none'
-                ))
-                # Top (Downtime Loss)
-                fig_summary.add_trace(go.Bar(
-                    x=[categories[2]],
-                    y=[total_downtime_loss],
-                    name='Capacity Loss (downtime)',
-                    marker_color='red',
-                    text=[f"{total_downtime_loss:,.0f}<br>Parts Lost"],
-                    textposition='auto',
-                    hovertemplate='<b>Capacity Loss (downtime)</b><br>Parts: %{y:,.0f}<extra></extra>'
-                ))
-                
-                # --- Bar 4: Dynamic Benchmark (Optimal or Target) ---
-                fig_summary.add_trace(go.Bar(
-                    x=[categories[3]],
-                    y=[benchmark_value],
-                    name=benchmark_label,
-                    marker_color='grey',
-                    text=[benchmark_text],
-                    textposition='auto',
-                    hovertemplate=f'<b>{benchmark_label}</b><br>Parts: %{{y:,.0f}}<extra></extra>'
-                ))
-                
-                # --- Add Horizontal Lines ---
+                # --- Add Horizontal Lines (for both charts) ---
                 fig_summary.add_hline(
                     y=total_optimal,
                     line=dict(color='purple', dash='dot'),
@@ -555,9 +560,8 @@ if uploaded_file is not None:
                     annotation_position='bottom right'
                 )
 
-                # --- Layout Updates ---
+                # --- Layout Updates (for both charts) ---
                 fig_summary.update_layout(
-                    barmode='stack',
                     yaxis_title='Parts',
                     showlegend=True,
                     legend_title='Metric',
@@ -623,6 +627,12 @@ if uploaded_file is not None:
                     display_df['Optimal Output (parts)'] > 0, 
                     display_df['Total Capacity Loss (parts)'] / display_df['Optimal Output (parts)'], 0
                 )
+                # [NEW] Gap to Target %
+                display_df['Gap to Target (parts %)'] = np.where(
+                    display_df['Target Output (parts)'] > 0,
+                    display_df['Gap to Target (parts)'] / display_df['Target Output (parts)'], 0
+                )
+
                 
                 _target_output_perc_array = np.full(len(display_df), target_output_perc / 100.0)
                 
@@ -648,25 +658,48 @@ if uploaded_file is not None:
                     ), axis=-1),
                     hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Actual Output: %{y:,.0f} (%{customdata[0]:.1%})<extra></extra>'
                 ))
-                fig.add_trace(go.Bar(
-                    x=chart_df['Date'],
-                    y=chart_df['Total Capacity Loss (parts)'],
-                    name='Total Capacity Loss (Net)',
-                    marker_color='red',
-                    customdata=np.stack((
-                        chart_df['Total Capacity Loss (parts %)'],
-                        chart_df['Capacity Loss (downtime) (parts)'],
-                        chart_df['Capacity Loss (slow cycle time) (parts)'],
-                        chart_df['Capacity Gain (fast cycle time) (parts)']
-                    ), axis=-1),
-                    hovertemplate=
-                        '<b>%{x|%Y-%m-%d}</b><br>' +
-                        '<b>Total Net Loss: %{y:,.0f} (%{customdata[0]:.1%})</b><br><br>' +
-                        'Loss (Downtime): %{customdata[1]:,.0f}<br>' +
-                        'Loss (Slow Cycles): %{customdata[2]:,.0f}<br>' +
-                        'Gain (Fast Cycles): -%{customdata[3]:,.0f}<br>' +
-                        '<extra></extra>'
-                ))
+                
+                # --- Dynamic Bar (Loss or Gap) ---
+                if benchmark_view == "Optimal Output":
+                    fig.add_trace(go.Bar(
+                        x=chart_df['Date'],
+                        y=chart_df['Total Capacity Loss (parts)'],
+                        name='Total Capacity Loss (Net)',
+                        marker_color='red',
+                        customdata=np.stack((
+                            chart_df['Total Capacity Loss (parts %)'],
+                            chart_df['Capacity Loss (downtime) (parts)'],
+                            chart_df['Capacity Loss (slow cycle time) (parts)'],
+                            chart_df['Capacity Gain (fast cycle time) (parts)']
+                        ), axis=-1),
+                        hovertemplate=
+                            '<b>%{x|%Y-%m-%d}</b><br>' +
+                            '<b>Total Net Loss: %{y:,.0f} (%{customdata[0]:.1%})</b><br><br>' +
+                            'Loss (Downtime): %{customdata[1]:,.0f}<br>' +
+                            'Loss (Slow Cycles): %{customdata[2]:,.0f}<br>' +
+                            'Gain (Fast Cycles): -%{customdata[3]:,.0f}<br>' +
+                            '<extra></extra>'
+                    ))
+                    fig.update_layout(barmode='stack')
+                else: # Target View
+                    # Show the Gap (negative values will appear below 0)
+                    fig.add_trace(go.Bar(
+                        x=chart_df['Date'],
+                        y=chart_df['Gap to Target (parts)'],
+                        name='Gap to Target',
+                        marker_color='blue', # Will be styled later
+                        customdata=np.stack((
+                            chart_df['Gap to Target (parts %)'],
+                        ), axis=-1),
+                        hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Gap to Target: %{y:,.0f} (%{customdata[0]:.1%})<extra></extra>'
+                    ))
+                    # Color the bars red or blue based on value
+                    fig.update_traces(
+                        selector=dict(name='Gap to Target'),
+                        marker_color=['red' if v < 0 else 'blue' for v in chart_df['Gap to Target (parts)']]
+                    )
+                    fig.update_layout(barmode='relative') # Show positive/negative
+                
                         
                 # --- OVERLAY LINES (ON PRIMARY Y-AXIS) ---
                 fig.add_trace(go.Scatter(
@@ -689,7 +722,6 @@ if uploaded_file is not None:
                 
                 # --- LAYOUT UPDATE ---
                 fig.update_layout(
-                    barmode='stack', 
                     title=chart_title, 
                     xaxis_title=xaxis_title,
                     yaxis_title='Parts (Output & Loss)',
@@ -704,7 +736,6 @@ if uploaded_file is not None:
                 st.header(f"Production Totals Report ({data_frequency})")
                 report_table_1 = pd.DataFrame(index=display_df.index)
                 
-                # Use dynamic run time col
                 run_time_sec_col = 'Filtered Run Time (sec)' if toggle_filter else 'Overall Run Time (sec)'
                 run_time_dhm_col = 'Filtered Run Time (d/h/m)' if toggle_filter else 'Overall Run Time (d/h/m)'
                 
@@ -717,16 +748,24 @@ if uploaded_file is not None:
                 st.dataframe(report_table_1, use_container_width=True)
 
                 # --- Create Table 2 (Capacity Loss Report) ---
-                st.header(f"Capacity Loss & Gain Report ({data_frequency})")
+                # --- [NEW] Title is now dynamic ---
+                table_2_title = "Capacity Loss & Gain Report" if benchmark_view == "Optimal Output" else "Target & Gap Report"
+                st.header(f"{table_2_title} ({data_frequency})")
+                
                 report_table_2 = pd.DataFrame(index=display_df.index)
                 
                 report_table_2['Optimal Output (parts)'] = display_df['Optimal Output (parts)'].map('{:,.2f}'.format)
-                report_table_2['Target Output (parts)'] = display_df.apply(lambda r: f"{r['Target Output (parts)']:,.2f} ({target_output_perc / 100.0:.0%})", axis=1) # Use the var directly
+                report_table_2['Target Output (parts)'] = display_df.apply(lambda r: f"{r['Target Output (parts)']:,.2f} ({target_output_perc / 100.0:.0%})", axis=1)
                 report_table_2['Actual Output (parts)'] = display_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
-                report_table_2['Capacity Loss (downtime)'] = display_df.apply(lambda r: f"{r['Capacity Loss (downtime) (parts)']:,.2f} ({r['Capacity Loss (downtime) (parts %)']:.1%})", axis=1)
-                report_table_2['Capacity Loss (slow cycles)'] = display_df.apply(lambda r: f"{r['Capacity Loss (slow cycle time) (parts)']:,.2f} ({r['Capacity Loss (slow cycle time) (parts %)']:.1%})", axis=1)
-                report_table_2['Capacity Gain (fast cycles)'] = display_df.apply(lambda r: f"{r['Capacity Gain (fast cycle time) (parts)']:,.2f} ({r['Capacity Gain (fast cycle time) (parts %)']:.1%})", axis=1)
-                report_table_2['Total Capacity Loss (Net)'] = display_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
+                
+                # --- Dynamic Columns ---
+                if benchmark_view == "Optimal Output":
+                    report_table_2['Capacity Loss (downtime)'] = display_df.apply(lambda r: f"{r['Capacity Loss (downtime) (parts)']:,.2f} ({r['Capacity Loss (downtime) (parts %)']:.1%})", axis=1)
+                    report_table_2['Capacity Loss (slow cycles)'] = display_df.apply(lambda r: f"{r['Capacity Loss (slow cycle time) (parts)']:,.2f} ({r['Capacity Loss (slow cycle time) (parts %)']:.1%})", axis=1)
+                    report_table_2['Capacity Gain (fast cycles)'] = display_df.apply(lambda r: f"{r['Capacity Gain (fast cycle time) (parts)']:,.2f} ({r['Capacity Gain (fast cycle time) (parts %)']:.1%})", axis=1)
+                    report_table_2['Total Capacity Loss (Net)'] = display_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
+                else: # Target View
+                    report_table_2['Gap to Target (parts)'] = display_df.apply(lambda r: f"{r['Gap to Target (parts)']:,.2f} ({r['Gap to Target (parts %)']:.1%})", axis=1)
 
                 st.dataframe(report_table_2, use_container_width=True)
 
