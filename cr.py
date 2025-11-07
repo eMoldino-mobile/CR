@@ -158,7 +158,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         if df_valid.empty or len(daily_df) < 2:
             results['Total Shots (Overall)'] = len(unfiltered_daily_df)
             results['Total Shots (Filtered)'] = len(daily_df)
-            results['Valid Shots (Filtered)'] = 0
+            results['Valid Shots (non 999.9)'] = 0 # UPDATED
             daily_results_list.append(results)
             continue
 
@@ -186,6 +186,18 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         )
         df_valid['actual_output'] = df_valid['Working Cavities']
 
+        # NEW: Calculate time loss/gain per shot
+        df_valid['time_loss_slow_sec'] = np.where(
+            df_valid['Actual CT'] > PERFORMANCE_BENCHMARK, 
+            df_valid['Actual CT'] - PERFORMANCE_BENCHMARK, 
+            0
+        )
+        df_valid['time_gain_fast_sec'] = np.where(
+            df_valid['Actual CT'] < PERFORMANCE_BENCHMARK, 
+            PERFORMANCE_BENCHMARK - df_valid['Actual CT'], 
+            0
+        )
+
         conditions = [
             (df_valid['Actual CT'] > PERFORMANCE_BENCHMARK),
             (df_valid['Actual CT'] < PERFORMANCE_BENCHMARK),
@@ -202,8 +214,8 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         # A. Basic Counts
         results['Total Shots (Overall)'] = len(unfiltered_daily_df)
         results['Total Shots (Filtered)'] = len(daily_df)
-        results['Valid Shots (Filtered)'] = len(df_valid) # RENAMED
-        results['Invalid Shots (Filtered)'] = results['Total Shots (Filtered)'] - results['Valid Shots (Filtered)']
+        results['Valid Shots (non 999.9)'] = len(df_valid) # UPDATED
+        results['Invalid Shots (999.9 removed)'] = results['Total Shots (Filtered)'] - results['Valid Shots (non 999.9)'] # UPDATED
 
         # B. Time Calculations
         first_shot_time = daily_df['SHOT TIME'].min()
@@ -219,6 +231,8 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         # Calculate downtime, ensuring it cannot be negative due to floating point errors
         downtime_sec = results['Filtered Run Time (sec)'] - results['Actual Cycle Time Total (sec)']
         results['Capacity Loss (downtime) (sec)'] = np.maximum(0, downtime_sec)
+        results['Capacity Loss (slow cycle time) (sec)'] = df_valid['time_loss_slow_sec'].sum()
+        results['Capacity Gain (fast cycle time) (sec)'] = df_valid['time_gain_fast_sec'].sum()
 
         # C. Output Calculations
         results['Actual Output (parts)'] = df_valid['actual_output'].sum() 
@@ -231,6 +245,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         
         # --- NEW: Total Capacity Loss (Net) ---
         results['Total Capacity Loss (parts)'] = results['Capacity Loss (downtime) (parts)'] + results['Capacity Loss (slow cycle time) (parts)'] - results['Capacity Gain (fast cycle time) (parts)']
+        results['Total Capacity Loss (sec)'] = results['Capacity Loss (downtime) (sec)'] + results['Capacity Loss (slow cycle time) (sec)'] - results['Capacity Gain (fast cycle time) (sec)']
         
         # F. Target
         results['Target Output (parts)'] = results['Optimal Output (parts)'] * (target_output_perc / 100.0)
@@ -326,8 +341,46 @@ if uploaded_file is not None:
             
             if results_df is not None and not results_df.empty:
                 
-                # --- [NEW] All-Time Summary Chart ---
-                # This new section adds the summary chart you requested
+                # --- [NEW] All-Time Summary Dashboard ---
+                st.header("All-Time Summary")
+                
+                # 1. Calculate grand totals
+                total_target_parts = results_df['Target Output (parts)'].sum()
+                total_actual_parts = results_df['Actual Output (parts)'].sum()
+                total_loss_parts = results_df['Total Capacity Loss (parts)'].sum()
+                
+                total_loss_sec = results_df['Total Capacity Loss (sec)'].sum()
+                total_loss_dhm = format_seconds_to_dhm(total_loss_sec)
+                
+                run_time_sec = results_df['Filtered Run Time (sec)'].sum() if toggle_filter else results_df['Overall Run Time (sec)'].sum()
+                run_time_dhm = format_seconds_to_dhm(run_time_sec)
+                run_time_label = "Filtered Run Time" if toggle_filter else "Overall Run Time"
+                
+                cycle_time_sec = results_df['Actual Cycle Time Total (sec)'].sum()
+                cycle_time_dhm = format_seconds_to_dhm(cycle_time_sec)
+
+                # 2. Display Time-Based Metrics
+                col1, col2, col3 = st.columns(3)
+                col1.metric(run_time_label, run_time_dhm)
+                col2.metric("Total Machine Cycle Time", cycle_time_dhm)
+                col3.metric("Total Capacity Loss (Time)", total_loss_dhm)
+                
+                st.divider()
+
+                # 3. Display Parts-Based Metrics
+                col4, col5, col6 = st.columns(3)
+                col4.metric("Target Output (parts)", f"{total_target_parts:,.0f}")
+                col5.metric("Actual Output (parts)", f"{total_actual_parts:,.0f}")
+                col6.metric(
+                    "Total Capacity Loss (parts)", 
+                    f"{total_loss_parts:,.0f}",
+                    delta=f"{-total_loss_parts:,.0f}", # Show the gap vs. target
+                    delta_color="inverse" # Red delta for a positive loss
+                )
+                
+                st.divider() # Add a divider before the chart
+
+                # --- All-Time Summary Chart ---
                 st.header("Production Output Overview (parts)")
                 
                 # 1. Calculate totals from the daily results dataframe
@@ -485,9 +538,9 @@ if uploaded_file is not None:
                     display_df['Optimal Output (parts)'] > 0, 
                     display_df['Actual Output (parts)'] / display_df['Optimal Output (parts)'], 0
                 )
-                display_df['Valid Shots (Filtered) (%)'] = np.where( # RENAMED
+                display_df['Valid Shots (non 999.9) (%)'] = np.where( # UPDATED
                     display_df['Total Shots (Filtered)'] > 0, 
-                    display_df['Valid Shots (Filtered)'] / display_df['Total Shots (Filtered)'], 0
+                    display_df['Valid Shots (non 999.9)'] / display_df['Total Shots (Filtered)'], 0
                 )
                 display_df['Actual Cycle Time Total (time %)'] = np.where(
                     display_df['Filtered Run Time (sec)'] > 0, 
@@ -599,8 +652,8 @@ if uploaded_file is not None:
                 # --- v4.20 FIX: Read from the pre-calculated columns ---
                 report_table_1['Overall Run Time'] = display_df.apply(lambda r: f"{r['Overall Run Time (d/h/m)']} ({r['Overall Run Time (sec)']:,.0f}s)", axis=1)
                 report_table_1['Total Shots (Overall)'] = display_df['Total Shots (Overall)'].map('{:,.0f}'.format)
-                report_table_1['Valid Shots (Filtered)'] = display_df.apply(lambda r: f"{r['Valid Shots (Filtered)']:,.0f} ({r['Valid Shots (Filtered) (%)']:.1%})", axis=1)
-                report_table_1['Invalid Shots (Filtered)'] = display_df['Invalid Shots (Filtered)'].map('{:,.0f}'.format)
+                report_table_1['Valid Shots (non 999.9)'] = display_df.apply(lambda r: f"{r['Valid Shots (non 999.9)']:,.0f} ({r['Valid Shots (non 999.9) (%)']:.1%})", axis=1) # UPDATED
+                report_table_1['Invalid Shots (999.9 removed)'] = display_df['Invalid Shots (999.9 removed)'].map('{:,.0f}'.format) # UPDATED
                 report_table_1['Filtered Run Time'] = display_df.apply(lambda r: f"{r['Filtered Run Time (d/h/m)']} ({r['Filtered Run Time (sec)']:,.0f}s)", axis=1)
                 report_table_1['Actual Cycle Time Total'] = display_df.apply(lambda r: f"{r['Actual Cycle Time Total (d/h/m)']} ({r['Actual Cycle Time Total (time %)']:.1%})", axis=1)
                 
