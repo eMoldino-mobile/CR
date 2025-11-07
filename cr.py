@@ -362,7 +362,7 @@ if uploaded_file is not None:
                 # 2. Display Time-Based Metrics
                 col1, col2, col3 = st.columns(3)
                 col1.metric(run_time_label, run_time_dhm)
-                col2.metric("Total Machine Cycle Time", cycle_time_dhm)
+                col2.metric("Actual Cycle Time Total", cycle_time_dhm) # UPDATED
                 col3.metric("Total Capacity Loss (Time)", total_loss_dhm)
                 
                 st.divider()
