@@ -348,9 +348,9 @@ if uploaded_file is not None:
                 total_target_parts = results_df['Target Output (parts)'].sum()
                 total_actual_parts = results_df['Actual Output (parts)'].sum()
                 total_loss_parts = results_df['Total Capacity Loss (parts)'].sum()
+                total_optimal = results_df['Optimal Output (parts)'].sum() # Moved up
                 
                 total_loss_sec = results_df['Total Capacity Loss (sec)'].sum()
-                total_loss_dhm = format_seconds_to_dhm(total_loss_sec)
                 
                 run_time_sec = results_df['Filtered Run Time (sec)'].sum() if toggle_filter else results_df['Overall Run Time (sec)'].sum()
                 run_time_dhm = format_seconds_to_dhm(run_time_sec)
@@ -358,25 +358,98 @@ if uploaded_file is not None:
                 
                 cycle_time_sec = results_df['Actual Cycle Time Total (sec)'].sum()
                 cycle_time_dhm = format_seconds_to_dhm(cycle_time_sec)
+                
+                # 2. Calculate percentages for metrics
+                cycle_time_perc_val = (cycle_time_sec / run_time_sec) if run_time_sec > 0 else 0
+                loss_time_perc_val = (total_loss_sec / run_time_sec) if run_time_sec > 0 else 0
+                actual_parts_perc_val = (total_actual_parts / total_optimal) if total_optimal > 0 else 0
+                loss_parts_perc_val = (total_loss_parts / total_optimal) if total_optimal > 0 else 0
+                target_perc_label = f"({target_output_perc:.0f}%)"
 
-                # 2. Display Time-Based Metrics
+                # 3. Display Time-Based Metrics
                 col1, col2, col3 = st.columns(3)
                 col1.metric(run_time_label, run_time_dhm)
-                col2.metric("Actual Cycle Time Total", cycle_time_dhm) # UPDATED
-                col3.metric("Total Capacity Loss (Time)", total_loss_dhm)
+                col2.metric("Actual Cycle Time Total", f"{cycle_time_dhm} ({cycle_time_perc_val:.1%})")
+                col3.metric("Total Capacity Loss (Time)", f"{total_loss_dhm} ({loss_time_perc_val:.1%})")
                 
                 st.divider()
 
-                # 3. Display Parts-Based Metrics
+                # 4. Display Parts-Based Metrics
                 col4, col5, col6 = st.columns(3)
-                col4.metric("Target Output (parts)", f"{total_target_parts:,.0f}")
-                col5.metric("Actual Output (parts)", f"{total_actual_parts:,.0f}")
+                col4.metric("Target Output (parts)", f"{total_target_parts:,.0f} {target_perc_label}")
+                col5.metric("Actual Output (parts)", f"{total_actual_parts:,.0f} ({actual_parts_perc_val:.1%})")
                 col6.metric(
                     "Total Capacity Loss (parts)", 
-                    f"{total_loss_parts:,.0f}",
+                    f"{total_loss_parts:,.0f} ({loss_parts_perc_val:.1%})",
                     delta=f"{-total_loss_parts:,.0f}", # Show the gap vs. target
                     delta_color="inverse" # Red delta for a positive loss
                 )
+                
+                # --- [NEW] Collapsed Daily Summary Tables ---
+                with st.expander("View Daily Summary Data"):
+                    st.subheader("Daily Production Totals")
+                    # We need to format a copy of the raw results_df for this daily view
+                    daily_summary_df = results_df.copy()
+                    
+                    # --- Apply all formatting logic to the daily_summary_df ---
+                    daily_summary_df['Actual Output (%)'] = np.where(
+                        daily_summary_df['Optimal Output (parts)'] > 0, 
+                        daily_summary_df['Actual Output (parts)'] / daily_summary_df['Optimal Output (parts)'], 0
+                    )
+                    daily_summary_df['Valid Shots (non 999.9) (%)'] = np.where(
+                        daily_summary_df['Total Shots (Filtered)'] > 0, 
+                        daily_summary_df['Valid Shots (non 999.9)'] / daily_summary_df['Total Shots (Filtered)'], 0
+                    )
+                    daily_summary_df['Actual Cycle Time Total (time %)'] = np.where(
+                        daily_summary_df['Filtered Run Time (sec)'] > 0, 
+                        daily_summary_df['Actual Cycle Time Total (sec)'] / daily_summary_df['Filtered Run Time (sec)'], 0
+                    )
+                    daily_summary_df['Capacity Loss (downtime) (time %)'] = np.where(
+                        daily_summary_df['Filtered Run Time (sec)'] > 0, 
+                        daily_summary_df['Capacity Loss (downtime) (sec)'] / daily_summary_df['Filtered Run Time (sec)'], 0
+                    )
+                    daily_summary_df['Capacity Loss (downtime) (parts %)'] = np.where(
+                        daily_summary_df['Optimal Output (parts)'] > 0, 
+                        daily_summary_df['Capacity Loss (downtime) (parts)'] / daily_summary_df['Optimal Output (parts)'], 0
+                    )
+                    daily_summary_df['Capacity Loss (slow cycle time) (parts %)'] = np.where(
+                        daily_summary_df['Optimal Output (parts)'] > 0, 
+                        daily_summary_df['Capacity Loss (slow cycle time) (parts)'] / daily_summary_df['Optimal Output (parts)'], 0
+                    )
+                    daily_summary_df['Capacity Gain (fast cycle time) (parts %)'] = np.where(
+                        daily_summary_df['Optimal Output (parts)'] > 0, 
+                        daily_summary_df['Capacity Gain (fast cycle time) (parts)'] / daily_summary_df['Optimal Output (parts)'], 0
+                    )
+                    daily_summary_df['Total Capacity Loss (parts %)'] = np.where(
+                        daily_summary_df['Optimal Output (parts)'] > 0, 
+                        daily_summary_df['Total Capacity Loss (parts)'] / daily_summary_df['Optimal Output (parts)'], 0
+                    )
+                    daily_summary_df['Filtered Run Time (d/h/m)'] = daily_summary_df['Filtered Run Time (sec)'].apply(format_seconds_to_dhm)
+                    daily_summary_df['Overall Run Time (d/h/m)'] = daily_summary_df['Overall Run Time (sec)'].apply(format_seconds_to_dhm)
+                    daily_summary_df['Actual Cycle Time Total (d/h/m)'] = daily_summary_df['Actual Cycle Time Total (sec)'].apply(format_seconds_to_dhm)
+
+                    # --- Create Table 1 (Totals Report) ---
+                    daily_table_1 = pd.DataFrame(index=daily_summary_df.index)
+                    daily_table_1['Overall Run Time'] = daily_summary_df.apply(lambda r: f"{r['Overall Run Time (d/h/m)']} ({r['Overall Run Time (sec)']:,.0f}s)", axis=1)
+                    daily_table_1['Total Shots (Overall)'] = daily_summary_df['Total Shots (Overall)'].map('{:,.0f}'.format)
+                    daily_table_1['Valid Shots (non 999.9)'] = daily_summary_df.apply(lambda r: f"{r['Valid Shots (non 999.9)']:,.0f} ({r['Valid Shots (non 999.9) (%)']:.1%})", axis=1)
+                    daily_table_1['Invalid Shots (999.9 removed)'] = daily_summary_df['Invalid Shots (999.9 removed)'].map('{:,.0f}'.format)
+                    daily_table_1['Filtered Run Time'] = daily_summary_df.apply(lambda r: f"{r['Filtered Run Time (d/h/m)']} ({r['Filtered Run Time (sec)']:,.0f}s)", axis=1)
+                    daily_table_1['Actual Cycle Time Total'] = daily_summary_df.apply(lambda r: f"{r['Actual Cycle Time Total (d/h/m)']} ({r['Actual Cycle Time Total (time %)']:.1%})", axis=1)
+                    st.dataframe(daily_table_1, use_container_width=True)
+
+                    # --- Create Table 2 (Capacity Loss Report) ---
+                    st.subheader("Daily Capacity Loss & Gain")
+                    daily_table_2 = pd.DataFrame(index=daily_summary_df.index)
+                    daily_table_2['Optimal Output (parts)'] = daily_summary_df['Optimal Output (parts)'].map('{:,.2f}'.format)
+                    daily_table_2['Target Output (parts)'] = daily_summary_df.apply(lambda r: f"{r['Target Output (parts)']:,.2f} ({target_output_perc / 100.0:.0%})", axis=1)
+                    daily_table_2['Actual Output (parts)'] = daily_summary_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
+                    daily_table_2['Capacity Loss (downtime)'] = daily_summary_df.apply(lambda r: f"{r['Capacity Loss (downtime) (parts)']:,.2f} ({r['Capacity Loss (downtime) (parts %)']:.1%})", axis=1)
+                    daily_table_2['Capacity Loss (slow cycles)'] = daily_summary_df.apply(lambda r: f"{r['Capacity Loss (slow cycle time) (parts)']:,.2f} ({r['Capacity Loss (slow cycle time) (parts %)']:.1%})", axis=1)
+                    daily_table_2['Capacity Gain (fast cycles)'] = daily_summary_df.apply(lambda r: f"{r['Capacity Gain (fast cycle time) (parts)']:,.2f} ({r['Capacity Gain (fast cycle time) (parts %)']:.1%})", axis=1)
+                    daily_table_2['Total Capacity Loss (Net)'] = daily_summary_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
+                    st.dataframe(daily_table_2, use_container_width=True)
+
                 
                 st.divider() # Add a divider before the chart
 
@@ -392,7 +465,7 @@ if uploaded_file is not None:
                 # This is the "Slow/Fast" combined loss
                 total_net_cycle_loss = total_slow_loss - total_fast_gain 
                 
-                total_optimal = results_df['Optimal Output (parts)'].sum()
+                total_optimal = results_df['Optimal Output (parts)'].sum() # Already calculated, but fine to keep here
                 total_target = results_df['Target Output (parts)'].sum()
 
                 # Create the chart categories - UPDATED for consistency
