@@ -492,14 +492,50 @@ if uploaded_file is not None:
                 # --- Bar Build-up Chart (vs. Optimal) ---
                 categories = [
                     'Actual Output (parts)', 
-                        'Capacity Loss (slow/fast cycle time)', 
-                        'Capacity Loss (downtime)', 
-                        'Optimal Output (parts)'
+                    'Capacity Loss (slow/fast cycle time)', 
+                    'Capacity Loss (downtime)', 
+                    'Optimal Output (parts)'
                 ]
                 
                 fig_summary = go.Figure()
 
-                    fig_summary.add_trace(go.Bar(
+                # --- [FIX] Restoring the missing traces for the build-up chart ---
+                # --- Bar 1: Actual Production ---
+                fig_summary.add_trace(go.Bar(
+                    x=[categories[0]], y=[total_produced], name='Actual Output (parts)',
+                    marker_color='green', text=[f"{total_produced:,.0f}<br>Actual Output"],
+                    textposition='auto', hovertemplate='<b>Actual Output (parts)</b><br>Parts: %{y:,.0f}<extra></extra>'
+                ))
+
+                # --- Bar 2: Net Cycle Loss (Stacked) ---
+                fig_summary.add_trace(go.Bar(
+                    x=[categories[1]], y=[total_produced], name='Base (Produced)',
+                    marker_color='rgba(0, 128, 0, 0.2)', showlegend=False, hoverinfo='none'
+                ))
+                fig_summary.add_trace(go.Bar(
+                    x=[categories[1]], y=[total_net_cycle_loss], name='Capacity Loss (slow/fast cycle time)',
+                    marker_color='gold', text=[f"{total_net_cycle_loss:,.0f}<br>Parts Lost"],
+                    textposition='auto', hovertemplate='<b>Capacity Loss (slow/fast cycle time)</b><br>Slow Loss: %{customdata[0]:,.0f}<br>Fast Gain: -%{customdata[1]:,.0f}<br><b>Net: %{y:,.0f}</b><extra></extra>',
+                    customdata=np.array([[total_slow_loss, total_fast_gain]])
+                ))
+                
+                # --- Bar 3: Downtime Loss (Stacked) ---
+                fig_summary.add_trace(go.Bar(
+                    x=[categories[2]], y=[total_produced], name='Base (Produced)',
+                    marker_color='rgba(0, 128, 0, 0.2)', showlegend=False, hoverinfo='none'
+                ))
+                fig_summary.add_trace(go.Bar(
+                    x=[categories[2]], y=[total_net_cycle_loss], name='Base (Cycle Loss)',
+                    marker_color='rgba(255, 215, 0, 0.2)', showlegend=False, hoverinfo='none'
+                ))
+                fig_summary.add_trace(go.Bar(
+                    x=[categories[2]], y=[total_downtime_loss], name='Capacity Loss (downtime)',
+                    marker_color='red', text=[f"{total_downtime_loss:,.0f}<br>Parts Lost"],
+                    textposition='auto', hovertemplate='<b>Capacity Loss (downtime)</b><br>Parts: %{y:,.0f}<extra></extra>'
+                ))
+                
+                # --- Bar 4: Optimal Output ---
+                fig_summary.add_trace(go.Bar(
                     x=[categories[3]], y=[total_optimal], name='Optimal Output (parts)',
                     marker_color='grey', text=[f"{total_optimal:,.0f}<br>Optimal"],
                     textposition='auto', hovertemplate=f'<b>Optimal Output (parts)</b><br>Parts: %{{y:,.0f}}<extra></extra>'
