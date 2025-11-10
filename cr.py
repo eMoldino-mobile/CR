@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "5.9 (Merged Target Table)"
+__version__ = "5.9.1 (Bugfix)"
 # ==================================================================
 
 # ==================================================================
@@ -713,6 +713,7 @@ if uploaded_file is not None:
                 # Use the net (slow-fast) cycle time loss for stacking
                 chart_df['Net Cycle Time Loss (positive)'] = np.maximum(0, chart_df['Total Capacity Loss (cycle time) (parts)'])
 
+                # --- v5.9.1 Bugfix: Corrected hovertemplate string and closing parenthesis ---
                 fig_ts.add_trace(go.Bar(
                     x=chart_df['Date'],
                     y=chart_df['Net Cycle Time Loss (positive)'],
@@ -730,9 +731,176 @@ if uploaded_file is not None:
                         'Fast Cycle Gain: -%{customdata[2]:,.0f}<br>' +
                         '<extra></extra>'
                 ))
+                # --- End v5.9.1 Bugfix ---
                 
                 fig_ts.add_trace(go.Bar(
                     x=chart_df['Date'],
+                    y=chart_df['Capacity Loss (downtime) (parts)'],
+                    name='Run Rate Downtime (Stops) (Segment 3)',
+                    marker_color='#ff6961', # Pastel Red
+                    customdata=chart_df['Capacity Loss (downtime) (parts %)'],
+                    hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Run Rate Downtime (Stops): %{y:,.0f} (%{customdata:.1%})<extra></extra>'
+                ))
+                
+                fig_ts.update_layout(barmode='stack')
+
+                if benchmark_view == "Target Output":
+                    fig_ts.add_trace(go.Scatter(
+                        x=chart_df['Date'],
+                        y=chart_df['Target Output (parts)'],
+                        name='Target Output',
+                        mode='lines',
+                        line=dict(color='deepskyblue', dash='dash'),
+                        hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Target: %{y:,.0f}<extra></extra>'
+                    ))
+                    
+                fig_ts.add_trace(go.Scatter(
+                    x=chart_df['Date'],
+                    y=chart_df['Optimal Output (parts)'],
+                    name='Optimal Output (Segment 4)',
+                    mode='lines',
+                    line=dict(color='darkblue', dash='dot'),
+                    hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Optimal: %{y:,.0f}<extra></extra>'
+                ))
+
+                fig_ts.update_layout(
+                    title=chart_title,
+                    xaxis_title=xaxis_title,
+                    yaxis_title='Parts (Output & Loss)',
+                    legend_title='Metric',
+                    hovermode="x unified"
+                )
+                st.plotly_chart(fig_ts, use_container_width=True)
+
+                # --- Full Data Table (Open by Default) ---
+
+                st.header(f"Production Totals Report ({data_frequency})")
+                report_table_1 = pd.DataFrame(index=display_df.index)
+
+                report_table_1['Total Shots (all)'] = display_df['Total Shots (all)'].map('{:,.0f}'.format)
+                report_table_1['Production Shots'] = display_df.apply(lambda r: f"{r['Production Shots']:,.0f} ({r['Production Shots (%)']:.1%})", axis=1)
+                report_table_1['Downtime Shots'] = display_df['Downtime Shots'].map('{:,.0f}'.format)
+                report_table_1[run_time_label] = display_df.apply(lambda r: f"{r['Filtered Run Time (d/h/m)']} ({r['Filtered Run Time (sec)']:,.0f}s)", axis=1)
+                report_table_1['Actual Production Time'] = display_df.apply(lambda r: f"{r['Actual Cycle Time Total (d/h/m)']} ({r['Actual Cycle Time Total (time %)']:.1%})", axis=1)
+
+                st.dataframe(report_table_1, use_container_width=True)
+
+
+                # --- v5.8 / v5.9 - Conditional Tables ---
+                if benchmark_view == "Optimal Output":
+                    # --- TABLE 1: vs Optimal ---
+                    st.header(f"Capacity Loss & Gain Report (vs Optimal) ({data_frequency})")
+                    report_table_optimal = pd.DataFrame(index=display_df.index)
+                    report_table_optimal['Optimal Output (parts)'] = display_df['Optimal Output (parts)'].map('{:,.2f}'.format)
+                    report_table_optimal['Actual Output (parts)'] = display_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
+                    report_table_optimal['Loss (RR Downtime)'] = display_df.apply(lambda r: f"{r['Capacity Loss (downtime) (parts)']:,.2f} ({r['Capacity Loss (downtime) (parts %)']:.1%})", axis=1)
+                    report_table_optimal['Loss (Slow Cycles)'] = display_df.apply(lambda r: f"{r['Capacity Loss (slow cycle time) (parts)']:,.2f} ({r['Capacity Loss (slow cycle time) (parts %)']:.1%})", axis=1)
+                    report_table_optimal['Gain (Fast Cycles)'] = display_df.apply(lambda r: f"{r['Capacity Gain (fast cycle time) (parts)']:,.2f} ({r['Capacity Gain (fast cycle time) (parts %)']:.1%})", axis=1)
+                    report_table_optimal['Total Net Loss'] = display_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
+                    st.dataframe(report_table_optimal, use_container_width=True)
+                
+                else: # Target View
+                    # --- TABLE 2: vs Target (MERGED) ---
+                    st.header(f"Capacity Loss & Gain Report (vs Target {target_output_perc:.0f}%) ({data_frequency})")
+                    st.info("This table allocates the 'Gap to Target' based on the *cause* of the total losses (Downtime vs. Cycle Time).")
+                    
+                    report_table_target = pd.DataFrame(index=display_df.index)
+                    report_table_target['Target Output (parts)'] = display_df.apply(lambda r: f"{r['Target Output (parts)']:,.2f}", axis=1)
+                    report_table_target['Actual Output (parts)'] = display_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f}", axis=1)
+                    report_table_target['Gap to Target (parts)'] = display_df.apply(lambda r: f"{r['Gap to Target (parts)']:,.2f}", axis=1)
+                    report_table_target['Gap % (vs Target)'] = display_df.apply(lambda r: r['Gap to Target (parts)'] / r['Target Output (parts)'] if r['Target Output (parts)'] > 0 else 0, axis=1).map('{:.1%}'.format)
+                    report_table_target['Allocated Loss (RR Downtime)'] = display_df.apply(lambda r: f"{r['Allocated Loss (RR Downtime)']:,.2f} ({r['loss_downtime_ratio']:.1%})", axis=1)
+                    report_table_target['Allocated Loss (Cycle Time)'] = display_df.apply(lambda r: f"{r['Allocated Loss (Cycle Time)']:,.2f} ({r['loss_cycletime_ratio']:.1%})", axis=1)
+                    
+                    st.dataframe(report_table_target, use_container_width=True)
+
+                # --- End v5.9 / v5.8 ---
+
+
+                # --- 4. SHOT-BY-SHOT ANALYSIS ---
+                st.divider()
+                st.header("Shot-by-Shot Analysis (All Shots)")
+                st.info("This chart shows all shots. 'Production' shots are color-coded (Slow/Fast/On Target), and 'RR Downtime (Stop)' shots are grey.")
+
+                if all_shots_df.empty:
+                    st.warning("No shots were found in the file to analyze.")
+                else:
+                    available_dates = sorted(all_shots_df['date'].unique(), reverse=True)
+                    selected_date = st.selectbox(
+                        "Select a Date to Analyze",
+                        options=available_dates,
+                        format_func=lambda d: d.strftime('%Y-%m-%d') # Format for display
+                    )
+
+                    df_day_shots = all_shots_df[all_shots_df['date'] == selected_date]
+                    
+                    st.subheader("Chart Controls")
+                    max_ct_for_day = df_day_shots['Actual CT'].max()
+                    slider_max = int(np.ceil(max_ct_for_day / 10.0)) * 10
+                    slider_max = max(slider_max, 50)
+                    slider_max = min(slider_max, 1000)
+
+                    y_axis_max = st.slider(
+                        "Zoom Y-Axis (sec)",
+                        min_value=10,
+                        max_value=1000, # Max to see all outliers
+                        value=min(slider_max, 50), # Default to a "zoomed in" view
+                        step=10,
+                        help="Adjust the max Y-axis to zoom in on the cluster. (Set to 1000 to see all outliers)."
+                    )
+
+                    if df_day_shots.empty:
+                        st.warning(f"No shots found for {selected_date}.")
+                    else:
+                        approved_ct_for_day = df_day_shots['Approved CT'].iloc[0]
+
+                        fig_ct = go.Figure()
+                        color_map = {'Slow': '#ff6961', 'Fast': '#ffb347', 'On Target': '#3498DB', 'RR Downtime (Stop)': '#808080'}
+
+                        for shot_type, color in color_map.items():
+                            df_subset = df_day_shots[df_day_shots['Shot Type'] == shot_type]
+                            if not df_subset.empty:
+                                fig_ct.add_bar(
+                                    x=df_subset['SHOT TIME'], y=df_subset['Actual CT'],
+                                    name=shot_type, marker_color=color,
+                                    hovertemplate='<b>%{x|%H:%M:%S}</b><br>Actual CT: %{y:.2f}s<extra></extra>'
+                                )
+
+                        fig_ct.add_shape(
+                            type='line',
+                            x0=df_day_shots['SHOT TIME'].min(), x1=df_day_shots['SHOT TIME'].max(),
+                            y0=approved_ct_for_day, y1=approved_ct_for_day,
+                            line=dict(color='green', dash='dash'), name=f'Approved CT ({approved_ct_for_day}s)'
+                        )
+                        fig_ct.add_annotation(
+                            x=df_day_shots['SHOT TIME'].max(), y=approved_ct_for_day,
+                            text=f"Approved CT: {approved_ct_for_day}s", showarrow=True, arrowhead=1
+                        )
+
+                        fig_ct.update_layout(
+                            title=f"All Shots for {selected_date}",
+                            xaxis_title='Time of Day',
+                            yaxis_title='Actual Cycle Time (sec)',
+                            hovermode="closest",
+                            yaxis_range=[0, y_axis_max], # Apply the zoom
+                            barmode='overlay' 
+                        )
+                        st.plotly_chart(fig_ct, use_container_width=True)
+
+                        st.subheader(f"Data for all {len(df_day_shots)} shots on {selected_date}")
+                        st.dataframe(
+                            df_day_shots[[
+                                'SHOT TIME', 'Actual CT', 'Approved CT',
+                                'Working Cavities', 'Shot Type', 'stop_flag'
+                            ]].style.format({
+                                'Actual CT': '{:.2f}',
+                                'Approved CT': '{:.1f}',
+                                'SHOT TIME': lambda t: t.strftime('%H:%M:%S')
+                            }),
+                            use_container_width=True
+                        )
+
+            elif results_df is not None:
                 st.warning("No valid data was found after filtering. Cannot display results.")
 
 else:
