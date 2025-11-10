@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.4.1 (Robust Formatting Fix)"
+__version__ = "6.5 (ValueError Fix & UI Cleanup)"
 # ==================================================================
 
 # ==================================================================
@@ -27,15 +27,7 @@ def format_seconds_to_dhm(total_seconds):
     if minutes > 0 or not parts: parts.append(f"{minutes}m")
     return " ".join(parts) if parts else "0m"
 
-def get_progress_bar_html(percentage, is_loss=False):
-    """Generates HTML for a simple progress bar."""
-    color = "#ff6961" if is_loss else "deepskyblue" # Red for loss, blue for gain/actual
-    percentage = max(0, min(100, percentage)) # Clamp percentage between 0 and 100
-    return f"""
-    <div style="background-color: #eee; border-radius: 5px; height: 10px; width: 100%; border: 1px solid #ddd;">
-        <div style="background-color: {color}; width: {percentage}%; height: 100%; border-radius: 5px 0 0 5px;"></div>
-    </div>
-    """
+# --- v6.5: Removed get_progress_bar_html ---
 
 # ==================================================================
 #                        DATA CALCULATION
@@ -453,33 +445,7 @@ if uploaded_file is not None:
     if df_raw is not None:
         st.success(f"Successfully loaded file: **{uploaded_file.name}**")
 
-        # --- v6.4: Add CSS for Progress Bars ---
-        st.markdown("""
-        <style>
-        .progress-container {
-            background-color: #eee;
-            border-radius: 5px;
-            height: 10px;
-            width: 100%;
-            border: 1px solid #ddd;
-            margin-top: 5px; /* Add space below the metric */
-        }
-        .progress-bar {
-            height: 100%;
-            border-radius: 5px;
-        }
-        .progress-bar-optimal {
-            background-color: deepskyblue;
-            width: 100%;
-        }
-        .progress-bar-actual {
-            background-color: deepskyblue;
-        }
-        .progress-bar-loss {
-            background-color: #ff6961; /* Pastel Red */
-        }
-        </style>
-        """, unsafe_allow_html=True)
+        # --- v6.5: Removed CSS ---
 
         # --- Run Calculation ---
         with st.spinner("Calculating Capacity Risk... (Using new hybrid logic)"):
@@ -528,9 +494,7 @@ if uploaded_file is not None:
                 total_net_loss_parts = total_downtime_loss_parts + total_net_cycle_loss_parts
                 total_net_loss_sec = total_downtime_loss_sec + total_net_cycle_loss_sec
                 
-                # --- v6.4: Percentages for progress bars ---
-                actual_perc_for_bar = (total_produced / total_optimal) * 100 if total_optimal > 0 else 0
-                loss_perc_for_bar = (total_net_loss_parts / total_optimal) * 100 if total_optimal > 0 else 0
+                # --- v6.5: Removed percentages for progress bars ---
 
 
                 # --- NEW LAYOUT (Replaces old 4-column layout) ---
@@ -545,34 +509,19 @@ if uploaded_file is not None:
                     
                     with c2:
                         st.metric("Optimal Output (parts)", f"{total_optimal:,.0f}")
-                        # --- v6.4: Add progress bar ---
-                        st.markdown(f"""
-                            <div class="progress-container">
-                                <div class="progress-bar progress-bar-optimal"></div>
-                            </div>
-                        """, unsafe_allow_html=True)
+                        # --- v6.5: Removed progress bar ---
                         
                     with c3:
                         # --- v6.2: Removed delta ---
                         st.metric(f"Actual Output ({actual_output_perc_val:.1%})", f"{total_produced:,.0f} parts")
                         st.caption(f"Actual Production Time: {total_actual_ct_dhm}")
-                        # --- v6.4: Add progress bar ---
-                        st.markdown(f"""
-                            <div class="progress-container">
-                                <div class="progress-bar progress-bar-actual" style="width: {actual_perc_for_bar}%;"></div>
-                            </div>
-                        """, unsafe_allow_html=True)
+                        # --- v6.5: Removed progress bar ---
                         
                     with c4:
                         # --- v6.2: Removed delta ---
                         st.metric("Total Capacity Loss (Net)", f"{total_net_loss_parts:,.0f} parts")
                         st.caption(f"Total Time Lost: {format_seconds_to_dhm(total_net_loss_sec)}")
-                        # --- v6.4: Add progress bar ---
-                        st.markdown(f"""
-                            <div class="progress-container">
-                                <div class="progress-bar progress-bar-loss" style="width: {loss_perc_for_bar}%;"></div>
-                            </div>
-                        """, unsafe_allow_html=True)
+                        # --- v6.5: Removed progress bar ---
 
                 # --- Box 2: Capacity Loss Breakdown ---
                 st.subheader("Capacity Loss Breakdown")
@@ -720,12 +669,14 @@ if uploaded_file is not None:
                 # --- 3. AGGREGATED REPORT (Chart & Table) ---
 
                 if data_frequency == 'Weekly':
-                    agg_df = results_df.resample('W').sum()
+                    # --- v6.5 FIX: Clean aggregated data ---
+                    agg_df = results_df.resample('W').sum().replace([np.inf, -np.inf], np.nan).fillna(0)
                     chart_title = "Weekly Capacity Report"
                     xaxis_title = "Week"
                     display_df = agg_df
                 elif data_frequency == 'Monthly':
-                    agg_df = results_df.resample('ME').sum()
+                    # --- v6.5 FIX: Clean aggregated data ---
+                    agg_df = results_df.resample('ME').sum().replace([np.inf, -np.inf], np.nan).fillna(0)
                     chart_title = "Monthly Capacity Report"
                     xaxis_title = "Month"
                     display_df = agg_df
@@ -889,7 +840,10 @@ if uploaded_file is not None:
 
                     # --- v6.3: Format allocation display ---
                     def format_allocation(row, col_name, ratio_col):
-                        if row['Gap to Target (parts)'] <= 0: # This is a LOSS
+                        # --- v6.4.1: Need to re-get the numeric value for comparison ---
+                        gap_numeric = row['Gap to Target (parts)']
+                        
+                        if gap_numeric <= 0: # This is a LOSS
                             # Show the allocated loss (as a positive number) and its ratio
                             return f"{row[col_name]:,.2f} ({row[ratio_col]:.1%})"
                         else: # This is a GAIN
@@ -968,9 +922,7 @@ if uploaded_file is not None:
                         fig_ct.add_shape(
                             type='line',
                             x0=df_day_shots['SHOT TIME'].min(), x1=df_day_shots['SHOT TIME'].max(),
-                            y0=approved_ct_for_day, y1=approved_ct_for_day,
-                            line=dict(color='green', dash='dash'), name=f'Approved CT ({approved_ct_for_day}s)'
-                        )
+                            y0=approved_ct_for_day, y1=approved_DUMMY.iloc[0]
                         fig_ct.add_annotation(
                             x=df_day_shots['SHOT TIME'].max(), y=approved_ct_for_day,
                             text=f"Approved CT: {approved_ct_for_day}s", showarrow=True, arrowhead=1
