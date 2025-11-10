@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.6.3 (Final Format String Hotfix)"
+__version__ = "6.6.4 (Syntax Hotfix 2)"
 # ==================================================================
 
 # ==================================================================
@@ -920,88 +920,7 @@ if uploaded_file is not None:
                                 )
                         
                         # --- v6.6: Fix SyntaxError ---
-                        fig_ct.add_shape(
-                            type='line',
-                            x0=df_day_shots['SHOT TIME'].min(), x1=df_day_shots['SHOT TIME'].max(),
-                            y0=approved_ct_for_day, y1=approved_row['Gap to Target (parts)']
-                        
-                        if gap_numeric <= 0: # This is a LOSS
-                            # Show the allocated loss (as a positive number) and its ratio
-                            return f"{row[col_name]:,.2f} ({row[ratio_col]:.1%})"
-                        else: # This is a GAIN
-                            return "N/A (Target Met)"
-
-                    report_table_target['Allocated Loss (RR Downtime)'] = display_df.apply(
-                        format_allocation, 
-                        col_name='Allocated Loss (RR Downtime)', 
-                        ratio_col='loss_downtime_ratio', 
-                        axis=1
-                    )
-                    report_table_target['Allocated Loss (Cycle Time)'] = display_df.apply(
-                        format_allocation, 
-                        col_name='Allocated Loss (Cycle Time)', 
-                        ratio_col='loss_cycletime_ratio', 
-                        axis=1
-                    )
-                    
-                    st.dataframe(report_table_target.style.applymap(
-                        lambda x: 'color: green' if str(x).startswith('+') else 'color: red' if str(x).startswith('-') else None,
-                        subset=['Gap to Target (parts)', 'Gap % (vs Target)']
-                    ), use_container_width=True)
-
-                # --- End v6.3 / v6.1 ---
-
-
-                # --- 4. SHOT-BY-SHOT ANALYSIS ---
-                st.divider()
-                st.header("Shot-by-Shot Analysis (All Shots)")
-                st.info("This chart shows all shots. 'Production' shots are color-coded (Slow/Fast/On Target), and 'RR Downtime (Stop)' shots are grey.")
-
-                if all_shots_df.empty:
-                    st.warning("No shots were found in the file to analyze.")
-                else:
-                    available_dates = sorted(all_shots_df['date'].unique(), reverse=True)
-                    selected_date = st.selectbox(
-                        "Select a Date to Analyze",
-                        options=available_dates,
-                        format_func=lambda d: d.strftime('%Y-%m-%d') # Format for display
-                    )
-
-                    df_day_shots = all_shots_df[all_shots_df['date'] == selected_date]
-                    
-                    st.subheader("Chart Controls")
-                    max_ct_for_day = df_day_shots['Actual CT'].max()
-                    slider_max = int(np.ceil(max_ct_for_day / 10.0)) * 10
-                    slider_max = max(slider_max, 50)
-                    slider_max = min(slider_max, 1000)
-
-                    y_axis_max = st.slider(
-                        "Zoom Y-Axis (sec)",
-                        min_value=10,
-                        max_value=1000, # Max to see all outliers
-                        value=min(slider_max, 50), # Default to a "zoomed in" view
-                        step=10,
-                        help="Adjust the max Y-axis to zoom in on the cluster. (Set to 1000 to see all outliers)."
-                    )
-
-                    if df_day_shots.empty:
-                        st.warning(f"No shots found for {selected_date}.")
-                    else:
-                        approved_ct_for_day = df_day_shots['Approved CT'].iloc[0]
-
-                        fig_ct = go.Figure()
-                        color_map = {'Slow': '#ff6961', 'Fast': '#ffb347', 'On Target': '#3498DB', 'RR Downtime (Stop)': '#808080'}
-
-                        for shot_type, color in color_map.items():
-                            df_subset = df_day_shots[df_day_shots['Shot Type'] == shot_type]
-                            if not df_subset.empty:
-                                fig_ct.add_bar(
-                                    x=df_subset['SHOT TIME'], y=df_subset['Actual CT'],
-                                    name=shot_type, marker_color=color,
-                                    hovertemplate='<b>%{x|%H:%M:%S}</b><br>Actual CT: %{y:.2f}s<extra></extra>'
-                                )
-                        
-                        # --- v6.6: Fix SyntaxError ---
+                        # --- v6.6.4: Re-fixing corrupted block ---
                         fig_ct.add_shape(
                             type='line',
                             x0=df_day_shots['SHOT TIME'].min(), x1=df_day_shots['SHOT TIME'].max(),
