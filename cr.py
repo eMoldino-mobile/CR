@@ -333,7 +333,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
 # ==================================================================
 
 @st.cache_data
-def run_capacity_calculation(raw_data_df, toggle, cavities, target_perc, rr_tol, rr_gap):
+def run_capacity_calculation(raw_data_df, toggle, cavities, target_perc, rr_tol, rr_gap, _cache_version=None):
     """Cached wrapper for the main calculation function."""
     return calculate_capacity_risk(
         raw_data_df,
@@ -442,7 +442,8 @@ if uploaded_file is not None:
                 default_cavities,
                 target_output_perc,
                 rr_tolerance,      # Pass new arg
-                rr_downtime_gap    # Pass new arg
+                rr_downtime_gap,   # Pass new arg
+                _cache_version=__version__ # <-- CACHE BUSTER
             )
 
             if results_df is not None and not results_df.empty:
