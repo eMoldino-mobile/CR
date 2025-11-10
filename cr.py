@@ -140,7 +140,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     df_production_only['date'] = df_production_only['SHOT TIME'].dt.date
 
     daily_results_list = []
-    all_production_shots_list = [] # Renamed from all_valid_shots_list
+    all_shots_list = [] # Renamed from all_valid_shots_list
 
     # Iterate over each day's data
     for date, daily_df in df_production_only.groupby('date'):
@@ -240,9 +240,26 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         results['Capacity Loss (slow cycle time) (parts)'] = df_production['parts_loss'].sum()
         results['Capacity Gain (fast cycle time) (parts)'] = df_production['parts_gain'].sum()
 
-        # Add the Uptime shots to the list for the shot-by-shot chart
-        if not df_production.empty:
-            all_production_shots_list.append(df_production)
+        # --- NEW: Create a unified 'Shot Type' column for all shots ---
+        # 1. Calculate 'Shot Type' for df_production first
+        conditions = [
+            (df_production['Actual CT'] > APPROVED_CT),
+            (df_production['Actual CT'] < APPROVED_CT),
+            (df_production['Actual CT'] == APPROVED_CT)
+        ]
+        choices = ['Slow', 'Fast', 'On Target']
+        df_production['Shot Type'] = np.select(conditions, choices, default='N/A')
+        
+        # 2. Add this 'Shot Type' to df_rr, and fill 'Downtime'
+        df_rr['Shot Type'] = df_production['Shot Type'] # This maps by index, NaNs where stop_flag=1
+        df_rr['Shot Type'].fillna('Downtime', inplace=True)
+        
+        # 3. Add Approved CT to df_rr for plotting
+        df_rr['Approved CT'] = APPROVED_CT
+
+        # Add the *full* daily df (df_rr) to the list for the shot-by-shot chart
+        if not df_rr.empty:
+            all_shots_list.append(df_rr)
 
         # --- 11. Final Aggregations ---
         results['Total Capacity Loss (parts)'] = results['Capacity Loss (downtime) (parts)'] + results['Capacity Loss (slow cycle time) (parts)'] - results['Capacity Gain (fast cycle time) (parts)']
@@ -273,20 +290,17 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     final_df['Date'] = pd.to_datetime(final_df['Date'])
     final_df = final_df.set_index('Date')
 
-    if not all_production_shots_list:
+    if not all_shots_list:
         return final_df, pd.DataFrame()
 
-    all_shots_df = pd.concat(all_production_shots_list, ignore_index=True)
+    all_shots_df = pd.concat(all_shots_list, ignore_index=True)
     all_shots_df['date'] = all_shots_df['SHOT TIME'].dt.date
     
     # Add Shot Type column for scatter plot
-    conditions = [
-        (all_shots_df['Actual CT'] > all_shots_df['Approved CT']),
-        (all_shots_df['Actual CT'] < all_shots_df['Approved CT']),
-        (all_shots_df['Actual CT'] == all_shots_df['Approved CT'])
-    ]
-    choices = ['Slow', 'Fast', 'On Target']
-    all_shots_df['Shot Type'] = np.select(conditions, choices, default='N/A')
+    # This block is no longer needed, as Shot Type is set inside the loop
+    # conditions = [ ... ]
+    # choices = [ ... ]
+    # all_shots_df['Shot Type'] = np.select(conditions, choices, default='N/A')
 
 
     return final_df, all_shots_df
@@ -735,11 +749,11 @@ if uploaded_file is not None:
 
                 # --- 4. SHOT-BY-SHOT ANALYSIS ---
                 st.divider()
-                st.header("Shot-by-Shot 'Uptime' Analysis")
-                st.info("This chart shows all shots classified as 'Production' ('Uptime'). 'Downtime' shots are excluded.")
+                st.header("Shot-by-Shot Analysis (All Shots)")
+                st.info("This chart shows all shots. 'Production' shots are color-coded (Slow/Fast/On Target), and 'Downtime' shots are grey.")
 
                 if all_shots_df.empty:
-                    st.warning("No valid 'Production' shots were found in the file to analyze.")
+                    st.warning("No shots were found in the file to analyze.")
                 else:
                     # --- Create the daily date selector ---
                     available_dates = sorted(all_shots_df['date'].unique(), reverse=True)
@@ -767,12 +781,12 @@ if uploaded_file is not None:
                     )
 
                     if df_day_shots.empty:
-                        st.warning(f"No valid 'Production' shots found for {selected_date}.")
+                        st.warning(f"No shots found for {selected_date}.")
                     else:
                         approved_ct_for_day = df_day_shots['Approved CT'].iloc[0]
 
                         fig_ct = go.Figure()
-                        color_map = {'Slow': '#ff6961', 'Fast': '#ffb347', 'On Target': '#3498DB'}
+                        color_map = {'Slow': '#ff6961', 'Fast': '#ffb347', 'On Target': '#3498DB', 'Downtime': '#808080'}
 
                         for shot_type, color in color_map.items():
                             df_subset = df_day_shots[df_day_shots['Shot Type'] == shot_type]
@@ -795,7 +809,7 @@ if uploaded_file is not None:
                         )
 
                         fig_ct.update_layout(
-                            title=f"Production ('Uptime') Shots for {selected_date}",
+                            title=f"All Shots for {selected_date}",
                             xaxis_title='Time of Day',
                             yaxis_title='Actual Cycle Time (sec)',
                             hovermode="closest",
@@ -804,11 +818,11 @@ if uploaded_file is not None:
                         )
                         st.plotly_chart(fig_ct, use_container_width=True)
 
-                        st.subheader(f"Data for all {len(df_day_shots)} 'Production' shots on {selected_date}")
+                        st.subheader(f"Data for all {len(df_day_shots)} shots on {selected_date}")
                         st.dataframe(
                             df_day_shots[[
                                 'SHOT TIME', 'Actual CT', 'Approved CT',
-                                'Working Cavities', 'Shot Type'
+                                'Working Cavities', 'Shot Type', 'stop_flag'
                             ]].style.format({
                                 'Actual CT': '{:.2f}',
                                 'Approved CT': '{:.1f}',
