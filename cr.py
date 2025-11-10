@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.7 (Final Crash Fix)"
+__version__ = "6.8 (ValueError Fix)"
 # ==================================================================
 
 # ==================================================================
@@ -587,7 +587,7 @@ if uploaded_file is not None:
                         # Force the column to numeric to handle any non-numeric values (like inf) before formatting
                         daily_summary_df['Gap to Target (parts)'] = pd.to_numeric(daily_summary_df['Gap to Target (parts)'], errors='coerce').fillna(0)
                         
-                        # --- v6.7 FIX: Corrected format string (removed space) ---
+                        # --- v6.8 FIX: Corrected format string (removed space) ---
                         daily_kpi_table['Gap to Target (parts)'] = daily_summary_df['Gap to Target (parts)'].apply(lambda x: "{:+, .2f}".format(x) if pd.notna(x) else "N/A")
                         daily_kpi_table['Capacity Loss (vs Target) (Time)'] = daily_summary_df.apply(lambda r: f"{r['Capacity Loss (vs Target) (d/h/m)']} ({r['Capacity Loss (vs Target) (time %)']:.1%})", axis=1)
 
@@ -754,7 +754,7 @@ if uploaded_file is not None:
                     hovertemplate=
                         '<b>%{x|%Y-%m-%d}</b><br>' +
                         '<b>Net Cycle Time Loss: %{customdata[0]:,.0f}</b><br>' +
-                        'Slow Cycle Loss: %{customdata[1]:,.0f}<br>' +
+                        'Slow Cycle Loss: %{customdata[1]:,.0f}<br>'D
                         'Fast Cycle Gain: -%{customdata[2]:,.0f}<br>' + 
                         '<extra></extra>'
                 ))
@@ -834,7 +834,7 @@ if uploaded_file is not None:
                     report_table_target['Target Output (parts)'] = display_df.apply(lambda r: f"{r['Target Output (parts)']:,.2f}", axis=1)
                     report_table_target['Actual Output (parts)'] = display_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
                     
-                    # --- v6.7 FIX: Corrected format string (removed space) ---
+                    # --- v6.8 FIX: Corrected format string (removed space) ---
                     report_table_target['Gap to Target (parts)'] = display_df['Gap to Target (parts)'].apply(lambda x: "{:+, .2f}".format(x) if pd.notna(x) else "N/A")
                     report_table_target['Gap % (vs Target)'] = display_df.apply(lambda r: r['Gap to Target (parts)'] / r['Target Output (parts)'] if r['Target Output (parts)'] > 0 else 0, axis=1).apply(lambda x: "{:+.1%}".format(x) if pd.notna(x) else "N/A")
 
