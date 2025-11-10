@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "5.4 (Dual Tolerance Fix)"
+__version__ = "5.5 (UI Labels & Fixes)"
 # ==================================================================
 
 # ==================================================================
@@ -532,7 +532,8 @@ if uploaded_file is not None:
                         st.caption(f"Time Gained: {format_seconds_to_dhm(total_fast_gain_sec)}")
                 
                     with c4:
-                        st.metric("Total Inefficiency Loss (Net)", f"{-total_net_cycle_loss_parts:,.0f} parts", delta_color="inverse")
+                        # v5.5 - Terminology change
+                        st.metric("Total Capacity Loss (cycle time)", f"{-total_net_cycle_loss_parts:,.0f} parts", delta_color="inverse")
                         st.caption(f"Net Time Lost: {format_seconds_to_dhm(total_net_cycle_loss_sec)}")
 
 
@@ -585,7 +586,7 @@ if uploaded_file is not None:
                     x = [
                         "<b>Segment 4: Optimal</b>", 
                         "<b>Segment 3: Run Rate Downtime (Stops)</b>", 
-                        "<b>Segment 2: Inefficiency Loss</b>", 
+                        "<b>Segment 2: Capacity Loss (cycle time)</b>",  # v5.5 - Terminology
                         "<b>Segment 1: Actual Output</b>"
                     ],
                     text = [
@@ -616,7 +617,7 @@ if uploaded_file is not None:
                 fig_waterfall.add_shape(
                     type='line', x0=-0.5, x1=3.5,
                     y0=total_target, y1=total_target,
-                    line=dict(color='blue', dash='dash')
+                    line=dict(color='deepskyblue', dash='dash') # v5.5 - Color change
                 )
                 fig_waterfall.add_annotation(
                     x=3.5, y=total_target, text="Target Output", 
@@ -681,22 +682,22 @@ if uploaded_file is not None:
                     hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Actual Output: %{y:,.0f} (%{customdata:.1%})<extra></extra>'
                 ))
                 
-                chart_df['Net Inefficiency Loss (parts)'] = chart_df['Capacity Loss (slow cycle time) (parts)'] - chart_df['Capacity Gain (fast cycle time) (parts)']
-                chart_df['Net Inefficiency Loss (positive)'] = np.maximum(0, chart_df['Net Inefficiency Loss (parts)'])
+                chart_df['Net Cycle Time Loss (parts)'] = chart_df['Capacity Loss (slow cycle time) (parts)'] - chart_df['Capacity Gain (fast cycle time) (parts)'] # v5.5 - Terminology
+                chart_df['Net Cycle Time Loss (positive)'] = np.maximum(0, chart_df['Net Cycle Time Loss (parts)']) # v5.5 - Terminology
 
                 fig_ts.add_trace(go.Bar(
                     x=chart_df['Date'],
-                    y=chart_df['Net Inefficiency Loss (positive)'],
-                    name='Inefficiency Loss (Segment 2)',
+                    y=chart_df['Net Cycle Time Loss (positive)'], # v5.5 - Terminology
+                    name='Capacity Loss (cycle time) (Segment 2)', # v5.5 - Terminology
                     marker_color='#ffb347', # Pastel Orange
                     customdata=np.stack((
-                        chart_df['Net Inefficiency Loss (parts)'],
+                        chart_df['Net Cycle Time Loss (parts)'], # v5.5 - Terminology
                         chart_df['Capacity Loss (slow cycle time) (parts)'],
                         chart_df['Capacity Gain (fast cycle time) (parts)']
                     ), axis=-1),
                     hovertemplate=
                         '<b>%{x|%Y-%m-%d}</b><br>' +
-                        '<b>Net Inefficiency Loss: %{customdata[0]:,.0f}</b><br>' +
+                        '<b>Net Cycle Time Loss: %{customdata[0]:,.0f}</b><br>' + # v5.5 - Terminology
                         'Slow Cycle Loss: %{customdata[1]:,.0f}<br>' +
                         'Fast Cycle Gain: -%{customdata[2]:,.0f}<br>' +
                         '<extra></extra>'
@@ -719,7 +720,7 @@ if uploaded_file is not None:
                         y=chart_df['Target Output (parts)'],
                         name='Target Output',
                         mode='lines',
-                        line=dict(color='blue', dash='dash'),
+                        line=dict(color='deepskyblue', dash='dash'), # v5.5 - Color change
                         hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Target: %{y:,.0f}<extra></extra>'
                     ))
                     
@@ -728,7 +729,7 @@ if uploaded_file is not None:
                     y=chart_df['Optimal Output (parts)'],
                     name='Optimal Output (Segment 4)',
                     mode='lines',
-                    line=dict(color='purple', dash='dot'),
+                    line=dict(color='darkblue', dash='dot'), # v5.5 - Color change
                     hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Optimal: %{y:,.0f}<extra></extra>'
                 ))
 
@@ -764,7 +765,8 @@ if uploaded_file is not None:
                 if benchmark_view == "Target Output":
                     report_table_2['Target Output (parts)'] = display_df.apply(lambda r: f"{r['Target Output (parts)']:,.2f} ({target_output_perc / 100.0:.0%})", axis=1)
                     
-                report_table_2['Actual Output (parts)'] = display_table.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
+                # --- v5.5 - NAMEERROR FIX: display_table -> display_df ---
+                report_table_2['Actual Output (parts)'] = display_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
 
                 report_table_2['Loss (RR Downtime)'] = display_df.apply(lambda r: f"{r['Capacity Loss (downtime) (parts)']:,.2f} ({r['Capacity Loss (downtime) (parts %)']:.1%})", axis=1)
                 report_table_2['Loss (Slow Cycles)'] = display_df.apply(lambda r: f"{r['Capacity Loss (slow cycle time) (parts)']:,.2f} ({r['Capacity Loss (slow cycle time) (parts %)']:.1%})", axis=1)
@@ -832,8 +834,9 @@ if uploaded_file is not None:
                             y0=approved_ct_for_day, y1=approved_ct_for_day,
                             line=dict(color='green', dash='dash'), name=f'Approved CT ({approved_ct_for_day}s)'
                         )
+                        # --- v5.5 - NAMEERROR FIX: approved_sct_for_day -> approved_ct_for_day ---
                         fig_ct.add_annotation(
-                            x=df_day_shots['SHOT TIME'].max(), y=approved_sct_for_day,
+                            x=df_day_shots['SHOT TIME'].max(), y=approved_ct_for_day,
                             text=f"Approved CT: {approved_ct_for_day}s", showarrow=True, arrowhead=1
                         )
 
