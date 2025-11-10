@@ -603,9 +603,17 @@ if uploaded_file is not None:
                     ],
                     textposition = "outside",
                     connector = {"line":{"color":"rgb(63, 63, 63)"}},
-                    decreasing = {"marker":{"color":"#ff6961"}}, # Pastel Red
-                    increasing = {"marker":{"color":"#77dd77"}}, # Pastel Green
-                    totals = {"marker":{"color":"#3498DB"}} # Blue
+                    
+                    # --- v5.6 - Manual Color Coding ---
+                    marker = dict(
+                        color=[
+                            "darkblue", # Segment 4: Optimal
+                            "#ff6961",  # Segment 3: RR Downtime (Pastel Red)
+                            "#ffb347",  # Segment 2: Cycle Time Loss (Pastel Orange)
+                            "#77dd77"   # Segment 1: Actual Output (Pastel Green)
+                        ]
+                    )
+                    # --- End v5.6 Change ---
                 ))
 
                 fig_waterfall.update_layout(
