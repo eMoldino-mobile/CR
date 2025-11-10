@@ -585,7 +585,8 @@ if uploaded_file is not None:
                 fig_waterfall = go.Figure(go.Waterfall(
                     name = "Segments",
                     orientation = "v",
-                    measure = ["absolute", "relative", "relative", "total"],
+                    # --- v5.7.1 - FIX: Changed first "absolute" to "relative" to allow different colors ---
+                    measure = ["relative", "relative", "relative", "total"],
                     x = [
                         "<b>Segment 4: Optimal</b>", 
                         "<b>Segment 3: Run Rate Downtime (Stops)</b>", 
