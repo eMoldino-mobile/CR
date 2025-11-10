@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "5.7 (Waterfall Color Fix)"
+__version__ = "5.8 (Target Loss Allocation Tables)"
 # ==================================================================
 
 # ==================================================================
@@ -53,8 +53,6 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     """
     Core function to process the raw DataFrame and calculate all Capacity Risk fields
     using the new hybrid RR (downtime) + CR (inefficiency) logic.
-    
-    v5.4 - Uses separate tolerances for Mode CT and Approved CT.
     """
 
     # --- 1. Standardize and Prepare Data ---
@@ -145,7 +143,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     all_shots_list = []
 
     # --- Define all columns that will be created for the daily results ---
-    # This prevents KeyErrors if all days are skipped (v5.2 fix)
+    # This prevents KeyErrors if all days are skipped
     all_result_columns = [
         'Date', 'Filtered Run Time (sec)', 'Optimal Output (parts)',
         'Capacity Loss (downtime) (sec)', 'Capacity Loss (downtime) (parts)',
@@ -183,36 +181,38 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         df_rr["time_diff_sec"] = df_rr["SHOT TIME"].diff().dt.total_seconds()
         df_rr.loc[0, "time_diff_sec"] = df_rr.loc[0, "Actual CT"] 
 
-        # --- 7a. "DUAL TOLERANCE" LOGIC (v5.4) ---
+        # --- 7a. "DUAL TOLERANCE" / "SAFE HARBOR" LOGIC ---
+        
+        # Get Approved CT for the day
         if not daily_df['Approved CT'].mode().empty:
             APPROVED_CT_day = daily_df['Approved CT'].mode().iloc[0]
         else:
             APPROVED_CT_day = 0
             
+        # Get Actual Mode CT for the day
         df_for_mode = df_rr[df_rr["Actual CT"] < 999.9]
         if not df_for_mode.empty and not df_for_mode['Actual CT'].mode().empty:
             mode_ct = df_for_mode['Actual CT'].mode().iloc[0]
         else:
             mode_ct = 0
 
-        # Create two separate "safe" bands
+        # Create the two "Safe" bands
         mode_lower_limit = mode_ct * (1 - mode_ct_tolerance)
         mode_upper_limit = mode_ct * (1 + mode_ct_tolerance)
         
         approved_lower_limit = APPROVED_CT_day * (1 - approved_ct_tolerance)
         approved_upper_limit = APPROVED_CT_day * (1 + approved_ct_tolerance)
-        # --- End v5.4 logic ---
 
         # --- 7b. RR Stop Detection ---
         is_hard_stop_code = df_rr["Actual CT"] >= 999.9
         prev_actual_ct = df_rr["Actual CT"].shift(1).fillna(0)
         is_time_gap = df_rr["time_diff_sec"] > (prev_actual_ct + rr_downtime_gap)
         
-        # Check if shot is in *either* safe band
+        # Check if shot is inside EITHER band
         in_mode_band = (df_rr["Actual CT"] >= mode_lower_limit) & (df_rr["Actual CT"] <= mode_upper_limit)
         in_approved_band = (df_rr["Actual CT"] >= approved_lower_limit) & (df_rr["Actual CT"] <= approved_upper_limit)
         
-        # An abnormal cycle is one that is outside *both* bands
+        # Abnormal cycle = NOT in mode band AND NOT in approved band
         is_abnormal_cycle = ~(in_mode_band | in_approved_band) & ~is_hard_stop_code
 
         df_rr["stop_flag"] = np.where(is_abnormal_cycle | is_time_gap | is_hard_stop_code, 1, 0)
@@ -247,7 +247,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         results['Actual Output (parts)'] = df_production['Working Cavities'].sum()
         results['Actual Cycle Time Total (sec)'] = df_production['Actual CT'].sum() # True production time
 
-        # SEGMENT 2: Capacity Loss (cycle time)
+        # SEGMENT 2: Inefficiency (CT Slow/Fast) Loss
         
         # Calculate TIME Loss/Gain
         df_production['time_gain_sec'] = np.where(
@@ -269,13 +269,11 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
             ((APPROVED_CT_day - df_production['Actual CT']) / APPROVED_CT_day) * max_cavities,
             0
         )
-        # --- BUG FIX (v5.2) ---
         df_production['parts_loss'] = np.where(
             df_production['Actual CT'] > APPROVED_CT_day,
             ((df_production['Actual CT'] - APPROVED_CT_day) / APPROVED_CT_day) * max_cavities,
             0
         )
-        # --- END BUG FIX ---
         
         results['Capacity Loss (slow cycle time) (parts)'] = df_production['parts_loss'].sum()
         results['Capacity Gain (fast cycle time) (parts)'] = df_production['parts_gain'].sum()
@@ -305,9 +303,9 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
 
         # Target Calculations
         results['Target Output (parts)'] = results['Optimal Output (parts)'] * (target_output_perc / 100.0)
-        results['Gap to Target (parts)'] = results['Actual Output (parts)'] - results['Target Output (parts)']
-        results['Capacity Loss (vs Target) (parts)'] = np.maximum(0, results['Target Output (parts)'] - results['Actual Output (parts)']) # Can't be negative loss
-        results['Capacity Loss (vs Target) (sec)'] = (results['Capacity Loss (vs Target) (parts)'] * APPROVED_CT_day) / max_cavities if max_cavities > 0 else 0
+        results['Gap to Target (parts)'] = results['Actual Output (parts)'] - results['Target Output (parts)'] # Can be positive
+        results['Capacity Loss (vs Target) (parts)'] = np.maximum(0, results['Target Output (parts)'] - results['Actual Output (parts)']) # Only the negative gap
+        results['Capacity Loss (vs Target) (sec)'] = (results['Capacity Loss (vs Target) (parts)'] * APPROVED_CT_day) / max_cavities
 
         # New Shot Counts
         results['Total Shots (all)'] = len(daily_df)
@@ -345,9 +343,9 @@ def run_capacity_calculation(raw_data_df, toggle, cavities, target_perc, mode_to
         toggle,
         cavities,
         target_perc,
-        mode_tol,      # Pass new arg (v5.4)
-        approved_tol,  # Pass new arg (v5.4)
-        rr_gap
+        mode_tol,      # Pass new arg
+        approved_tol,  # Pass new arg
+        rr_gap         # Pass new arg
     )
 
 
@@ -373,14 +371,13 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("Run Rate Logic (for Downtime)")
 st.sidebar.info("These settings define 'Downtime'.")
 
-# v5.4 - Renamed and split tolerances
 mode_ct_tolerance = st.sidebar.slider(
     "Mode CT Tolerance (%)", 0.01, 0.50, 0.25, 0.01, 
-    help="Defines the ±% band around the *Actual Mode CT*. Shots outside this band AND the Approved CT band are flagged as stops."
+    help="Tolerance band (±) around the **Actual Mode CT**."
 )
 approved_ct_tolerance = st.sidebar.slider(
     "Approved CT Tolerance (%)", 0.01, 0.50, 0.25, 0.01, 
-    help="Defines the ±% 'Safe Harbor' band around the *Approved CT*. Shots inside this band are *always* considered 'Production'."
+    help="Tolerance band (±) around the **Approved CT**. This creates a 'Safe Harbor' for good shots."
 )
 rr_downtime_gap = st.sidebar.slider(
     "RR Downtime Gap (sec)", 0.0, 10.0, 2.0, 0.5, 
@@ -453,10 +450,10 @@ if uploaded_file is not None:
                 toggle_filter,
                 default_cavities,
                 target_output_perc,
-                mode_ct_tolerance,       # Pass new arg (v5.4)
-                approved_ct_tolerance,   # Pass new arg (v5.4)
-                rr_downtime_gap,
-                _cache_version=__version__ # <-- CACHE BUSTER (v5.2)
+                mode_ct_tolerance,       # Pass new arg
+                approved_ct_tolerance,   # Pass new arg
+                rr_downtime_gap,         # Pass new arg
+                _cache_version=__version__ # <-- CACHE BUSTER
             )
 
             if results_df is not None and not results_df.empty:
@@ -493,7 +490,7 @@ if uploaded_file is not None:
                 total_net_loss_sec = total_downtime_loss_sec + total_net_cycle_loss_sec
 
 
-                # --- NEW LAYOUT (v5.3) ---
+                # --- NEW LAYOUT (Replaces old 4-column layout) ---
 
                 # --- Box 1: Overall Summary ---
                 st.subheader("Overall Summary")
@@ -532,7 +529,6 @@ if uploaded_file is not None:
                         st.caption(f"Time Gained: {format_seconds_to_dhm(total_fast_gain_sec)}")
                 
                     with c4:
-                        # v5.5 - Terminology change
                         st.metric("Total Capacity Loss (cycle time)", f"{-total_net_cycle_loss_parts:,.0f} parts", delta_color="inverse")
                         st.caption(f"Net Time Lost: {format_seconds_to_dhm(total_net_cycle_loss_sec)}")
 
@@ -570,7 +566,7 @@ if uploaded_file is not None:
                         daily_kpi_table['Total Capacity Loss (parts)'] = daily_summary_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
                     else: # Target Output
                         daily_kpi_table['Capacity Loss (vs Target) (Time)'] = daily_summary_df.apply(lambda r: f"{r['Capacity Loss (vs Target) (d/h/m)']} ({r['Capacity Loss (vs Target) (time %)']:.1%})", axis=1)
-                        daily_kpi_table['Capacity Loss (vs Target) (parts)'] = daily_summary_df.apply(lambda r: f"{r['Capacity Loss (vs Target) (parts)']:,.2f} ({r['Capacity Loss (vs Target) (parts %)']:.1%})", axis=1)
+                        daily_kpi_table['Gap to Target (parts)'] = daily_summary_df.apply(lambda r: f"{r['Gap to Target (parts)']:,.2f}", axis=1)
 
                     st.dataframe(daily_kpi_table, use_container_width=True)
 
@@ -579,7 +575,6 @@ if uploaded_file is not None:
                 # --- 2. NEW 4-SEGMENT WATERFALL CHART ---
                 st.header("Production Output Overview (The 4 Segments)")
 
-                # --- v5.7 - VALUEERROR FIX ---
                 # Replaced the incorrect 'marker' argument with the correct structure
                 # using 'increasing', 'decreasing', and 'totals'
                 fig_waterfall = go.Figure(go.Waterfall(
@@ -590,7 +585,7 @@ if uploaded_file is not None:
                     x = [
                         "<b>Segment 4: Optimal</b>", 
                         "<b>Segment 3: Run Rate Downtime (Stops)</b>", 
-                        "<b>Segment 2: Capacity Loss (cycle time)</b>",  # v5.5 - Terminology
+                        "<b>Segment 2: Capacity Loss (cycle time)</b>", 
                         "<b>Segment 1: Actual Output</b>"
                     ],
                     text = [
@@ -608,12 +603,12 @@ if uploaded_file is not None:
                     textposition = "outside",
                     connector = {"line":{"color":"rgb(63, 63, 63)"}},
                     
-                    # --- v5.7 - Set colors correctly ---
-                    increasing = {"marker":{"color":"darkblue"}}, # Bar 1: Optimal
-                    decreasing = {"marker":{"color":"#ff6961"}}, # Bar 2 & 3: Losses (Red)
-                    totals = {"marker":{"color":"green"}}        # Bar 4: Actual (Green)
+                    # --- v5.7 Color Coding ---
+                    increasing = {"marker":{"color":"darkblue"}}, # Optimal
+                    decreasing = {"marker":{"color":"#ff6961"}},  # Downtime & Cycle Time Loss
+                    totals = {"marker":{"color":"green"}}          # Actual Output
+                    # --- End v5.7 Change ---
                 ))
-                # --- End v5.7 Fix ---
 
                 fig_waterfall.update_layout(
                     title="Capacity Breakdown (All Time)",
@@ -621,16 +616,18 @@ if uploaded_file is not None:
                     showlegend=False
                 )
                 
+                # Add Target Line
                 fig_waterfall.add_shape(
                     type='line', x0=-0.5, x1=3.5,
                     y0=total_target, y1=total_target,
-                    line=dict(color='deepskyblue', dash='dash') # v5.5 - Color change
+                    line=dict(color='deepskyblue', dash='dash')
                 )
                 fig_waterfall.add_annotation(
                     x=3.5, y=total_target, text="Target Output", 
                     showarrow=True, arrowhead=1, ax=20, ay=-20
                 )
                 
+                # Add Actual line
                 fig_waterfall.add_shape(
                     type='line', x0=-0.5, x1=3.5,
                     y0=total_produced, y1=total_produced,
@@ -673,6 +670,30 @@ if uploaded_file is not None:
 
                 display_df['Filtered Run Time (d/h/m)'] = display_df['Filtered Run Time (sec)'].apply(format_seconds_to_dhm)
                 display_df['Actual Cycle Time Total (d/h/m)'] = display_df['Actual Cycle Time Total (sec)'].apply(format_seconds_to_dhm)
+                
+                # --- v5.8 - Add Loss Allocation Logic ---
+                display_df['Total Capacity Loss (cycle time) (parts)'] = display_df['Capacity Loss (slow cycle time) (parts)'] - display_df['Capacity Gain (fast cycle time) (parts)']
+                
+                # We use the *net* cycle time loss (must be >= 0 for ratio)
+                net_cycle_loss_for_ratio = np.maximum(0, display_df['Total Capacity Loss (cycle time) (parts)'])
+                total_loss_for_ratio = display_df['Capacity Loss (downtime) (parts)'] + net_cycle_loss_for_ratio
+                
+                display_df['loss_downtime_ratio'] = np.where(
+                    total_loss_for_ratio > 0,
+                    display_df['Capacity Loss (downtime) (parts)'] / total_loss_for_ratio,
+                    0
+                )
+                display_df['loss_cycletime_ratio'] = np.where(
+                    total_loss_for_ratio > 0,
+                    net_cycle_loss_for_ratio / total_loss_for_ratio,
+                    0
+                )
+                
+                # Allocate the "Gap to Target" based on the ratios of the *total* losses
+                display_df['Allocated Loss (RR Downtime)'] = display_df['Capacity Loss (vs Target) (parts)'] * display_df['loss_downtime_ratio']
+                display_df['Allocated Loss (Cycle Time)'] = display_df['Capacity Loss (vs Target) (parts)'] * display_df['loss_cycletime_ratio']
+                # --- End v5.8 ---
+                
 
                 chart_df = display_df.reset_index()
 
@@ -684,27 +705,27 @@ if uploaded_file is not None:
                     x=chart_df['Date'],
                     y=chart_df['Actual Output (parts)'],
                     name='Actual Output (Segment 1)',
-                    marker_color='green', # v5.5 - Color change
+                    marker_color='green', 
                     customdata=chart_df['Actual Output (%)'],
                     hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Actual Output: %{y:,.0f} (%{customdata:.1%})<extra></extra>'
                 ))
                 
-                chart_df['Net Cycle Time Loss (parts)'] = chart_df['Capacity Loss (slow cycle time) (parts)'] - chart_df['Capacity Gain (fast cycle time) (parts)'] # v5.5 - Terminology
-                chart_df['Net Cycle Time Loss (positive)'] = np.maximum(0, chart_df['Net Cycle Time Loss (parts)']) # v5.5 - Terminology
+                # Use the net (slow-fast) cycle time loss for stacking
+                chart_df['Net Cycle Time Loss (positive)'] = np.maximum(0, chart_df['Total Capacity Loss (cycle time) (parts)'])
 
                 fig_ts.add_trace(go.Bar(
                     x=chart_df['Date'],
-                    y=chart_df['Net Cycle Time Loss (positive)'], # v5.5 - Terminology
-                    name='Capacity Loss (cycle time) (Segment 2)', # v5.5 - Terminology
+                    y=chart_df['Net Cycle Time Loss (positive)'],
+                    name='Capacity Loss (cycle time) (Segment 2)',
                     marker_color='#ffb347', # Pastel Orange
                     customdata=np.stack((
-                        chart_df['Net Cycle Time Loss (parts)'], # v5.5 - Terminology
+                        chart_df['Total Capacity Loss (cycle time) (parts)'],
                         chart_df['Capacity Loss (slow cycle time) (parts)'],
                         chart_df['Capacity Gain (fast cycle time) (parts)']
                     ), axis=-1),
                     hovertemplate=
                         '<b>%{x|%Y-%m-%d}</b><br>' +
-                        '<b>Net Cycle Time Loss: %{customdata[0]:,.0f}</b><br>' + # v5.5 - Terminology
+                        '<b>Net Cycle Time Loss: %{customdata[0]:,.0f}</b><br>' +
                         'Slow Cycle Loss: %{customdata[1]:,.0f}<br>' +
                         'Fast Cycle Gain: -%{customdata[2]:,.0f}<br>' +
                         '<extra></extra>'
@@ -727,7 +748,7 @@ if uploaded_file is not None:
                         y=chart_df['Target Output (parts)'],
                         name='Target Output',
                         mode='lines',
-                        line=dict(color='deepskyblue', dash='dash'), # v5.5 - Color change
+                        line=dict(color='deepskyblue', dash='dash'),
                         hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Target: %{y:,.0f}<extra></extra>'
                     ))
                     
@@ -736,7 +757,7 @@ if uploaded_file is not None:
                     y=chart_df['Optimal Output (parts)'],
                     name='Optimal Output (Segment 4)',
                     mode='lines',
-                    line=dict(color='darkblue', dash='dot'), # v5.5 - Color change
+                    line=dict(color='darkblue', dash='dot'),
                     hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Optimal: %{y:,.0f}<extra></extra>'
                 ))
 
@@ -762,28 +783,41 @@ if uploaded_file is not None:
 
                 st.dataframe(report_table_1, use_container_width=True)
 
-                table_2_title = "Capacity Loss & Gain Report"
-                st.header(f"{table_2_title} ({data_frequency})")
-
-                report_table_2 = pd.DataFrame(index=display_df.index)
-
-                report_table_2['Optimal Output (parts)'] = display_df['Optimal Output (parts)'].map('{:,.2f}'.format)
+                # --- v5.8 - NEW DYNAMIC TABLE SECTION ---
                 
-                if benchmark_view == "Target Output":
-                    report_table_2['Target Output (parts)'] = display_df.apply(lambda r: f"{r['Target Output (parts)']:,.2f} ({target_output_perc / 100.0:.0%})", axis=1)
+                if benchmark_view == "Optimal Output":
+                    # --- TABLE 1: vs Optimal ---
+                    st.header(f"Capacity Loss & Gain Report (vs Optimal) ({data_frequency})")
+                    report_table_optimal = pd.DataFrame(index=display_df.index)
+                    report_table_optimal['Optimal Output (parts)'] = display_df['Optimal Output (parts)'].map('{:,.2f}'.format)
+                    report_table_optimal['Actual Output (parts)'] = display_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
+                    report_table_optimal['Loss (RR Downtime)'] = display_df.apply(lambda r: f"{r['Capacity Loss (downtime) (parts)']:,.2f} ({r['Capacity Loss (downtime) (parts %)']:.1%})", axis=1)
+                    report_table_optimal['Loss (Slow Cycles)'] = display_df.apply(lambda r: f"{r['Capacity Loss (slow cycle time) (parts)']:,.2f} ({r['Capacity Loss (slow cycle time) (parts %)']:.1%})", axis=1)
+                    report_table_optimal['Gain (Fast Cycles)'] = display_df.apply(lambda r: f"{r['Capacity Gain (fast cycle time) (parts)']:,.2f} ({r['Capacity Gain (fast cycle time) (parts %)']:.1%})", axis=1)
+                    report_table_optimal['Total Net Loss'] = display_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
+                    st.dataframe(report_table_optimal, use_container_width=True)
+                
+                else: # Target View
+                    # --- TABLE 2: vs Target ---
+                    st.header(f"Capacity Loss & Gain Report (vs Target {target_output_perc:.0f}%) ({data_frequency})")
+                    report_table_target = pd.DataFrame(index=display_df.index)
+                    report_table_target['Target Output (parts)'] = display_df.apply(lambda r: f"{r['Target Output (parts)']:,.2f}", axis=1)
+                    report_table_target['Actual Output (parts)'] = display_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f}", axis=1)
+                    report_table_target['Gap to Target (parts)'] = display_df.apply(lambda r: f"{r['Gap to Target (parts)']:,.2f}", axis=1)
+                    report_table_target['Gap % (vs Target)'] = display_df.apply(lambda r: r['Gap to Target (parts)'] / r['Target Output (parts)'] if r['Target Output (parts)'] > 0 else 0, axis=1).map('{:.1%}'.format)
                     
-                # --- v5.5 - NAMEERROR FIX: display_table -> display_df ---
-                report_table_2['Actual Output (parts)'] = display_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
+                    st.subheader("Gap to Target: Allocated Loss")
+                    st.info("This table allocates the 'Gap to Target' based on the *cause* of the total losses (Downtime vs. Cycle Time).")
+                    report_table_allocated = pd.DataFrame(index=display_df.index)
+                    report_table_allocated['Gap to Target (parts)'] = display_df.apply(lambda r: f"{r['Gap to Target (parts)']:,.2f}", axis=1)
+                    report_table_allocated['Allocated Loss (RR Downtime)'] = display_df.apply(lambda r: f"{r['Allocated Loss (RR Downtime)']:,.2f} ({r['loss_downtime_ratio']:.1%})", axis=1)
+                    report_table_allocated['Allocated Loss (Cycle Time)'] = display_df.apply(lambda r: f"{r['Allocated Loss (Cycle Time)']:,.2f} ({r['loss_cycletime_ratio']:.1%})", axis=1)
+                    
+                    st.dataframe(report_table_target, use_container_width=True)
+                    st.dataframe(report_table_allocated, use_container_width=True)
 
-                report_table_2['Loss (RR Downtime)'] = display_df.apply(lambda r: f"{r['Capacity Loss (downtime) (parts)']:,.2f} ({r['Capacity Loss (downtime) (parts %)']:.1%})", axis=1)
-                report_table_2['Loss (Slow Cycles)'] = display_df.apply(lambda r: f"{r['Capacity Loss (slow cycle time) (parts)']:,.2f} ({r['Capacity Loss (slow cycle time) (parts %)']:.1%})", axis=1)
-                report_table_2['Gain (Fast Cycles)'] = display_df.apply(lambda r: f"{r['Capacity Gain (fast cycle time) (parts)']:,.2f} ({r['Capacity Gain (fast cycle time) (parts %)']:.1%})", axis=1)
-                report_table_2['Total Net Loss'] = display_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
-                
-                if benchmark_view == "Target Output":
-                    report_table_2['Loss (vs Target)'] = display_df.apply(lambda r: f"{r['Capacity Loss (vs Target) (parts)']:,.2f} ({r['Capacity Loss (vs Target) (parts %)']:.1%})", axis=1)
+                # --- End v5.8 ---
 
-                st.dataframe(report_table_2, use_container_width=True)
 
                 # --- 4. SHOT-BY-SHOT ANALYSIS ---
                 st.divider()
@@ -803,16 +837,28 @@ if uploaded_file is not None:
                     df_day_shots = all_shots_df[all_shots_df['date'] == selected_date]
                     
                     st.subheader("Chart Controls")
-                    max_ct_for_day = df_day_shots['Actual CT'].max()
+                    max_ct_for_day = 90
+                    if not df_day_shots.empty:
+                         max_ct_for_day_calc = df_day_shots['Actual CT'].max()
+                         if not pd.isna(max_ct_for_day_calc):
+                            max_ct_for_day = max_ct_for_day_calc
+                    
                     slider_max = int(np.ceil(max_ct_for_day / 10.0)) * 10
                     slider_max = max(slider_max, 50)
                     slider_max = min(slider_max, 1000)
+                    
+                    default_zoom = 50
+                    if not df_day_shots.empty:
+                        approved_ct_for_day = df_day_shots['Approved CT'].iloc[0]
+                        default_zoom = max(50, int(np.ceil(approved_ct_for_day * 2)))
+                        default_zoom = min(default_zoom, slider_max)
+
 
                     y_axis_max = st.slider(
                         "Zoom Y-Axis (sec)",
                         min_value=10,
                         max_value=1000, # Max to see all outliers
-                        value=min(slider_max, 50), # Default to a "zoomed in" view
+                        value=default_zoom,
                         step=10,
                         help="Adjust the max Y-axis to zoom in on the cluster. (Set to 1000 to see all outliers)."
                     )
@@ -831,17 +877,16 @@ if uploaded_file is not None:
                                 fig_ct.add_bar(
                                     x=df_subset['SHOT TIME'], y=df_subset['Actual CT'],
                                     name=shot_type, marker_color=color,
-                                    hovertemplate='<b>%{x|%H:%M:%S}</b><br>Actual CT: %{y:.2f}s<extra></extra>'
+                                    hovertemplate='<b>%{x|%H:%M:%S}</b><br>Actual CT: %{y:.2f}s<br>Type: %{text}<extra></extra>',
+                                    text=[shot_type] * len(df_subset)
                                 )
 
-                        # v5.2 - Fix typo `approved_T_day`
                         fig_ct.add_shape(
                             type='line',
                             x0=df_day_shots['SHOT TIME'].min(), x1=df_day_shots['SHOT TIME'].max(),
                             y0=approved_ct_for_day, y1=approved_ct_for_day,
                             line=dict(color='green', dash='dash'), name=f'Approved CT ({approved_ct_for_day}s)'
                         )
-                        # --- v5.5 - NAMEERROR FIX: approved_sct_for_day -> approved_ct_for_day ---
                         fig_ct.add_annotation(
                             x=df_day_shots['SHOT TIME'].max(), y=approved_ct_for_day,
                             text=f"Approved CT: {approved_ct_for_day}s", showarrow=True, arrowhead=1
@@ -853,7 +898,8 @@ if uploaded_file is not None:
                             yaxis_title='Actual Cycle Time (sec)',
                             hovermode="closest",
                             yaxis_range=[0, y_axis_max], # Apply the zoom
-                            barmode='overlay' 
+                            barmode='overlay',
+                            legend_title_text='Shot Type'
                         )
                         st.plotly_chart(fig_ct, use_container_width=True)
 
