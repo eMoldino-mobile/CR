@@ -6,11 +6,11 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "5.3 (New Dashboard Layout)"
+__version__ = "5.4 (Dual Tolerance Fix)"
 # ==================================================================
 
 # ==================================================================
-#                        HELPER FUNCTION
+#                         HELPER FUNCTION
 # ==================================================================
 
 def format_seconds_to_dhm(total_seconds):
@@ -49,10 +49,12 @@ def load_data(uploaded_file):
         return None
 
 # Caching is REMOVED from the core calculation function.
-def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_output_perc, rr_tolerance, rr_downtime_gap):
+def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_output_perc, mode_ct_tolerance, approved_ct_tolerance, rr_downtime_gap):
     """
     Core function to process the raw DataFrame and calculate all Capacity Risk fields
     using the new hybrid RR (downtime) + CR (inefficiency) logic.
+    
+    v5.4 - Uses separate tolerances for Mode CT and Approved CT.
     """
 
     # --- 1. Standardize and Prepare Data ---
@@ -143,7 +145,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     all_shots_list = []
 
     # --- Define all columns that will be created for the daily results ---
-    # This prevents KeyErrors if all days are skipped
+    # This prevents KeyErrors if all days are skipped (v5.2 fix)
     all_result_columns = [
         'Date', 'Filtered Run Time (sec)', 'Optimal Output (parts)',
         'Capacity Loss (downtime) (sec)', 'Capacity Loss (downtime) (parts)',
@@ -181,7 +183,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         df_rr["time_diff_sec"] = df_rr["SHOT TIME"].diff().dt.total_seconds()
         df_rr.loc[0, "time_diff_sec"] = df_rr.loc[0, "Actual CT"] 
 
-        # --- 7a. "SAFE HARBOR" LOGIC ---
+        # --- 7a. "DUAL TOLERANCE" LOGIC (v5.4) ---
         if not daily_df['Approved CT'].mode().empty:
             APPROVED_CT_day = daily_df['Approved CT'].mode().iloc[0]
         else:
@@ -193,20 +195,24 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         else:
             mode_ct = 0
 
-        mode_lower_limit = mode_ct * (1 - rr_tolerance)
-        mode_upper_limit = mode_ct * (1 + rr_tolerance)
+        # Create two separate "safe" bands
+        mode_lower_limit = mode_ct * (1 - mode_ct_tolerance)
+        mode_upper_limit = mode_ct * (1 + mode_ct_tolerance)
         
-        approved_lower_limit = APPROVED_CT_day * (1 - rr_tolerance)
-        approved_upper_limit = APPROVED_CT_day * (1 + rr_tolerance)
+        approved_lower_limit = APPROVED_CT_day * (1 - approved_ct_tolerance)
+        approved_upper_limit = APPROVED_CT_day * (1 + approved_ct_tolerance)
+        # --- End v5.4 logic ---
 
         # --- 7b. RR Stop Detection ---
         is_hard_stop_code = df_rr["Actual CT"] >= 999.9
         prev_actual_ct = df_rr["Actual CT"].shift(1).fillna(0)
         is_time_gap = df_rr["time_diff_sec"] > (prev_actual_ct + rr_downtime_gap)
         
+        # Check if shot is in *either* safe band
         in_mode_band = (df_rr["Actual CT"] >= mode_lower_limit) & (df_rr["Actual CT"] <= mode_upper_limit)
         in_approved_band = (df_rr["Actual CT"] >= approved_lower_limit) & (df_rr["Actual CT"] <= approved_upper_limit)
         
+        # An abnormal cycle is one that is outside *both* bands
         is_abnormal_cycle = ~(in_mode_band | in_approved_band) & ~is_hard_stop_code
 
         df_rr["stop_flag"] = np.where(is_abnormal_cycle | is_time_gap | is_hard_stop_code, 1, 0)
@@ -264,7 +270,6 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
             0
         )
         # --- BUG FIX (v5.2) ---
-        # Was: ((df_production['Actual CT'] - df_production['Actual CT']) / ...
         df_production['parts_loss'] = np.where(
             df_production['Actual CT'] > APPROVED_CT_day,
             ((df_production['Actual CT'] - APPROVED_CT_day) / APPROVED_CT_day) * max_cavities,
@@ -302,7 +307,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         results['Target Output (parts)'] = results['Optimal Output (parts)'] * (target_output_perc / 100.0)
         results['Gap to Target (parts)'] = results['Actual Output (parts)'] - results['Target Output (parts)']
         results['Capacity Loss (vs Target) (parts)'] = np.maximum(0, results['Target Output (parts)'] - results['Actual Output (parts)']) # Can't be negative loss
-        results['Capacity Loss (vs Target) (sec)'] = (results['Capacity Loss (vs Target) (parts)'] * APPROVED_CT_day) / max_cavities
+        results['Capacity Loss (vs Target) (sec)'] = (results['Capacity Loss (vs Target) (parts)'] * APPROVED_CT_day) / max_cavities if max_cavities > 0 else 0
 
         # New Shot Counts
         results['Total Shots (all)'] = len(daily_df)
@@ -333,15 +338,16 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
 # ==================================================================
 
 @st.cache_data
-def run_capacity_calculation(raw_data_df, toggle, cavities, target_perc, rr_tol, rr_gap, _cache_version=None):
+def run_capacity_calculation(raw_data_df, toggle, cavities, target_perc, mode_tol, approved_tol, rr_gap, _cache_version=None):
     """Cached wrapper for the main calculation function."""
     return calculate_capacity_risk(
         raw_data_df,
         toggle,
         cavities,
         target_perc,
-        rr_tol, # Pass new arg
-        rr_gap  # Pass new arg
+        mode_tol,      # Pass new arg (v5.4)
+        approved_tol,  # Pass new arg (v5.4)
+        rr_gap
     )
 
 
@@ -366,9 +372,15 @@ uploaded_file = st.sidebar.file_uploader("Upload Raw Data File (CSV or Excel)", 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Run Rate Logic (for Downtime)")
 st.sidebar.info("These settings define 'Downtime'.")
-rr_tolerance = st.sidebar.slider(
-    "RR Tolerance Band (%)", 0.01, 0.50, 0.25, 0.01, 
-    help="Defines the ±% band for stop detection. A shot is 'Production' if it's within this band around EITHER the Approved CT OR the Actual Mode CT."
+
+# v5.4 - Renamed and split tolerances
+mode_ct_tolerance = st.sidebar.slider(
+    "Mode CT Tolerance (%)", 0.01, 0.50, 0.25, 0.01, 
+    help="Defines the ±% band around the *Actual Mode CT*. Shots outside this band AND the Approved CT band are flagged as stops."
+)
+approved_ct_tolerance = st.sidebar.slider(
+    "Approved CT Tolerance (%)", 0.01, 0.50, 0.25, 0.01, 
+    help="Defines the ±% 'Safe Harbor' band around the *Approved CT*. Shots inside this band are *always* considered 'Production'."
 )
 rr_downtime_gap = st.sidebar.slider(
     "RR Downtime Gap (sec)", 0.0, 10.0, 2.0, 0.5, 
@@ -441,9 +453,10 @@ if uploaded_file is not None:
                 toggle_filter,
                 default_cavities,
                 target_output_perc,
-                rr_tolerance,      # Pass new arg
-                rr_downtime_gap,   # Pass new arg
-                _cache_version=__version__ # <-- CACHE BUSTER
+                mode_ct_tolerance,       # Pass new arg (v5.4)
+                approved_ct_tolerance,   # Pass new arg (v5.4)
+                rr_downtime_gap,
+                _cache_version=__version__ # <-- CACHE BUSTER (v5.2)
             )
 
             if results_df is not None and not results_df.empty:
@@ -480,7 +493,7 @@ if uploaded_file is not None:
                 total_net_loss_sec = total_downtime_loss_sec + total_net_cycle_loss_sec
 
 
-                # --- NEW LAYOUT (Replaces old 4-column layout) ---
+                # --- NEW LAYOUT (v5.3) ---
 
                 # --- Box 1: Overall Summary ---
                 st.subheader("Overall Summary")
@@ -589,9 +602,9 @@ if uploaded_file is not None:
                     ],
                     textposition = "outside",
                     connector = {"line":{"color":"rgb(63, 63, 63)"}},
-                    decreasing = {"marker":{"color":"#ff6961"}}, 
-                    increasing = {"marker":{"color":"#77dd77"}}, 
-                    totals = {"marker":{"color":"#3498DB"}} 
+                    decreasing = {"marker":{"color":"#ff6961"}}, # Pastel Red
+                    increasing = {"marker":{"color":"#77dd77"}}, # Pastel Green
+                    totals = {"marker":{"color":"#3498DB"}} # Blue
                 ))
 
                 fig_waterfall.update_layout(
@@ -751,7 +764,7 @@ if uploaded_file is not None:
                 if benchmark_view == "Target Output":
                     report_table_2['Target Output (parts)'] = display_df.apply(lambda r: f"{r['Target Output (parts)']:,.2f} ({target_output_perc / 100.0:.0%})", axis=1)
                     
-                report_table_2['Actual Output (parts)'] = display_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
+                report_table_2['Actual Output (parts)'] = display_table.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
 
                 report_table_2['Loss (RR Downtime)'] = display_df.apply(lambda r: f"{r['Capacity Loss (downtime) (parts)']:,.2f} ({r['Capacity Loss (downtime) (parts %)']:.1%})", axis=1)
                 report_table_2['Loss (Slow Cycles)'] = display_df.apply(lambda r: f"{r['Capacity Loss (slow cycle time) (parts)']:,.2f} ({r['Capacity Loss (slow cycle time) (parts %)']:.1%})", axis=1)
@@ -812,6 +825,7 @@ if uploaded_file is not None:
                                     hovertemplate='<b>%{x|%H:%M:%S}</b><br>Actual CT: %{y:.2f}s<extra></extra>'
                                 )
 
+                        # v5.2 - Fix typo `approved_T_day`
                         fig_ct.add_shape(
                             type='line',
                             x0=df_day_shots['SHOT TIME'].min(), x1=df_day_shots['SHOT TIME'].max(),
@@ -819,7 +833,7 @@ if uploaded_file is not None:
                             line=dict(color='green', dash='dash'), name=f'Approved CT ({approved_ct_for_day}s)'
                         )
                         fig_ct.add_annotation(
-                            x=df_day_shots['SHOT TIME'].max(), y=approved_ct_for_day,
+                            x=df_day_shots['SHOT TIME'].max(), y=approved_sct_for_day,
                             text=f"Approved CT: {approved_ct_for_day}s", showarrow=True, arrowhead=1
                         )
 
