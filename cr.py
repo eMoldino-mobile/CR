@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "5.2 (Bug Fix & Time Breakdown)"
+__version__ = "5.3 (New Dashboard Layout)"
 # ==================================================================
 
 # ==================================================================
@@ -449,7 +449,7 @@ if uploaded_file is not None:
             if results_df is not None and not results_df.empty:
 
                 # --- 1. All-Time Summary Dashboard Calculations ---
-                st.header("All-Time Summary (The 4 Segments)")
+                st.header("All-Time Summary")
 
                 # 1. Calculate totals
                 total_produced = results_df['Actual Output (parts)'].sum()
@@ -467,46 +467,60 @@ if uploaded_file is not None:
                 total_fast_gain_sec = results_df['Capacity Gain (fast cycle time) (sec)'].sum()
                 total_net_cycle_loss_sec = total_slow_loss_sec - total_fast_gain_sec
 
-
                 total_actual_ct_sec = results_df['Actual Cycle Time Total (sec)'].sum()
                 total_actual_ct_dhm = format_seconds_to_dhm(total_actual_ct_sec)
 
                 run_time_sec_total = results_df['Filtered Run Time (sec)'].sum()
                 run_time_dhm_total = format_seconds_to_dhm(run_time_sec_total)
                 run_time_label = "Overall Run Time" if not toggle_filter else "Filtered Run Time"
+                actual_output_perc_val = (total_produced / total_optimal) if total_optimal > 0 else 0
 
-                # 2. Create 4 columns for the 4 segments
-                col1, col2, col3, col4 = st.columns(4)
+                # --- NEW: Calculate the final headline numbers ---
+                total_net_loss_parts = total_downtime_loss_parts + total_net_cycle_loss_parts
+                total_net_loss_sec = total_downtime_loss_sec + total_net_cycle_loss_sec
 
-                with col1:
-                    st.metric("Segment 4: Optimal Output", f"{total_optimal:,.0f} parts")
-                    st.metric(run_time_label, run_time_dhm_total)
 
-                with col2:
-                    st.metric("Segment 3: Run Rate Downtime (Stops)", 
-                              f"{-total_downtime_loss_parts:,.0f} parts",
-                              delta_color="inverse")
-                    st.metric("Time Lost to Stops", format_seconds_to_dhm(total_downtime_loss_sec))
+                # --- NEW LAYOUT (Replaces old 4-column layout) ---
 
-                with col3:
-                    # UPDATED: Show both slow and fast
-                    st.metric("Segment 2: Inefficiency Loss (Net)", 
-                              f"{-total_net_cycle_loss_parts:,.0f} parts",
-                              delta_color="inverse")
+                # --- Box 1: Overall Summary ---
+                st.subheader("Overall Summary")
+                with st.container(border=True):
+                    c1, c2, c3, c4 = st.columns(4)
                     
-                    st.metric("Time Lost to Slow Cycles", 
-                              f"{format_seconds_to_dhm(total_slow_loss_sec)}")
+                    with c1:
+                        st.metric(run_time_label, run_time_dhm_total)
                     
-                    st.metric("Time Gained from Fast Cycles", 
-                              f"{format_seconds_to_dhm(total_fast_gain_sec)}",
-                              delta=f"{format_seconds_to_dhm(total_fast_gain_sec)}",
-                              delta_color="normal")
+                    with c2:
+                        st.metric("Optimal Output (parts)", f"{total_optimal:,.0f}")
+                        
+                    with c3:
+                        st.metric(f"Actual Output ({actual_output_perc_val:.1%})", f"{total_produced:,.0f} parts")
+                        st.caption(f"Actual Production Time: {total_actual_ct_dhm}")
+                        
+                    with c4:
+                        st.metric("Total Capacity Loss (Net)", f"{-total_net_loss_parts:,.0f} parts", delta_color="inverse")
+                        st.caption(f"Total Time Lost: {format_seconds_to_dhm(total_net_loss_sec)}")
+
+                # --- Box 2: Capacity Loss Breakdown ---
+                st.subheader("Capacity Loss Breakdown")
+                with st.container(border=True):
+                    c1, c2, c3, c4 = st.columns(4)
+
+                    with c1:
+                        st.metric("Loss (RR Downtime)", f"{-total_downtime_loss_parts:,.0f} parts", delta_color="inverse")
+                        st.caption(f"Time Lost: {format_seconds_to_dhm(total_downtime_loss_sec)}")
+
+                    with c2:
+                        st.metric("Loss (Slow Cycles)", f"{-total_slow_loss_parts:,.0f} parts", delta_color="inverse")
+                        st.caption(f"Time Lost: {format_seconds_to_dhm(total_slow_loss_sec)}")
+
+                    with c3:
+                        st.metric("Gain (Fast Cycles)", f"{total_fast_gain_parts:,.0f} parts", delta_color="normal")
+                        st.caption(f"Time Gained: {format_seconds_to_dhm(total_fast_gain_sec)}")
                 
-                with col4:
-                    actual_output_perc_val = (total_produced / total_optimal) if total_optimal > 0 else 0
-                    st.metric(f"Segment 1: Actual Output ({actual_output_perc_val:.1%})", 
-                              f"{total_produced:,.0f} parts")
-                    st.metric("Actual Production Time", total_actual_ct_dhm)
+                    with c4:
+                        st.metric("Total Inefficiency Loss (Net)", f"{-total_net_cycle_loss_parts:,.0f} parts", delta_color="inverse")
+                        st.caption(f"Net Time Lost: {format_seconds_to_dhm(total_net_cycle_loss_sec)}")
 
 
                 # --- Collapsible Daily Summary Table ---
