@@ -140,17 +140,31 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     df_production_only['date'] = df_production_only['SHOT TIME'].dt.date
 
     daily_results_list = []
-    all_shots_list = [] # Renamed from all_valid_shots_list
+    all_shots_list = []
+
+    # --- Define all columns that will be created for the daily results ---
+    # This prevents KeyErrors if all days are skipped
+    all_result_columns = [
+        'Date', 'Filtered Run Time (sec)', 'Optimal Output (parts)',
+        'Capacity Loss (downtime) (sec)', 'Capacity Loss (downtime) (parts)',
+        'Actual Output (parts)', 'Actual Cycle Time Total (sec)',
+        'Capacity Gain (fast cycle time) (sec)', 'Capacity Loss (slow cycle time) (sec)',
+        'Capacity Loss (slow cycle time) (parts)', 'Capacity Gain (fast cycle time) (parts)',
+        'Total Capacity Loss (parts)', 'Total Capacity Loss (sec)',
+        'Target Output (parts)', 'Gap to Target (parts)',
+        'Capacity Loss (vs Target) (parts)', 'Capacity Loss (vs Target) (sec)',
+        'Total Shots (all)', 'Production Shots', 'Downtime Shots'
+    ]
 
     # Iterate over each day's data
     for date, daily_df in df_production_only.groupby('date'):
 
-        results = {}
+        results = {col: 0 for col in all_result_columns} # Pre-fill all with 0
         results['Date'] = date
 
         if daily_df.empty or len(daily_df) < 2:
             results['Total Shots (all)'] = len(daily_df)
-            daily_results_list.append(results)
+            daily_results_list.append(results) # Append the zero-filled dict
             continue
             
         # --- 6. Get Wall Clock Time (Basis for Segment 4) ---
@@ -229,7 +243,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
 
         # SEGMENT 2: Inefficiency (CT Slow/Fast) Loss
         
-        # --- NEW: Calculate TIME Loss/Gain ---
+        # Calculate TIME Loss/Gain
         df_production['time_gain_sec'] = np.where(
             df_production['Actual CT'] < APPROVED_CT_day,
             (APPROVED_CT_day - df_production['Actual CT']), # Time gained per shot
@@ -249,7 +263,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
             ((APPROVED_CT_day - df_production['Actual CT']) / APPROVED_CT_day) * max_cavities,
             0
         )
-        # --- BUG FIX HERE ---
+        # --- BUG FIX (v5.2) ---
         # Was: ((df_production['Actual CT'] - df_production['Actual CT']) / ...
         df_production['parts_loss'] = np.where(
             df_production['Actual CT'] > APPROVED_CT_day,
@@ -281,8 +295,6 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         # --- 11. Final Aggregations ---
         results['Total Capacity Loss (parts)'] = results['Capacity Loss (downtime) (parts)'] + results['Capacity Loss (slow cycle time) (parts)'] - results['Capacity Gain (fast cycle time) (parts)']
 
-        net_cycle_loss_parts = results['Capacity Loss (slow cycle time) (parts)'] - results['Capacity Gain (fast cycle time) (parts)']
-        # Use the new time calculations for Total Capacity Loss (sec)
         net_cycle_loss_sec = results['Capacity Loss (slow cycle time) (sec)'] - results['Capacity Gain (fast cycle time) (sec)']
         results['Total Capacity Loss (sec)'] = results['Capacity Loss (downtime) (sec)'] + net_cycle_loss_sec
 
@@ -339,7 +351,7 @@ def run_capacity_calculation(raw_data_df, toggle, cavities, target_perc, rr_tol,
 
 # --- Page Config ---
 st.set_page_config(
-    page_title="Capacity Risk Calculator (v5.2)",
+    page_title=f"Capacity Risk Calculator (v{__version__})",
     layout="wide"
 )
 
@@ -450,10 +462,8 @@ if uploaded_file is not None:
                 
                 # Calculate corresponding time values
                 total_downtime_loss_sec = results_df['Capacity Loss (downtime) (sec)'].sum()
-                # --- NEW: Get specific time loss/gain ---
                 total_slow_loss_sec = results_df['Capacity Loss (slow cycle time) (sec)'].sum()
                 total_fast_gain_sec = results_df['Capacity Gain (fast cycle time) (sec)'].sum()
-                # total_net_cycle_loss_sec = results_df['Total Capacity Loss (sec)'].sum() - total_downtime_loss_sec
                 total_net_cycle_loss_sec = total_slow_loss_sec - total_fast_gain_sec
 
 
@@ -478,7 +488,7 @@ if uploaded_file is not None:
                     st.metric("Time Lost to Stops", format_seconds_to_dhm(total_downtime_loss_sec))
 
                 with col3:
-                    # --- UPDATED: Show both slow and fast ---
+                    # UPDATED: Show both slow and fast
                     st.metric("Segment 2: Inefficiency Loss (Net)", 
                               f"{-total_net_cycle_loss_parts:,.0f} parts",
                               delta_color="inverse")
@@ -790,7 +800,7 @@ if uploaded_file is not None:
                         fig_ct.add_shape(
                             type='line',
                             x0=df_day_shots['SHOT TIME'].min(), x1=df_day_shots['SHOT TIME'].max(),
-                            y0=approved_ct_for_day, y1=approved_T_day,
+                            y0=approved_ct_for_day, y1=approved_ct_for_day,
                             line=dict(color='green', dash='dash'), name=f'Approved CT ({approved_ct_for_day}s)'
                         )
                         fig_ct.add_annotation(
