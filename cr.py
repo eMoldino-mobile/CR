@@ -252,7 +252,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         
         # 2. Add this 'Shot Type' to df_rr, and fill 'Downtime'
         df_rr['Shot Type'] = df_production['Shot Type'] # This maps by index, NaNs where stop_flag=1
-        df_rr['Shot Type'].fillna('Downtime', inplace=True)
+        df_rr['Shot Type'].fillna('RR Downtime (Stop)', inplace=True)
         
         # 3. Add Approved CT to df_rr for plotting
         df_rr['Approved CT'] = APPROVED_CT
@@ -545,7 +545,7 @@ if uploaded_file is not None:
                     measure = ["absolute", "relative", "relative", "total"],
                     x = [
                         "<b>Segment 4: Optimal</b>", 
-                        "<b>Segment 3: Downtime Loss</b>", 
+                        "<b>Segment 3: Run Rate Downtime (Stops)</b>", 
                         "<b>Segment 2: Inefficiency Loss</b>", 
                         "<b>Segment 1: Actual Output</b>"
                     ],
@@ -672,10 +672,10 @@ if uploaded_file is not None:
                 fig_ts.add_trace(go.Bar(
                     x=chart_df['Date'],
                     y=chart_df['Capacity Loss (downtime) (parts)'],
-                    name='Downtime Loss (Segment 3)',
+                    name='Run Rate Downtime (Stops) (Segment 3)',
                     marker_color='#ff6961', # Pastel Red
                     customdata=chart_df['Capacity Loss (downtime) (parts %)'],
-                    hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Downtime Loss: %{y:,.0f} (%{customdata:.1%})<extra></extra>'
+                    hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Run Rate Downtime (Stops): %{y:,.0f} (%{customdata:.1%})<extra></extra>'
                 ))
                 
                 fig_ts.update_layout(barmode='stack')
@@ -737,7 +737,7 @@ if uploaded_file is not None:
                 report_table_2['Actual Output (parts)'] = display_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
 
                 # Always show the full breakdown
-                report_table_2['Loss (Downtime)'] = display_df.apply(lambda r: f"{r['Capacity Loss (downtime) (parts)']:,.2f} ({r['Capacity Loss (downtime) (parts %)']:.1%})", axis=1)
+                report_table_2['Loss (RR Downtime)'] = display_df.apply(lambda r: f"{r['Capacity Loss (downtime) (parts)']:,.2f} ({r['Capacity Loss (downtime) (parts %)']:.1%})", axis=1)
                 report_table_2['Loss (Slow Cycles)'] = display_df.apply(lambda r: f"{r['Capacity Loss (slow cycle time) (parts)']:,.2f} ({r['Capacity Loss (slow cycle time) (parts %)']:.1%})", axis=1)
                 report_table_2['Gain (Fast Cycles)'] = display_df.apply(lambda r: f"{r['Capacity Gain (fast cycle time) (parts)']:,.2f} ({r['Capacity Gain (fast cycle time) (parts %)']:.1%})", axis=1)
                 report_table_2['Total Net Loss'] = display_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
@@ -750,7 +750,7 @@ if uploaded_file is not None:
                 # --- 4. SHOT-BY-SHOT ANALYSIS ---
                 st.divider()
                 st.header("Shot-by-Shot Analysis (All Shots)")
-                st.info("This chart shows all shots. 'Production' shots are color-coded (Slow/Fast/On Target), and 'Downtime' shots are grey.")
+                st.info("This chart shows all shots. 'Production' shots are color-coded (Slow/Fast/On Target), and 'RR Downtime (Stop)' shots are grey.")
 
                 if all_shots_df.empty:
                     st.warning("No shots were found in the file to analyze.")
@@ -786,7 +786,7 @@ if uploaded_file is not None:
                         approved_ct_for_day = df_day_shots['Approved CT'].iloc[0]
 
                         fig_ct = go.Figure()
-                        color_map = {'Slow': '#ff6961', 'Fast': '#ffb347', 'On Target': '#3498DB', 'Downtime': '#808080'}
+                        color_map = {'Slow': '#ff6961', 'Fast': '#ffb347', 'On Target': '#3498DB', 'RR Downtime (Stop)': '#808080'}
 
                         for shot_type, color in color_map.items():
                             df_subset = df_day_shots[df_day_shots['Shot Type'] == shot_type]
