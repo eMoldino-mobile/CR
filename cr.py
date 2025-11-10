@@ -6,11 +6,11 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.24 (Shot-by-Shot Hover Fix)"
+__version__ = "6.25 (Shot-by-Shot Bar Fix)"
 # ==================================================================
 
 # ==================================================================
-#                         HELPER FUNCTIONS
+#                        HELPER FUNCTIONS
 # ==================================================================
 
 def format_seconds_to_dhm(total_seconds):
@@ -940,7 +940,7 @@ if uploaded_file is not None:
                             yaxis_title='Actual Cycle Time (sec)',
                             hovermode="closest",
                             yaxis_range=[0, y_axis_max], # Apply the zoom
-                            barmode='overlay' 
+                            # --- v6.25: REMOVED barmode='overlay' ---
                         )
                         st.plotly_chart(fig_ct, width='stretch')
 
