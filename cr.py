@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.22 (Waterfall Label + Format Fix)"
+__version__ = "6.23 (Waterfall shows Actual Output)"
 # ==================================================================
 
 # ==================================================================
@@ -601,8 +601,8 @@ if uploaded_file is not None:
                 # --- 2. NEW 4-SEGMENT WATERFALL CHART ---
                 st.header("Production Output Overview")
 
-                # --- v6.22: Calculate the bar's real total ---
-                calculated_total = total_optimal - total_downtime_loss_parts - total_net_cycle_loss_parts
+                # --- v6.23: Remove calculated_total, use total_produced ---
+                # calculated_total = total_optimal - total_downtime_loss_parts - total_net_cycle_loss_parts
 
                 # Replaced the incorrect 'marker' argument with the correct structure
                 # using 'increasing', 'decreasing', and 'totals'
@@ -616,19 +616,19 @@ if uploaded_file is not None:
                         "<b>Optimal Output</b>", 
                         "<b>Run Rate Downtime (Stops)</b>", 
                         "<b>Capacity Loss (cycle time)</b>", 
-                        "<b>Calculated Output (from time)</b>" # <-- v6.22: Rename X-axis label
+                        "<b>Actual Output</b>" # <-- v6.23: Reverted to Actual
                     ],
                     text = [
                         f"{total_optimal:,.0f}",
                         f"{-total_downtime_loss_parts:,.0f}",
                         f"{-total_net_cycle_loss_parts:,.0f}",
-                        f"{calculated_total:,.0f}" # <-- v6.22: Use calculated_total for text
+                        f"{total_produced:,.0f}" # <-- v6.23: Use total_produced
                     ],
                     y = [
                         total_optimal, 
                         -total_downtime_loss_parts, 
                         -total_net_cycle_loss_parts, 
-                        calculated_total # <-- v6.22: Use calculated_total for y-value
+                        total_produced # <-- v6.23: Use total_produced
                     ],
                     textposition = "outside",
                     connector = {"line":{"color":"rgb(63, 63, 63)"}},
@@ -657,14 +657,15 @@ if uploaded_file is not None:
                     line=dict(color='deepskyblue', dash='dash')
                 ))
 
+                # --- v6.23: Remove redundant dotted line for Actual Output ---
                 # Add Actual line as a scatter trace
-                fig_waterfall.add_trace(go.Scatter(
-                    x=fig_waterfall.data[0].x, # Use x-axis from waterfall
-                    y=[total_produced] * len(fig_waterfall.data[0].x), # Draw line
-                    name='Actual Output (from cavities)', # <-- v6.22: Rename legend
-                    mode='lines',
-                    line=dict(color='green', dash='dot')
-                ))
+                # fig_waterfall.add_trace(go.Scatter(
+                #     x=fig_waterfall.data[0].x, # Use x-axis from waterfall
+                #     y=[total_produced] * len(fig_waterfall.data[0].x), # Draw line
+                #     name='Actual Output (from cavities)', # <-- v6.22: Rename legend
+                #     mode='lines',
+                #     line=dict(color='green', dash='dot')
+                # ))
                 
                 # Keep the annotation for Target Output, but anchor it
                 fig_waterfall.add_annotation(
