@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "5.0 (Hybrid Logic)"
+__version__ = "5.1 (Safe Harbor Logic)"
 # ==================================================================
 
 # ==================================================================
@@ -170,22 +170,43 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         # Use first shot's Actual CT as its own diff for a sane starting point
         df_rr.loc[0, "time_diff_sec"] = df_rr.loc[0, "Actual CT"] 
 
-        # Find Actual Mode CT (for stop detection only)
+        # --- 7a. "SAFE HARBOR" LOGIC ---
+        # Get the daily Approved CT (the "standard")
+        if not daily_df['Approved CT'].mode().empty:
+            APPROVED_CT_day = daily_df['Approved CT'].mode().iloc[0]
+        else:
+            APPROVED_CT_day = 0
+            
+        # Get the daily Actual Mode CT (what it *actually* does)
         df_for_mode = df_rr[df_rr["Actual CT"] < 999.9]
         if not df_for_mode.empty and not df_for_mode['Actual CT'].mode().empty:
             mode_ct = df_for_mode['Actual CT'].mode().iloc[0]
         else:
-            mode_ct = 0 # No valid shots to determine mode
+            mode_ct = 0
 
-        lower_limit = mode_ct * (1 - rr_tolerance)
-        upper_limit = mode_ct * (1 + rr_tolerance)
+        # Create two "safe bands" for production shots
+        # Band 1: Around the Actual Mode CT
+        mode_lower_limit = mode_ct * (1 - rr_tolerance)
+        mode_upper_limit = mode_ct * (1 + rr_tolerance)
+        
+        # Band 2: Around the Approved CT
+        approved_lower_limit = APPROVED_CT_day * (1 - rr_tolerance)
+        approved_upper_limit = APPROVED_CT_day * (1 + rr_tolerance)
 
-        # RR Stop Detection
+        # --- 7b. RR Stop Detection ---
         is_hard_stop_code = df_rr["Actual CT"] >= 999.9
-        is_abnormal_cycle = ((df_rr["Actual CT"] < lower_limit) | (df_rr["Actual CT"] > upper_limit)) & ~is_hard_stop_code
         prev_actual_ct = df_rr["Actual CT"].shift(1).fillna(0)
         is_time_gap = df_rr["time_diff_sec"] > (prev_actual_ct + rr_downtime_gap)
+        
+        # New "is_abnormal_cycle" logic
+        # A shot is "in bounds" if it's in the Mode band OR the Approved band
+        in_mode_band = (df_rr["Actual CT"] >= mode_lower_limit) & (df_rr["Actual CT"] <= mode_upper_limit)
+        in_approved_band = (df_rr["Actual CT"] >= approved_lower_limit) & (df_rr["Actual CT"] <= approved_upper_limit)
+        
+        # A shot is "abnormal" ONLY IF it is outside *both* bands
+        is_abnormal_cycle = ~(in_mode_band | in_approved_band) & ~is_hard_stop_code
 
+        # Final stop_flag
         df_rr["stop_flag"] = np.where(is_abnormal_cycle | is_time_gap | is_hard_stop_code, 1, 0)
         if not df_rr.empty:
             df_rr.loc[0, "stop_flag"] = 0 # First shot can't be a stop
@@ -200,26 +221,21 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         df_downtime   = df_rr[df_rr['stop_flag'] == 1].copy() # For Segment 3
         
         # --- 9. Get Config (Approved CT & Max Cavities) ---
-        if not df_production.empty:
-            APPROVED_CT = df_production['Approved CT'].mode().iloc[0]
-        elif not daily_df.empty:
-            APPROVED_CT = daily_df['Approved CT'].mode().iloc[0] # Fallback
-        else:
-            APPROVED_CT = 0
+        # We now use the APPROVED_CT_day we already calculated
+        if APPROVED_CT_day == 0 or pd.isna(APPROVED_CT_day): 
+            APPROVED_CT_day = 1 # Avoid divide-by-zero
 
         max_cavities = daily_df['Working Cavities'].max()
-        
         if max_cavities == 0 or pd.isna(max_cavities): max_cavities = 1
-        if APPROVED_CT == 0 or pd.isna(APPROVED_CT): APPROVED_CT = 1 # Avoid divide-by-zero
-
+        
         # --- 10. Calculate The 4 Segments (in Parts) ---
 
         # SEGMENT 4: Optimal Production (Theoretical Max)
-        results['Optimal Output (parts)'] = (results['Filtered Run Time (sec)'] / APPROVED_CT) * max_cavities
+        results['Optimal Output (parts)'] = (results['Filtered Run Time (sec)'] / APPROVED_CT_day) * max_cavities
 
         # SEGMENT 3: RR Downtime Loss
         results['Capacity Loss (downtime) (sec)'] = df_downtime['adj_ct_sec'].sum()
-        results['Capacity Loss (downtime) (parts)'] = (results['Capacity Loss (downtime) (sec)'] / APPROVED_CT) * max_cavities
+        results['Capacity Loss (downtime) (parts)'] = (results['Capacity Loss (downtime) (sec)'] / APPROVED_CT_day) * max_cavities
 
         # SEGMENT 1: Actual Production
         results['Actual Output (parts)'] = df_production['Working Cavities'].sum()
@@ -228,13 +244,13 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         # SEGMENT 2: Inefficiency (CT Slow/Fast) Loss
         # This logic is applied *only* to the df_production (Uptime) group
         df_production['parts_gain'] = np.where(
-            df_production['Actual CT'] < APPROVED_CT,
-            ((APPROVED_CT - df_production['Actual CT']) / APPROVED_CT) * max_cavities,
+            df_production['Actual CT'] < APPROVED_CT_day,
+            ((APPROVED_CT_day - df_production['Actual CT']) / APPROVED_CT_day) * max_cavities,
             0
         )
         df_production['parts_loss'] = np.where(
-            df_production['Actual CT'] > APPROVED_CT,
-            ((df_production['Actual CT'] - APPROVED_CT) / APPROVED_CT) * max_cavities,
+            df_production['Actual CT'] > APPROVED_CT_day,
+            ((df_production['Actual CT'] - df_production['Actual CT']) / APPROVED_CT_day) * max_cavities,
             0
         )
         results['Capacity Loss (slow cycle time) (parts)'] = df_production['parts_loss'].sum()
@@ -243,9 +259,9 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         # --- NEW: Create a unified 'Shot Type' column for all shots ---
         # 1. Calculate 'Shot Type' for df_production first
         conditions = [
-            (df_production['Actual CT'] > APPROVED_CT),
-            (df_production['Actual CT'] < APPROVED_CT),
-            (df_production['Actual CT'] == APPROVED_CT)
+            (df_production['Actual CT'] > APPROVED_CT_day),
+            (df_production['Actual CT'] < APPROVED_CT_day),
+            (df_production['Actual CT'] == APPROVED_CT_day)
         ]
         choices = ['Slow', 'Fast', 'On Target']
         df_production['Shot Type'] = np.select(conditions, choices, default='N/A')
@@ -255,7 +271,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         df_rr['Shot Type'].fillna('RR Downtime (Stop)', inplace=True)
         
         # 3. Add Approved CT to df_rr for plotting
-        df_rr['Approved CT'] = APPROVED_CT
+        df_rr['Approved CT'] = APPROVED_CT_day
 
         # Add the *full* daily df (df_rr) to the list for the shot-by-shot chart
         if not df_rr.empty:
@@ -265,14 +281,14 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         results['Total Capacity Loss (parts)'] = results['Capacity Loss (downtime) (parts)'] + results['Capacity Loss (slow cycle time) (parts)'] - results['Capacity Gain (fast cycle time) (parts)']
 
         net_cycle_loss_parts = results['Capacity Loss (slow cycle time) (parts)'] - results['Capacity Gain (fast cycle time) (parts)']
-        net_cycle_loss_sec = (net_cycle_loss_parts * APPROVED_CT) / max_cavities
+        net_cycle_loss_sec = (net_cycle_loss_parts * APPROVED_CT_day) / max_cavities
         results['Total Capacity Loss (sec)'] = results['Capacity Loss (downtime) (sec)'] + net_cycle_loss_sec
 
         # Target Calculations
         results['Target Output (parts)'] = results['Optimal Output (parts)'] * (target_output_perc / 100.0)
         results['Gap to Target (parts)'] = results['Actual Output (parts)'] - results['Target Output (parts)']
         results['Capacity Loss (vs Target) (parts)'] = np.maximum(0, results['Target Output (parts)'] - results['Actual Output (parts)']) # Can't be negative loss
-        results['Capacity Loss (vs Target) (sec)'] = (results['Capacity Loss (vs Target) (parts)'] * APPROVED_CT) / max_cavities
+        results['Capacity Loss (vs Target) (sec)'] = (results['Capacity Loss (vs Target) (parts)'] * APPROVED_CT_day) / max_cavities
 
         # New Shot Counts
         results['Total Shots (all)'] = len(daily_df)
@@ -296,13 +312,6 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     all_shots_df = pd.concat(all_shots_list, ignore_index=True)
     all_shots_df['date'] = all_shots_df['SHOT TIME'].dt.date
     
-    # Add Shot Type column for scatter plot
-    # This block is no longer needed, as Shot Type is set inside the loop
-    # conditions = [ ... ]
-    # choices = [ ... ]
-    # all_shots_df['Shot Type'] = np.select(conditions, choices, default='N/A')
-
-
     return final_df, all_shots_df
 
 # ==================================================================
@@ -328,7 +337,7 @@ def run_capacity_calculation(raw_data_df, toggle, cavities, target_perc, rr_tol,
 
 # --- Page Config ---
 st.set_page_config(
-    page_title="Capacity Risk Calculator (v5)",
+    page_title="Capacity Risk Calculator (v5.1)",
     layout="wide"
 )
 
@@ -345,7 +354,7 @@ st.sidebar.subheader("Run Rate Logic (for Downtime)")
 st.sidebar.info("These settings define 'Downtime'.")
 rr_tolerance = st.sidebar.slider(
     "RR Tolerance Band (%)", 0.01, 0.50, 0.25, 0.01, 
-    help="Defines the ±% around the *Actual* Mode CT to detect abnormal cycles (for stop detection only)."
+    help="Defines the ±% band for stop detection. A shot is 'Production' if it's within this band around EITHER the Approved CT OR the Actual Mode CT."
 )
 rr_downtime_gap = st.sidebar.slider(
     "RR Downtime Gap (sec)", 0.0, 10.0, 2.0, 0.5, 
