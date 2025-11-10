@@ -835,7 +835,7 @@ if uploaded_file is not None:
                     report_table_target['Actual Output (parts)'] = display_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
                     
                     # --- v6.19 FIX: Corrected format string (space removed) ---
-                    report_table_target['Gap to Target (parts)'] = display_df['Gap to Target (parts)'].apply(lambda x: "{:+, .2f}".format(x) if pd.notna(x) else "N/A")
+                    report_table_target['Gap to Target (parts)'] = display_df['Gap to Target (parts)'].apply(lambda x: "{:+,.2f}".format(x) if pd.notna(x) else "N/A")
                     report_table_target['Gap % (vs Target)'] = display_df.apply(lambda r: r['Gap to Target (parts)'] / r['Target Output (parts)'] if r['Target Output (parts)'] > 0 else 0, axis=1).apply(lambda x: "{:+.1%}".format(x) if pd.notna(x) else "N/A")
 
                     # --- v6.3: Format allocation display ---
