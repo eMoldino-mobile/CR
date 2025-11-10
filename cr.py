@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.21 (Fix Waterfall Label)"
+__version__ = "6.22 (Waterfall Label + Format Fix)"
 # ==================================================================
 
 # ==================================================================
@@ -587,8 +587,8 @@ if uploaded_file is not None:
                         # Force the column to numeric to handle any non-numeric values (like inf) before formatting
                         daily_summary_df['Gap to Target (parts)'] = pd.to_numeric(daily_summary_df['Gap to Target (parts)'], errors='coerce').fillna(0)
                         
-                        # --- v6.19 FIX: Corrected format string (space removed) ---
-                        daily_kpi_table['Gap to Target (parts)'] = daily_summary_df['Gap to Target (parts)'].apply(lambda x: "{:+, .2f}".format(x) if pd.notna(x) else "N/A")
+                        # --- v6.22 FIX: Corrected format string (space removed) ---
+                        daily_kpi_table['Gap to Target (parts)'] = daily_summary_df['Gap to Target (parts)'].apply(lambda x: "{:+,.2f}".format(x) if pd.notna(x) else "N/A")
                         daily_kpi_table['Capacity Loss (vs Target) (Time)'] = daily_summary_df.apply(lambda r: f"{r['Capacity Loss (vs Target) (d/h/m)']} ({r['Capacity Loss (vs Target) (time %)']:.1%})", axis=1)
 
                         st.dataframe(daily_kpi_table.style.applymap(
@@ -601,7 +601,7 @@ if uploaded_file is not None:
                 # --- 2. NEW 4-SEGMENT WATERFALL CHART ---
                 st.header("Production Output Overview")
 
-                # --- v6.21: Calculate the bar's real total ---
+                # --- v6.22: Calculate the bar's real total ---
                 calculated_total = total_optimal - total_downtime_loss_parts - total_net_cycle_loss_parts
 
                 # Replaced the incorrect 'marker' argument with the correct structure
@@ -616,19 +616,19 @@ if uploaded_file is not None:
                         "<b>Optimal Output</b>", 
                         "<b>Run Rate Downtime (Stops)</b>", 
                         "<b>Capacity Loss (cycle time)</b>", 
-                        "<b>Calculated Output (from time)</b>" # <-- v6.21: Rename X-axis label
+                        "<b>Calculated Output (from time)</b>" # <-- v6.22: Rename X-axis label
                     ],
                     text = [
                         f"{total_optimal:,.0f}",
                         f"{-total_downtime_loss_parts:,.0f}",
                         f"{-total_net_cycle_loss_parts:,.0f}",
-                        f"{calculated_total:,.0f}" # <-- v6.21: Use calculated_total for text
+                        f"{calculated_total:,.0f}" # <-- v6.22: Use calculated_total for text
                     ],
                     y = [
                         total_optimal, 
                         -total_downtime_loss_parts, 
                         -total_net_cycle_loss_parts, 
-                        calculated_total # <-- v6.21: Use calculated_total for y-value
+                        calculated_total # <-- v6.22: Use calculated_total for y-value
                     ],
                     textposition = "outside",
                     connector = {"line":{"color":"rgb(63, 63, 63)"}},
@@ -661,7 +661,7 @@ if uploaded_file is not None:
                 fig_waterfall.add_trace(go.Scatter(
                     x=fig_waterfall.data[0].x, # Use x-axis from waterfall
                     y=[total_produced] * len(fig_waterfall.data[0].x), # Draw line
-                    name='Actual Output (from cavities)', # <-- v6.21: Rename legend
+                    name='Actual Output (from cavities)', # <-- v6.22: Rename legend
                     mode='lines',
                     line=dict(color='green', dash='dot')
                 ))
@@ -847,8 +847,8 @@ if uploaded_file is not None:
                     report_table_target['Target Output (parts)'] = display_df.apply(lambda r: f"{r['Target Output (parts)']:,.2f}", axis=1)
                     report_table_target['Actual Output (parts)'] = display_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
                     
-                    # --- v6.19 FIX: Corrected format string (space removed) ---
-                    report_table_target['Gap to Target (parts)'] = display_df['Gap to Target (parts)'].apply(lambda x: "{:+, .2f}".format(x) if pd.notna(x) else "N/A")
+                    # --- v6.22 FIX: Corrected format string (space removed) ---
+                    report_table_target['Gap to Target (parts)'] = display_df['Gap to Target (parts)'].apply(lambda x: "{:+,.2f}".format(x) if pd.notna(x) else "N/A")
                     report_table_target['Gap % (vs Target)'] = display_df.apply(lambda r: r['Gap to Target (parts)'] / r['Target Output (parts)'] if r['Target Output (parts)'] > 0 else 0, axis=1).apply(lambda x: "{:+.1%}".format(x) if pd.notna(x) else "N/A")
 
                     # --- v6.3: Format allocation display ---
