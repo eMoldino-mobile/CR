@@ -6,11 +6,11 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.3.3 (Format String Hotfix)"
+__version__ = "6.4 (Visual Progress Bars)"
 # ==================================================================
 
 # ==================================================================
-#                        HELPER FUNCTION
+#                        HELPER FUNCTIONS
 # ==================================================================
 
 def format_seconds_to_dhm(total_seconds):
@@ -26,6 +26,16 @@ def format_seconds_to_dhm(total_seconds):
     if hours > 0: parts.append(f"{hours}h")
     if minutes > 0 or not parts: parts.append(f"{minutes}m")
     return " ".join(parts) if parts else "0m"
+
+def get_progress_bar_html(percentage, is_loss=False):
+    """Generates HTML for a simple progress bar."""
+    color = "#ff6961" if is_loss else "deepskyblue" # Red for loss, blue for gain/actual
+    percentage = max(0, min(100, percentage)) # Clamp percentage between 0 and 100
+    return f"""
+    <div style="background-color: #eee; border-radius: 5px; height: 10px; width: 100%; border: 1px solid #ddd;">
+        <div style="background-color: {color}; width: {percentage}%; height: 100%; border-radius: 5px 0 0 5px;"></div>
+    </div>
+    """
 
 # ==================================================================
 #                        DATA CALCULATION
@@ -443,6 +453,34 @@ if uploaded_file is not None:
     if df_raw is not None:
         st.success(f"Successfully loaded file: **{uploaded_file.name}**")
 
+        # --- v6.4: Add CSS for Progress Bars ---
+        st.markdown("""
+        <style>
+        .progress-container {
+            background-color: #eee;
+            border-radius: 5px;
+            height: 10px;
+            width: 100%;
+            border: 1px solid #ddd;
+            margin-top: 5px; /* Add space below the metric */
+        }
+        .progress-bar {
+            height: 100%;
+            border-radius: 5px;
+        }
+        .progress-bar-optimal {
+            background-color: deepskyblue;
+            width: 100%;
+        }
+        .progress-bar-actual {
+            background-color: deepskyblue;
+        }
+        .progress-bar-loss {
+            background-color: #ff6961; /* Pastel Red */
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
         # --- Run Calculation ---
         with st.spinner("Calculating Capacity Risk... (Using new hybrid logic)"):
 
@@ -489,6 +527,10 @@ if uploaded_file is not None:
                 # --- NEW: Calculate the final headline numbers ---
                 total_net_loss_parts = total_downtime_loss_parts + total_net_cycle_loss_parts
                 total_net_loss_sec = total_downtime_loss_sec + total_net_cycle_loss_sec
+                
+                # --- v6.4: Percentages for progress bars ---
+                actual_perc_for_bar = (total_produced / total_optimal) * 100 if total_optimal > 0 else 0
+                loss_perc_for_bar = (total_net_loss_parts / total_optimal) * 100 if total_optimal > 0 else 0
 
 
                 # --- NEW LAYOUT (Replaces old 4-column layout) ---
@@ -503,16 +545,34 @@ if uploaded_file is not None:
                     
                     with c2:
                         st.metric("Optimal Output (parts)", f"{total_optimal:,.0f}")
+                        # --- v6.4: Add progress bar ---
+                        st.markdown(f"""
+                            <div class="progress-container">
+                                <div class="progress-bar progress-bar-optimal"></div>
+                            </div>
+                        """, unsafe_allow_html=True)
                         
                     with c3:
                         # --- v6.2: Removed delta ---
                         st.metric(f"Actual Output ({actual_output_perc_val:.1%})", f"{total_produced:,.0f} parts")
                         st.caption(f"Actual Production Time: {total_actual_ct_dhm}")
+                        # --- v6.4: Add progress bar ---
+                        st.markdown(f"""
+                            <div class="progress-container">
+                                <div class="progress-bar progress-bar-actual" style="width: {actual_perc_for_bar}%;"></div>
+                            </div>
+                        """, unsafe_allow_html=True)
                         
                     with c4:
                         # --- v6.2: Removed delta ---
                         st.metric("Total Capacity Loss (Net)", f"{total_net_loss_parts:,.0f} parts")
                         st.caption(f"Total Time Lost: {format_seconds_to_dhm(total_net_loss_sec)}")
+                        # --- v6.4: Add progress bar ---
+                        st.markdown(f"""
+                            <div class="progress-container">
+                                <div class="progress-bar progress-bar-loss" style="width: {loss_perc_for_bar}%;"></div>
+                            </div>
+                        """, unsafe_allow_html=True)
 
                 # --- Box 2: Capacity Loss Breakdown ---
                 st.subheader("Capacity Loss Breakdown")
@@ -578,7 +638,7 @@ if uploaded_file is not None:
                         # Force the column to numeric to handle any non-numeric values (like inf) before formatting
                         daily_summary_df['Gap to Target (parts)'] = pd.to_numeric(daily_summary_df['Gap to Target (parts)'], errors='coerce').fillna(0)
                         
-                        # --- v6.3.3 FIX: Removed invalid '_' from format string ---
+                        # --- v6.4 (was v6.3.3) FIX: Removed invalid '_' from format string ---
                         daily_kpi_table['Gap to Target (parts)'] = daily_summary_df['Gap to Target (parts)'].map('{:+, .2f}'.format)
                         daily_kpi_table['Capacity Loss (vs Target) (Time)'] = daily_summary_df.apply(lambda r: f"{r['Capacity Loss (vs Target) (d/h/m)']} ({r['Capacity Loss (vs Target) (time %)']:.1%})", axis=1)
 
@@ -823,6 +883,7 @@ if uploaded_file is not None:
                     report_table_target['Target Output (parts)'] = display_df.apply(lambda r: f"{r['Target Output (parts)']:,.2f}", axis=1)
                     report_table_target['Actual Output (parts)'] = display_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
                     
+                    # --- v6.4 (was v6.3.3) FIX: Removed invalid '_' from format string ---
                     report_table_target['Gap to Target (parts)'] = display_df['Gap to Target (parts)'].map('{:+, .2f}'.format)
                     report_table_target['Gap % (vs Target)'] = display_df.apply(lambda r: r['Gap to Target (parts)'] / r['Target Output (parts)'] if r['Target Output (parts)'] > 0 else 0, axis=1).map('{:+.1%}'.format)
 
