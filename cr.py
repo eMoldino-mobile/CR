@@ -6,11 +6,11 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.23 (Waterfall shows Actual Output)"
+__version__ = "6.24 (Shot-by-Shot Hover Fix)"
 # ==================================================================
 
 # ==================================================================
-#                        HELPER FUNCTIONS
+#                         HELPER FUNCTIONS
 # ==================================================================
 
 def format_seconds_to_dhm(total_seconds):
@@ -600,7 +600,7 @@ if uploaded_file is not None:
 
                 # --- 2. NEW 4-SEGMENT WATERFALL CHART ---
                 st.header("Production Output Overview")
-
+                
                 # --- v6.23: Remove calculated_total, use total_produced ---
                 # calculated_total = total_optimal - total_downtime_loss_parts - total_net_cycle_loss_parts
 
@@ -643,10 +643,8 @@ if uploaded_file is not None:
                 fig_waterfall.update_layout(
                     title="Capacity Breakdown (All Time)",
                     yaxis_title="Parts",
-                    showlegend=True # <-- CHANGE: Turn on the legend
+                    showlegend=True # <-- v6.20: Enable legend
                 )
-                
-                # --- v6.20: Changed from add_shape to add_trace to include in legend ---
                 
                 # Add Target Line as a scatter trace
                 fig_waterfall.add_trace(go.Scatter(
@@ -658,23 +656,13 @@ if uploaded_file is not None:
                 ))
 
                 # --- v6.23: Remove redundant dotted line for Actual Output ---
-                # Add Actual line as a scatter trace
-                # fig_waterfall.add_trace(go.Scatter(
-                #     x=fig_waterfall.data[0].x, # Use x-axis from waterfall
-                #     y=[total_produced] * len(fig_waterfall.data[0].x), # Draw line
-                #     name='Actual Output (from cavities)', # <-- v6.22: Rename legend
-                #     mode='lines',
-                #     line=dict(color='green', dash='dot')
-                # ))
                 
                 # Keep the annotation for Target Output, but anchor it
                 fig_waterfall.add_annotation(
                     x=3.5, y=total_target, text="Target Output", 
-                    showarrow=True, arrowhead=1, ax=20, ay=-20,
-                    xanchor="left"
+                    showarrow=True, arrowhead=1, ax=20, ay=-20
                 )
-                # --- End v6.20 ---
-
+                
                 st.plotly_chart(fig_waterfall, width='stretch')
 
 
@@ -930,7 +918,8 @@ if uploaded_file is not None:
                                 fig_ct.add_bar(
                                     x=df_subset['SHOT TIME'], y=df_subset['Actual CT'],
                                     name=shot_type, marker_color=color,
-                                    hovertemplate='<b>%{x|%H:%M:%S}</b><br>Actual CT: %{y:.2f}s<extra></extra>'
+                                    # --- v6.24: Add Shot Type to hover text ---
+                                    hovertemplate='<b>%{x|%H:%M:%S}</b><br>Shot Type: %{fullData.name}<br>Actual CT: %{y:.2f}s<extra></extra>'
                                 )
                         
                         # --- v6.7: Fix SyntaxError ---
