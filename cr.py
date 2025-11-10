@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.2 (UI Cleanup)"
+__version__ = "6.3 (Restore Target Allocation)"
 # ==================================================================
 
 # ==================================================================
@@ -677,6 +677,28 @@ if uploaded_file is not None:
                 display_df['Capacity Loss (vs Target) (parts %)'] = np.where( display_df['Target Output (parts)'] > 0, display_df['Capacity Loss (vs Target) (parts)'] / display_df['Target Output (parts)'], 0)
                 display_df['Total Capacity Loss (cycle time) (parts)'] = display_df['Capacity Loss (slow cycle time) (parts)'] - display_df['Capacity Gain (fast cycle time) (parts)']
 
+                # --- v6.3: Restore Allocation Logic ---
+                # Calculate total "causal" loss (ignoring fast cycle gains for a stable ratio)
+                total_causal_loss = display_df['Capacity Loss (downtime) (parts)'] + display_df['Capacity Loss (slow cycle time) (parts)']
+                
+                # Calculate the ratio of each loss type
+                display_df['loss_downtime_ratio'] = np.where(
+                    total_causal_loss > 0,
+                    display_df['Capacity Loss (downtime) (parts)'] / total_causal_loss,
+                    0
+                )
+                display_df['loss_cycletime_ratio'] = np.where(
+                    total_causal_loss > 0,
+                    display_df['Capacity Loss (slow cycle time) (parts)'] / total_causal_loss,
+                    0
+                )
+
+                # Allocate the "Gap to Target" based on these ratios
+                # Note: 'Capacity Loss (vs Target) (parts)' is the *actual* gap, (e.g., 100 parts)
+                display_df['Allocated Loss (RR Downtime)'] = display_df['Capacity Loss (vs Target) (parts)'] * display_df['loss_downtime_ratio']
+                display_df['Allocated Loss (Cycle Time)'] = display_df['Capacity Loss (vs Target) (parts)'] * display_df['loss_cycletime_ratio']
+                # --- End v6.3 ---
+
                 _target_output_perc_array = np.full(len(display_df), target_output_perc / 100.0)
 
                 display_df['Filtered Run Time (d/h/m)'] = display_df['Filtered Run Time (sec)'].apply(format_seconds_to_dhm)
@@ -716,7 +738,7 @@ if uploaded_file is not None:
                         '<b>%{x|%Y-%m-%d}</b><br>' +
                         '<b>Net Cycle Time Loss: %{customdata[0]:,.0f}</b><br>' +
                         'Slow Cycle Loss: %{customdata[1]:,.0f}<br>' +
-                        'Fast Cycle Gain: -%{customdata[2]:,.0f}<br>' +
+                        'Fast Cycle Gain: -%{customdata[2]:,.0f}<br>''+
                         '<extra></extra>'
                 ))
                 
@@ -775,7 +797,7 @@ if uploaded_file is not None:
                 st.dataframe(report_table_1, use_container_width=True)
 
 
-                # --- v6.0 / v6.1 - Conditional Tables ---
+                # --- v6.3 / v6.1 ---
                 if benchmark_view == "Optimal Output":
                     # --- TABLE 1: vs Optimal ---
                     st.header(f"Capacity Loss & Gain Report (vs Optimal) ({data_frequency})")
@@ -789,9 +811,9 @@ if uploaded_file is not None:
                     st.dataframe(report_table_optimal, use_container_width=True)
                 
                 else: # Target View
-                    # --- TABLE 2: vs Target (SIMPLIFIED) ---
+                    # --- TABLE 2: vs Target (Restoring Allocation Logic) ---
                     st.header(f"Capacity Loss & Gain Report (vs Target {target_output_perc:.0f}%) ({data_frequency})")
-                    st.info("This table shows the 'Gap to Target' alongside the actual, un-allocated loss & gain components.")
+                    st.info("This table allocates the 'Gap to Target' based on the *cause* of the total losses (Downtime vs. Slow Cycles).")
                     
                     report_table_target = pd.DataFrame(index=display_df.index)
                     report_table_target['Target Output (parts)'] = display_df.apply(lambda r: f"{r['Target Output (parts)']:,.2f}", axis=1)
@@ -800,16 +822,33 @@ if uploaded_file is not None:
                     report_table_target['Gap to Target (parts)'] = display_df['Gap to Target (parts)'].map('{:+,_ .2f}'.format)
                     report_table_target['Gap % (vs Target)'] = display_df.apply(lambda r: r['Gap to Target (parts)'] / r['Target Output (parts)'] if r['Target Output (parts)'] > 0 else 0, axis=1).map('{:+.1%}'.format)
 
-                    report_table_target['Loss (RR Downtime)'] = display_df.apply(lambda r: f"{r['Capacity Loss (downtime) (parts)']:,.2f} ({r['Capacity Loss (downtime) (parts %)']:.1%})", axis=1)
-                    report_table_target['Loss (Slow Cycles)'] = display_df.apply(lambda r: f"{r['Capacity Loss (slow cycle time) (parts)']:,.2f} ({r['Capacity Loss (slow cycle time) (parts %)']:.1%})", axis=1)
-                    report_table_target['Gain (Fast Cycles)'] = display_df.apply(lambda r: f"{r['Capacity Gain (fast cycle time) (parts)']:,.2f} ({r['Capacity Gain (fast cycle time) (parts %)']:.1%})", axis=1)
+                    # --- v6.3: Format allocation display ---
+                    def format_allocation(row, col_name, ratio_col):
+                        if row['Gap to Target (parts)'] <= 0: # This is a LOSS
+                            # Show the allocated loss (as a positive number) and its ratio
+                            return f"{row[col_name]:,.2f} ({row[ratio_col]:.1%})"
+                        else: # This is a GAIN
+                            return "N/A (Target Met)"
+
+                    report_table_target['Allocated Loss (RR Downtime)'] = display_df.apply(
+                        format_allocation, 
+                        col_name='Allocated Loss (RR Downtime)', 
+                        ratio_col='loss_downtime_ratio', 
+                        axis=1
+                    )
+                    report_table_target['Allocated Loss (Cycle Time)'] = display_df.apply(
+                        format_allocation, 
+                        col_name='Allocated Loss (Cycle Time)', 
+                        ratio_col='loss_cycletime_ratio', 
+                        axis=1
+                    )
                     
                     st.dataframe(report_table_target.style.applymap(
                         lambda x: 'color: green' if str(x).startswith('+') else 'color: red' if str(x).startswith('-') else None,
                         subset=['Gap to Target (parts)', 'Gap % (vs Target)']
                     ), use_container_width=True)
 
-                # --- End v6.1 ---
+                # --- End v6.3 / v6.1 ---
 
 
                 # --- 4. SHOT-BY-SHOT ANALYSIS ---
