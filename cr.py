@@ -570,15 +570,22 @@ if uploaded_file is not None:
                     if benchmark_view == "Optimal Output":
                         daily_kpi_table['Total Capacity Loss (Time)'] = daily_summary_df.apply(lambda r: f"{r['Total Capacity Loss (d/h/m)']} ({r['Total Capacity Loss (time %)']:.1%})", axis=1)
                         daily_kpi_table['Total Capacity Loss (parts)'] = daily_summary_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
+                        
+                        # --- v6.1.1 FIX: Display table WITHOUT styling ---
+                        st.dataframe(daily_kpi_table, use_container_width=True)
+
                     else: # Target Output
                         # --- v6.0: Format Gap to Target with +/- ---
                         daily_kpi_table['Gap to Target (parts)'] = daily_summary_df['Gap to Target (parts)'].map('{:+,_ .2f}'.format)
                         daily_kpi_table['Capacity Loss (vs Target) (Time)'] = daily_summary_df.apply(lambda r: f"{r['Capacity Loss (vs Target) (d/h/m)']} ({r['Capacity Loss (vs Target) (time %)']:.1%})", axis=1)
 
-                    st.dataframe(daily_kpi_table.style.applymap(
-                        lambda x: 'color: green' if str(x).startswith('+') else 'color: red' if str(x).startswith('-') else None,
-                        subset=['Gap to Target (parts)']
-                    ), use_container_width=True)
+                        # --- v6.1.1 FIX: Apply styling ONLY in the 'else' block ---
+                        st.dataframe(daily_kpi_table.style.applymap(
+                            lambda x: 'color: green' if str(x).startswith('+') else 'color: red' if str(x).startswith('-') else None,
+                            subset=['Gap to Target (parts)']
+                        ), use_container_width=True)
+                    
+                    # --- v6.1.1 FIX: Removed the old, broken st.dataframe call ---
 
                 st.divider()
 
