@@ -530,14 +530,14 @@ if uploaded_file is not None:
                     ],
                     text = [
                         f"{total_optimal:,.0f}",
-                        f"{-total_downtime_loss:,.0f}",
-                        f"{-total_net_cycle_loss:,.0f}",
+                        f"{-total_downtime_loss_parts:,.0f}",
+                        f"{-total_net_cycle_loss_parts:,.0f}",
                         f"{total_produced:,.0f}"
                     ],
                     y = [
                         total_optimal, 
-                        -total_downtime_loss, 
-                        -total_net_cycle_loss, 
+                        -total_downtime_loss_parts, 
+                        -total_net_cycle_loss_parts, 
                         total_produced
                     ],
                     textposition = "outside",
