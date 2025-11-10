@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.3.2 (Hotfix for ValueError/Indent)"
+__version__ = "6.3.3 (Format String Hotfix)"
 # ==================================================================
 
 # ==================================================================
@@ -505,11 +505,12 @@ if uploaded_file is not None:
                         st.metric("Optimal Output (parts)", f"{total_optimal:,.0f}")
                         
                     with c3:
+                        # --- v6.2: Removed delta ---
                         st.metric(f"Actual Output ({actual_output_perc_val:.1%})", f"{total_produced:,.0f} parts")
                         st.caption(f"Actual Production Time: {total_actual_ct_dhm}")
                         
                     with c4:
-                        # --- v6.2: Removed delta indicator ---
+                        # --- v6.2: Removed delta ---
                         st.metric("Total Capacity Loss (Net)", f"{total_net_loss_parts:,.0f} parts")
                         st.caption(f"Total Time Lost: {format_seconds_to_dhm(total_net_loss_sec)}")
 
@@ -519,22 +520,22 @@ if uploaded_file is not None:
                     c1, c2, c3, c4 = st.columns(4)
 
                     with c1:
-                        # --- v6.2: Removed delta indicator ---
+                        # --- v6.2: Removed delta ---
                         st.metric("Loss (RR Downtime)", f"{total_downtime_loss_parts:,.0f} parts")
                         st.caption(f"Time Lost: {format_seconds_to_dhm(total_downtime_loss_sec)}")
 
                     with c2:
-                        # --- v6.2: Removed delta indicator ---
+                        # --- v6.2: Removed delta ---
                         st.metric("Loss (Slow Cycles)", f"{total_slow_loss_parts:,.0f} parts")
                         st.caption(f"Time Lost: {format_seconds_to_dhm(total_slow_loss_sec)}")
 
                     with c3:
-                        # --- v6.2: Removed delta indicator ---
+                        # --- v6.2: Removed delta ---
                         st.metric("Gain (Fast Cycles)", f"{total_fast_gain_parts:,.0f} parts")
                         st.caption(f"Time Gained: {format_seconds_to_dhm(total_fast_gain_sec)}")
                 
                     with c4:
-                        # --- v6.2: Removed delta indicator ---
+                        # --- v6.2: Removed delta ---
                         st.metric("Total Capacity Loss (cycle time)", f"{total_net_cycle_loss_parts:,.0f} parts")
                         st.caption(f"Net Time Lost: {format_seconds_to_dhm(total_net_cycle_loss_sec)}")
 
@@ -562,9 +563,6 @@ if uploaded_file is not None:
                     daily_kpi_table[run_time_label] = daily_summary_df.apply(lambda r: f"{r['Filtered Run Time (d/h/m)']} ({r['Filtered Run Time (sec)']:,.0f}s)", axis=1)
                     daily_kpi_table['Actual Production Time'] = daily_summary_df.apply(lambda r: f"{r['Actual Cycle Time Total (d/h/m)']} ({r['Actual Cycle Time Total (time %)']:.1%})", axis=1)
                     
-                    if benchmark_view == "Target Output":
-                        daily_kpi_table['Target Output (parts)'] = daily_summary_df['Target Output (parts)'].map('{:,.2f}'.format)
-                        
                     daily_kpi_table['Actual Output (parts)'] = daily_summary_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (parts %)']:.1%})", axis=1)
 
                     # --- v6.1.1: Conditional Styling ---
@@ -580,26 +578,29 @@ if uploaded_file is not None:
                         # Force the column to numeric to handle any non-numeric values (like inf) before formatting
                         daily_summary_df['Gap to Target (parts)'] = pd.to_numeric(daily_summary_df['Gap to Target (parts)'], errors='coerce').fillna(0)
                         
-                        daily_kpi_table['Gap to Target (parts)'] = daily_summary_df['Gap to Target (parts)'].map('{:+,_ .2f}'.format)
+                        # --- v6.3.3 FIX: Removed invalid '_' from format string ---
+                        daily_kpi_table['Gap to Target (parts)'] = daily_summary_df['Gap to Target (parts)'].map('{:+, .2f}'.format)
                         daily_kpi_table['Capacity Loss (vs Target) (Time)'] = daily_summary_df.apply(lambda r: f"{r['Capacity Loss (vs Target) (d/h/m)']} ({r['Capacity Loss (vs Target) (time %)']:.1%})", axis=1)
 
                         st.dataframe(daily_kpi_table.style.applymap(
                             lambda x: 'color: green' if str(x).startswith('+') else 'color: red' if str(x).startswith('-') else None,
                             subset=['Gap to Target (parts)']
                         ), use_container_width=True)
-                    
+
                 st.divider()
 
-                # --- 2. 4-SEGMENT WATERFALL CHART ---
-                st.header("Production Output Overview") # v6.2: Removed "The 4 Segments"
+                # --- 2. NEW 4-SEGMENT WATERFALL CHART ---
+                st.header("Production Output Overview")
 
+                # Replaced the incorrect 'marker' argument with the correct structure
+                # using 'increasing', 'decreasing', and 'totals'
                 fig_waterfall = go.Figure(go.Waterfall(
-                    name = "Breakdown",
+                    name = "Segments",
                     orientation = "v",
+                    # --- v5.7.1 - FIX: Changed first "absolute" to "relative" to allow different colors ---
                     measure = ["relative", "relative", "relative", "total"],
-                    
-                    # --- v6.2: Removed "Segment" labels ---
                     x = [
+                        # --- v6.2: Removed "Segment" labels ---
                         "<b>Optimal Output</b>", 
                         "<b>Run Rate Downtime (Stops)</b>", 
                         "<b>Capacity Loss (cycle time)</b>", 
@@ -620,9 +621,11 @@ if uploaded_file is not None:
                     textposition = "outside",
                     connector = {"line":{"color":"rgb(63, 63, 63)"}},
                     
+                    # --- v5.7 Color Coding ---
                     increasing = {"marker":{"color":"darkblue"}}, # Optimal
                     decreasing = {"marker":{"color":"#ff6961"}},  # Downtime & Cycle Time Loss
                     totals = {"marker":{"color":"green"}}          # Actual Output
+                    # --- End v5.7 Change ---
                 ))
 
                 fig_waterfall.update_layout(
@@ -708,34 +711,32 @@ if uploaded_file is not None:
 
                 display_df['Filtered Run Time (d/h/m)'] = display_df['Filtered Run Time (sec)'].apply(format_seconds_to_dhm)
                 display_df['Actual Cycle Time Total (d/h/m)'] = display_df['Actual Cycle Time Total (sec)'].apply(format_seconds_to_dhm)
-                
+
                 chart_df = display_df.reset_index()
 
                 # --- NEW: Unified Performance Breakdown Chart (Time Series) ---
                 st.header(f"{data_frequency} Performance Breakdown")
                 fig_ts = go.Figure()
 
-                # --- v6.2: Removed "Segment" label ---
                 fig_ts.add_trace(go.Bar(
                     x=chart_df['Date'],
                     y=chart_df['Actual Output (parts)'],
                     name='Actual Output',
-                    marker_color='green', 
+                    marker_color='green',
                     customdata=chart_df['Actual Output (%)'],
                     hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Actual Output: %{y:,.0f} (%{customdata:.1%})<extra></extra>'
                 ))
                 
-                # Use the net (slow-fast) cycle time loss for stacking
-                chart_df['Net Cycle Time Loss (positive)'] = np.maximum(0, chart_df['Total Capacity Loss (cycle time) (parts)'])
+                chart_df['Net Cycle Time Loss (parts)'] = chart_df['Total Capacity Loss (cycle time) (parts)']
+                chart_df['Net Cycle Time Loss (positive)'] = np.maximum(0, chart_df['Net Cycle Time Loss (parts)'])
 
-                # --- v6.2: Removed "Segment" label ---
                 fig_ts.add_trace(go.Bar(
                     x=chart_df['Date'],
                     y=chart_df['Net Cycle Time Loss (positive)'],
                     name='Capacity Loss (cycle time)',
                     marker_color='#ffb347', # Pastel Orange
                     customdata=np.stack((
-                        chart_df['Total Capacity Loss (cycle time) (parts)'],
+                        chart_df['Net Cycle Time Loss (parts)'],
                         chart_df['Capacity Loss (slow cycle time) (parts)'],
                         chart_df['Capacity Gain (fast cycle time) (parts)']
                     ), axis=-1),
@@ -743,11 +744,10 @@ if uploaded_file is not None:
                         '<b>%{x|%Y-%m-%d}</b><br>' +
                         '<b>Net Cycle Time Loss: %{customdata[0]:,.0f}</b><br>' +
                         'Slow Cycle Loss: %{customdata[1]:,.0f}<br>' +
-                        'Fast Cycle Gain: -%{customdata[2]:,.0f}<br>' + # <-- FIX: Removed extra ''
+                        'Fast Cycle Gain: -%{customdata[2]:,.0f}<br>' + 
                         '<extra></extra>'
                 ))
                 
-                # --- v6.2: Removed "Segment" label ---
                 fig_ts.add_trace(go.Bar(
                     x=chart_df['Date'],
                     y=chart_df['Capacity Loss (downtime) (parts)'],
@@ -769,7 +769,6 @@ if uploaded_file is not None:
                         hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Target: %{y:,.0f}<extra></extra>'
                     ))
                     
-                # --- v6.2: Removed "Segment" label ---
                 fig_ts.add_trace(go.Scatter(
                     x=chart_df['Date'],
                     y=chart_df['Optimal Output (parts)'],
@@ -801,14 +800,14 @@ if uploaded_file is not None:
 
                 st.dataframe(report_table_1, use_container_width=True)
 
-
-                # --- v6.3 / v6.1 ---
+                # --- v5.8 / v5.9 / v6.0 - Conditional Tables ---
                 if benchmark_view == "Optimal Output":
                     # --- TABLE 1: vs Optimal ---
                     st.header(f"Capacity Loss & Gain Report (vs Optimal) ({data_frequency})")
                     report_table_optimal = pd.DataFrame(index=display_df.index)
                     report_table_optimal['Optimal Output (parts)'] = display_df['Optimal Output (parts)'].map('{:,.2f}'.format)
                     report_table_optimal['Actual Output (parts)'] = display_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
+                    # --- v6.0: All losses are positive numbers ---
                     report_table_optimal['Loss (RR Downtime)'] = display_df.apply(lambda r: f"{r['Capacity Loss (downtime) (parts)']:,.2f} ({r['Capacity Loss (downtime) (parts %)']:.1%})", axis=1)
                     report_table_optimal['Loss (Slow Cycles)'] = display_df.apply(lambda r: f"{r['Capacity Loss (slow cycle time) (parts)']:,.2f} ({r['Capacity Loss (slow cycle time) (parts %)']:.1%})", axis=1)
                     report_table_optimal['Gain (Fast Cycles)'] = display_df.apply(lambda r: f"{r['Capacity Gain (fast cycle time) (parts)']:,.2f} ({r['Capacity Gain (fast cycle time) (parts %)']:.1%})", axis=1)
@@ -824,7 +823,7 @@ if uploaded_file is not None:
                     report_table_target['Target Output (parts)'] = display_df.apply(lambda r: f"{r['Target Output (parts)']:,.2f}", axis=1)
                     report_table_target['Actual Output (parts)'] = display_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
                     
-                    report_table_target['Gap to Target (parts)'] = display_df['Gap to Target (parts)'].map('{:+,_ .2f}'.format)
+                    report_table_target['Gap to Target (parts)'] = display_df['Gap to Target (parts)'].map('{:+, .2f}'.format)
                     report_table_target['Gap % (vs Target)'] = display_df.apply(lambda r: r['Gap to Target (parts)'] / r['Target Output (parts)'] if r['Target Output (parts)'] > 0 else 0, axis=1).map('{:+.1%}'.format)
 
                     # --- v6.3: Format allocation display ---
