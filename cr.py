@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.13 (Final Format String Fix)"
+__version__ = "6.14 (Progressive Fix 1)"
 # ==================================================================
 
 # ==================================================================
@@ -587,7 +587,7 @@ if uploaded_file is not None:
                         # Force the column to numeric to handle any non-numeric values (like inf) before formatting
                         daily_summary_df['Gap to Target (parts)'] = pd.to_numeric(daily_summary_df['Gap to Target (parts)'], errors='coerce').fillna(0)
                         
-                        # --- v6.13 FIX: Corrected format string (space REMOVED) ---
+                        # --- v6.14 FIX: Corrected format string (space REMOVED) ---
                         daily_kpi_table['Gap to Target (parts)'] = daily_summary_df['Gap to Target (parts)'].apply(lambda x: "{:+, .2f}".format(x) if pd.notna(x) else "N/A")
                         daily_kpi_table['Capacity Loss (vs Target) (Time)'] = daily_summary_df.apply(lambda r: f"{r['Capacity Loss (vs Target) (d/h/m)']} ({r['Capacity Loss (vs Target) (time %)']:.1%})", axis=1)
 
