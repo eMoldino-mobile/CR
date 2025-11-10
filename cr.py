@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.6.4 (Syntax Hotfix 2)"
+__version__ = "6.7 (Final Crash Fix)"
 # ==================================================================
 
 # ==================================================================
@@ -580,21 +580,21 @@ if uploaded_file is not None:
                         daily_kpi_table['Total Capacity Loss (Time)'] = daily_summary_df.apply(lambda r: f"{r['Total Capacity Loss (d/h/m)']} ({r['Total Capacity Loss (time %)']:.1%})", axis=1)
                         daily_kpi_table['Total Capacity Loss (parts)'] = daily_summary_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
                         
-                        st.dataframe(daily_kpi_table, use_container_width=True)
+                        st.dataframe(daily_kpi_table, width='stretch')
 
                     else: # Target Output
                         # --- v6.3.2: FIX for ValueError ---
                         # Force the column to numeric to handle any non-numeric values (like inf) before formatting
                         daily_summary_df['Gap to Target (parts)'] = pd.to_numeric(daily_summary_df['Gap to Target (parts)'], errors='coerce').fillna(0)
                         
-                        # --- v6.6.2 FIX: Corrected format string (removed space) ---
+                        # --- v6.7 FIX: Corrected format string (removed space) ---
                         daily_kpi_table['Gap to Target (parts)'] = daily_summary_df['Gap to Target (parts)'].apply(lambda x: "{:+, .2f}".format(x) if pd.notna(x) else "N/A")
                         daily_kpi_table['Capacity Loss (vs Target) (Time)'] = daily_summary_df.apply(lambda r: f"{r['Capacity Loss (vs Target) (d/h/m)']} ({r['Capacity Loss (vs Target) (time %)']:.1%})", axis=1)
 
                         st.dataframe(daily_kpi_table.style.applymap(
                             lambda x: 'color: green' if str(x).startswith('+') else 'color: red' if str(x).startswith('-') else None,
                             subset=['Gap to Target (parts)']
-                        ), use_container_width=True)
+                        ), width='stretch')
 
                 st.divider()
 
@@ -661,7 +661,7 @@ if uploaded_file is not None:
                     line=dict(color='green', dash='dot')
                 )
 
-                st.plotly_chart(fig_waterfall, use_container_width=True)
+                st.plotly_chart(fig_waterfall, width='stretch')
 
 
                 st.divider()
@@ -796,7 +796,7 @@ if uploaded_file is not None:
                     legend_title='Metric',
                     hovermode="x unified"
                 )
-                st.plotly_chart(fig_ts, use_container_width=True)
+                st.plotly_chart(fig_ts, width='stretch')
 
                 # --- Full Data Table (Open by Default) ---
 
@@ -809,7 +809,7 @@ if uploaded_file is not None:
                 report_table_1[run_time_label] = display_df.apply(lambda r: f"{r['Filtered Run Time (d/h/m)']} ({r['Filtered Run Time (sec)']:,.0f}s)", axis=1)
                 report_table_1['Actual Production Time'] = display_df.apply(lambda r: f"{r['Actual Cycle Time Total (d/h/m)']} ({r['Actual Cycle Time Total (time %)']:.1%})", axis=1)
 
-                st.dataframe(report_table_1, use_container_width=True)
+                st.dataframe(report_table_1, width='stretch')
 
                 # --- v5.8 / v5.9 / v6.0 - Conditional Tables ---
                 if benchmark_view == "Optimal Output":
@@ -823,7 +823,7 @@ if uploaded_file is not None:
                     report_table_optimal['Loss (Slow Cycles)'] = display_df.apply(lambda r: f"{r['Capacity Loss (slow cycle time) (parts)']:,.2f} ({r['Capacity Loss (slow cycle time) (parts %)']:.1%})", axis=1)
                     report_table_optimal['Gain (Fast Cycles)'] = display_df.apply(lambda r: f"{r['Capacity Gain (fast cycle time) (parts)']:,.2f} ({r['Capacity Gain (fast cycle time) (parts %)']:.1%})", axis=1)
                     report_table_optimal['Total Net Loss'] = display_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
-                    st.dataframe(report_table_optimal, use_container_width=True)
+                    st.dataframe(report_table_optimal, width='stretch')
                 
                 else: # Target View
                     # --- TABLE 2: vs Target (Restoring Allocation Logic) ---
@@ -834,7 +834,7 @@ if uploaded_file is not None:
                     report_table_target['Target Output (parts)'] = display_df.apply(lambda r: f"{r['Target Output (parts)']:,.2f}", axis=1)
                     report_table_target['Actual Output (parts)'] = display_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
                     
-                    # --- v6.6.2 FIX: Corrected format string (removed space) ---
+                    # --- v6.7 FIX: Corrected format string (removed space) ---
                     report_table_target['Gap to Target (parts)'] = display_df['Gap to Target (parts)'].apply(lambda x: "{:+, .2f}".format(x) if pd.notna(x) else "N/A")
                     report_table_target['Gap % (vs Target)'] = display_df.apply(lambda r: r['Gap to Target (parts)'] / r['Target Output (parts)'] if r['Target Output (parts)'] > 0 else 0, axis=1).apply(lambda x: "{:+.1%}".format(x) if pd.notna(x) else "N/A")
 
@@ -865,7 +865,7 @@ if uploaded_file is not None:
                     st.dataframe(report_table_target.style.applymap(
                         lambda x: 'color: green' if str(x).startswith('+') else 'color: red' if str(x).startswith('-') else None,
                         subset=['Gap to Target (parts)', 'Gap % (vs Target)']
-                    ), use_container_width=True)
+                    ), width='stretch')
 
                 # --- End v6.3 / v6.1 ---
 
@@ -919,8 +919,7 @@ if uploaded_file is not None:
                                     hovertemplate='<b>%{x|%H:%M:%S}</b><br>Actual CT: %{y:.2f}s<extra></extra>'
                                 )
                         
-                        # --- v6.6: Fix SyntaxError ---
-                        # --- v6.6.4: Re-fixing corrupted block ---
+                        # --- v6.7: Fix SyntaxError ---
                         fig_ct.add_shape(
                             type='line',
                             x0=df_day_shots['SHOT TIME'].min(), x1=df_day_shots['SHOT TIME'].max(),
@@ -940,7 +939,7 @@ if uploaded_file is not None:
                             yaxis_range=[0, y_axis_max], # Apply the zoom
                             barmode='overlay' 
                         )
-                        st.plotly_chart(fig_ct, use_container_width=True)
+                        st.plotly_chart(fig_ct, width='stretch')
 
                         st.subheader(f"Data for all {len(df_day_shots)} shots on {selected_date}")
                         st.dataframe(
@@ -952,7 +951,7 @@ if uploaded_file is not None:
                                 'Approved CT': '{:.1f}',
                                 'SHOT TIME': lambda t: t.strftime('%H:%M:%S')
                             }),
-                            use_container_width=True
+                            width='stretch'
                         )
 
             elif results_df is not None:
