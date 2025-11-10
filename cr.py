@@ -727,12 +727,12 @@ if uploaded_file is not None:
                         '<b>%{x|%Y-%m-%d}</b><br>' +
                         '<b>Net Cycle Time Loss: %{customdata[0]:,.0f}</b><br>' +
                         'Slow Cycle Loss: %{customdata[1]:,.0f}<br>' +
-                        'Fast Cycle Gain: -%{customdata[2]:,.0f}<br>'H:%M:%S')
-                            }),
-                            use_container_width=True
-                        )
-
-            elif results_df is not None:
+                        'Fast Cycle Gain: -%{customdata[2]:,.0f}<br>' +
+                        '<extra></extra>'
+                ))
+                
+                fig_ts.add_trace(go.Bar(
+                    x=chart_df['Date'],
                 st.warning("No valid data was found after filtering. Cannot display results.")
 
 else:
