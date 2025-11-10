@@ -437,6 +437,9 @@ if uploaded_file is not None:
                 
                 total_optimal = results_df['Optimal Output (parts)'].sum()
                 
+                # --- FIX: Add the missing total_target calculation ---
+                total_target = results_df['Target Output (parts)'].sum()
+                
                 # Calculate corresponding time values
                 total_downtime_loss_sec = results_df['Capacity Loss (downtime) (sec)'].sum()
                 total_loss_sec = results_df['Total Capacity Loss (sec)'].sum()
