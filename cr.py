@@ -777,7 +777,7 @@ if uploaded_file is not None:
                         for shot_type, color in color_map.items():
                             df_subset = df_day_shots[df_day_shots['Shot Type'] == shot_type]
                             if not df_subset.empty:
-                                fig_ct.add_Bar(
+                                fig_ct.add_bar(
                                     x=df_subset['SHOT TIME'], y=df_subset['Actual CT'],
                                     name=shot_type, marker_color=color,
                                     hovertemplate='<b>%{x|%H:%M:%S}</b><br>Actual CT: %{y:.2f}s<extra></extra>'
