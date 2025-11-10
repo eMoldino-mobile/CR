@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.8 (ValueError Fix)"
+__version__ = "6.9 (SyntaxError Fix)"
 # ==================================================================
 
 # ==================================================================
@@ -754,7 +754,7 @@ if uploaded_file is not None:
                     hovertemplate=
                         '<b>%{x|%Y-%m-%d}</b><br>' +
                         '<b>Net Cycle Time Loss: %{customdata[0]:,.0f}</b><br>' +
-                        'Slow Cycle Loss: %{customdata[1]:,.0f}<br>'D
+                        'Slow Cycle Loss: %{customdata[1]:,.0f}<br>' +
                         'Fast Cycle Gain: -%{customdata[2]:,.0f}<br>' + 
                         '<extra></extra>'
                 ))
