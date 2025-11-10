@@ -319,7 +319,8 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         st.warning("No data found to process.")
         return None, None
 
-    final_df = pd.DataFrame(daily_results_list).fillna(0) # Fill NaNs with 0
+    # --- v6.1.1 FIX: Replace inf with NaN before fillna ---
+    final_df = pd.DataFrame(daily_results_list).replace([np.inf, -np.inf], np.nan).fillna(0) # Fill NaNs with 0
     final_df['Date'] = pd.to_datetime(final_df['Date'])
     final_df = final_df.set_index('Date')
 
