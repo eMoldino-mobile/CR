@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.5 (ValueError Fix & UI Cleanup)"
+__version__ = "6.6 (Error Fixes & Cleanup)"
 # ==================================================================
 
 # ==================================================================
@@ -587,8 +587,8 @@ if uploaded_file is not None:
                         # Force the column to numeric to handle any non-numeric values (like inf) before formatting
                         daily_summary_df['Gap to Target (parts)'] = pd.to_numeric(daily_summary_df['Gap to Target (parts)'], errors='coerce').fillna(0)
                         
-                        # --- v6.4.1 FIX: Replaced .map() with .apply() for robustness ---
-                        daily_kpi_table['Gap to Target (parts)'] = daily_summary_df['Gap to Target (parts)'].apply(lambda x: f"{x:+, .2f}" if pd.notna(x) else "N/A")
+                        # --- v6.6 FIX: Replaced .apply() with robust str.format() ---
+                        daily_kpi_table['Gap to Target (parts)'] = daily_summary_df['Gap to Target (parts)'].apply(lambda x: "{:+, .2f}".format(x) if pd.notna(x) else "N/A")
                         daily_kpi_table['Capacity Loss (vs Target) (Time)'] = daily_summary_df.apply(lambda r: f"{r['Capacity Loss (vs Target) (d/h/m)']} ({r['Capacity Loss (vs Target) (time %)']:.1%})", axis=1)
 
                         st.dataframe(daily_kpi_table.style.applymap(
@@ -834,9 +834,9 @@ if uploaded_file is not None:
                     report_table_target['Target Output (parts)'] = display_df.apply(lambda r: f"{r['Target Output (parts)']:,.2f}", axis=1)
                     report_table_target['Actual Output (parts)'] = display_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
                     
-                    # --- v6.4.1 FIX: Replaced .map() with .apply() for robustness ---
-                    report_table_target['Gap to Target (parts)'] = display_df['Gap to Target (parts)'].apply(lambda x: f"{x:+, .2f}" if pd.notna(x) else "N/A")
-                    report_table_target['Gap % (vs Target)'] = display_df.apply(lambda r: r['Gap to Target (parts)'] / r['Target Output (parts)'] if r['Target Output (parts)'] > 0 else 0, axis=1).apply(lambda x: f"{x:+.1%}" if pd.notna(x) else "N/A")
+                    # --- v6.6 FIX: Replaced .apply() with robust str.format() ---
+                    report_table_target['Gap to Target (parts)'] = display_df['Gap to Target (parts)'].apply(lambda x: "{:+, .2f}".format(x) if pd.notna(x) else "N/A")
+                    report_table_target['Gap % (vs Target)'] = display_df.apply(lambda r: r['Gap to Target (parts)'] / r['Target Output (parts)'] if r['Target Output (parts)'] > 0 else 0, axis=1).apply(lambda x: "{:+.1%}".format(x) if pd.notna(x) else "N/A")
 
                     # --- v6.3: Format allocation display ---
                     def format_allocation(row, col_name, ratio_col):
@@ -918,11 +918,14 @@ if uploaded_file is not None:
                                     name=shot_type, marker_color=color,
                                     hovertemplate='<b>%{x|%H:%M:%S}</b><br>Actual CT: %{y:.2f}s<extra></extra>'
                                 )
-
+                        
+                        # --- v6.6: Fix SyntaxError ---
                         fig_ct.add_shape(
                             type='line',
                             x0=df_day_shots['SHOT TIME'].min(), x1=df_day_shots['SHOT TIME'].max(),
-                            y0=approved_ct_for_day, y1=approved_DUMMY.iloc[0]
+                            y0=approved_ct_for_day, y1=approved_ct_for_day,
+                            line=dict(color='green', dash='dash'), name=f'Approved CT ({approved_ct_for_day}s)'
+                        )
                         fig_ct.add_annotation(
                             x=df_day_shots['SHOT TIME'].max(), y=approved_ct_for_day,
                             text=f"Approved CT: {approved_ct_for_day}s", showarrow=True, arrowhead=1
