@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "5.6 (Full Clean Build)"
+__version__ = "5.7 (Waterfall Color Fix)"
 # ==================================================================
 
 # ==================================================================
@@ -579,6 +579,9 @@ if uploaded_file is not None:
                 # --- 2. NEW 4-SEGMENT WATERFALL CHART ---
                 st.header("Production Output Overview (The 4 Segments)")
 
+                # --- v5.7 - VALUEERROR FIX ---
+                # Replaced the incorrect 'marker' argument with the correct structure
+                # using 'increasing', 'decreasing', and 'totals'
                 fig_waterfall = go.Figure(go.Waterfall(
                     name = "Segments",
                     orientation = "v",
@@ -604,21 +607,12 @@ if uploaded_file is not None:
                     textposition = "outside",
                     connector = {"line":{"color":"rgb(63, 63, 63)"}},
                     
-                    # --- v5.6 - Manual Color Coding (Replaces decreasing, increasing, totals) ---
-                    marker = dict(
-                        color=[
-                            "darkblue", # Segment 4: Optimal
-                            "#ff6961",  # Segment 3: RR Downtime (Pastel Red)
-                            "#ffb347",  # Segment 2: Cycle Time Loss (Pastel Orange)
-                            "green"   # Segment 1: Actual Output (Green)
-                        ],
-                        line=dict(
-                            color="rgb(63, 63, 63)", # Optional: add a border
-                            width=1
-                        )
-                    )
-                    # --- End v5.6 Change ---
+                    # --- v5.7 - Set colors correctly ---
+                    increasing = {"marker":{"color":"darkblue"}}, # Bar 1: Optimal
+                    decreasing = {"marker":{"color":"#ff6961"}}, # Bar 2 & 3: Losses (Red)
+                    totals = {"marker":{"color":"green"}}        # Bar 4: Actual (Green)
                 ))
+                # --- End v5.7 Fix ---
 
                 fig_waterfall.update_layout(
                     title="Capacity Breakdown (All Time)",
