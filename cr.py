@@ -426,74 +426,53 @@ if uploaded_file is not None:
             if results_df is not None and not results_df.empty:
 
                 # --- 1. All-Time Summary Dashboard Calculations ---
-                st.header("All-Time Summary")
+                st.header("All-Time Summary (The 4 Segments)")
 
                 # 1. Calculate totals
                 total_produced = results_df['Actual Output (parts)'].sum()
-                total_downtime_loss = results_df['Capacity Loss (downtime) (parts)'].sum()
+                total_downtime_loss_parts = results_df['Capacity Loss (downtime) (parts)'].sum()
                 total_slow_loss = results_df['Capacity Loss (slow cycle time) (parts)'].sum()
                 total_fast_gain = results_df['Capacity Gain (fast cycle time) (parts)'].sum()
-                total_net_cycle_loss = total_slow_loss - total_fast_gain
+                total_net_cycle_loss_parts = total_slow_loss - total_fast_gain
                 
                 total_optimal = results_df['Optimal Output (parts)'].sum()
-                total_target = results_df['Target Output (parts)'].sum()
-
-                total_loss_parts = results_df['Total Capacity Loss (parts)'].sum()
+                
+                # Calculate corresponding time values
+                total_downtime_loss_sec = results_df['Capacity Loss (downtime) (sec)'].sum()
                 total_loss_sec = results_df['Total Capacity Loss (sec)'].sum()
-                total_loss_dhm = format_seconds_to_dhm(total_loss_sec)
+                total_net_cycle_loss_sec = total_loss_sec - total_downtime_loss_sec
 
                 total_actual_ct_sec = results_df['Actual Cycle Time Total (sec)'].sum()
                 total_actual_ct_dhm = format_seconds_to_dhm(total_actual_ct_sec)
 
                 run_time_sec_total = results_df['Filtered Run Time (sec)'].sum()
                 run_time_dhm_total = format_seconds_to_dhm(run_time_sec_total)
-                run_time_label = "Filtered Run Time" if toggle_filter else "Overall Run Time"
+                run_time_label = "Overall Run Time" if not toggle_filter else "Filtered Run Time"
 
-                # 2. Calculate percentages for metrics
-                actual_ct_perc_val = (total_actual_ct_sec / run_time_sec_total) if run_time_sec_total > 0 else 0
-                actual_output_perc_val = (total_produced / total_optimal) if total_optimal > 0 else 0
-                loss_time_perc_val = (total_loss_sec / run_time_sec_total) if run_time_sec_total > 0 else 0
-                loss_parts_perc_val = (total_loss_parts / total_optimal) if total_optimal > 0 else 0
-
-                # 3. Create 3 columns
-                col1, col2, col3 = st.columns(3)
+                # 2. Create 4 columns for the 4 segments
+                col1, col2, col3, col4 = st.columns(4)
 
                 with col1:
+                    st.metric("Segment 4: Optimal Output", f"{total_optimal:,.0f} parts")
                     st.metric(run_time_label, run_time_dhm_total)
-                    st.metric(f"Actual Production Time ({actual_ct_perc_val:.1%})", total_actual_ct_dhm)
 
                 with col2:
-                    if benchmark_view == "Target Output":
-                        st.metric("Target Output (parts)", f"{total_target:,.0f}")
-                    else:
-                        st.metric("Optimal Output (parts) (100%)", f"{total_optimal:,.0f}")
-                        
-                    st.metric(f"Actual Output (parts) ({actual_output_perc_val:.1%})", f"{total_produced:,.0f}")
+                    st.metric("Segment 3: Run Rate Downtime (Stops)", 
+                              f"{-total_downtime_loss_parts:,.0f} parts",
+                              delta_color="inverse")
+                    st.metric("Time Lost to Stops", format_seconds_to_dhm(total_downtime_loss_sec))
 
                 with col3:
-                    if benchmark_view == "Optimal Output":
-                        st.metric(f"Total Capacity Loss (Time) ({loss_time_perc_val:.1%})", total_loss_dhm)
-                        st.metric(
-                            f"Total Capacity Loss (parts) ({loss_parts_perc_val:.1%})",
-                            f"{total_loss_parts:,.0f}",
-                            delta=f"{-total_loss_parts:,.0f}",
-                            delta_color="inverse"
-                        )
-                    else: # Target Output
-                        total_loss_vs_target_sec = results_df['Capacity Loss (vs Target) (sec)'].sum()
-                        total_loss_vs_target_dhm = format_seconds_to_dhm(total_loss_vs_target_sec)
-                        total_loss_vs_target_parts = results_df['Capacity Loss (vs Target) (parts)'].sum()
-                        
-                        loss_vs_target_time_perc_val = (total_loss_vs_target_sec / run_time_sec_total) if run_time_sec_total > 0 else 0
-                        loss_vs_target_parts_perc_val = (total_loss_vs_target_parts / total_target) if total_target > 0 else 0
-
-                        st.metric(f"Capacity Loss (vs Target) (Time) ({loss_vs_target_time_perc_val:.1%})", total_loss_vs_target_dhm)
-                        st.metric(
-                            f"Capacity Loss (vs Target) (parts) ({loss_vs_target_parts_perc_val:.1%})",
-                            f"{total_loss_vs_target_parts:,.0f}",
-                            delta=f"{-total_loss_vs_target_parts:,.0f}", 
-                            delta_color=("inverse" if total_loss_vs_target_parts > 0 else "normal")
-                        )
+                    st.metric("Segment 2: Inefficiency Loss (Net)", 
+                              f"{-total_net_cycle_loss_parts:,.0f} parts",
+                              delta_color="inverse")
+                    st.metric("Time Lost to Slow/Fast Cycles", format_seconds_to_dhm(total_net_cycle_loss_sec))
+                
+                with col4:
+                    actual_output_perc_val = (total_produced / total_optimal) if total_optimal > 0 else 0
+                    st.metric(f"Segment 1: Actual Output ({actual_output_perc_val:.1%})", 
+                              f"{total_produced:,.0f} parts")
+                    st.metric("Actual Production Time", total_actual_ct_dhm)
 
 
                 # --- Collapsible Daily Summary Table ---
