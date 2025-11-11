@@ -693,6 +693,7 @@ if uploaded_file is not None:
                     yaxis_title="Parts",
                     showlegend=True # <-- v6.20: Enable legend
                 )
+                )
                 
                 # Add Target Line as a scatter trace
                 fig_waterfall.add_trace(go.Scatter(
