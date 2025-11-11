@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.47 (Dual Table view + Target CT logic + NameError fix)"
+__version__ = "6.48 (Fixed SyntaxError and NameError)"
 # ==================================================================
 
 # ==================================================================
@@ -523,6 +523,7 @@ if uploaded_file is not None:
             if results_df_optimal is None or results_df_optimal.empty:
                 st.error("No valid data found in file. Cannot proceed.")
             else:
+                # --- v6.48: FIX SYNTAX ERROR. Logic moved inside this block ---
                 # 2. If in Target View, calculate vs. Target as well
                 if benchmark_view == "Target Output":
                     cache_key_target = f"{__version__}_{target_output_perc}"
@@ -538,14 +539,21 @@ if uploaded_file is not None:
                         _cache_version=cache_key_target
                     )
                     
-                    # Set the *main* dfs to the target results
-                    results_df = results_df_target
-                    all_shots_df = all_shots_df_target
+                    # --- v6.48: Add check for failed Target calc ---
+                    if results_df_target is None or results_df_target.empty:
+                        st.warning("Could not calculate Target view (no data). Defaulting to Optimal view.")
+                        results_df = results_df_optimal
+                        all_shots_df = all_shots_df_optimal
+                        benchmark_view = "Optimal Output" # Force view back
+                    else:
+                        # Set the *main* dfs to the target results
+                        results_df = results_df_target
+                        all_shots_df = all_shots_df_target
                 else:
                     # Otherwise, the *main* dfs are the optimal results
                     results_df = results_df_optimal
                     all_shots_df = all_shots_df_optimal
-                # --- End v6.47 Dual Calculation ---
+                # --- End v6.47 Dual Calculation / v6.48 Fix ---
 
                 # --- 1. All-Time Summary Dashboard Calculations ---
                 st.header("All-Time Summary")
@@ -559,6 +567,7 @@ if uploaded_file is not None:
                 
                 # These are always based on the 100% (Optimal) run
                 total_optimal = results_df_optimal['Optimal Output (parts)'].sum() 
+                # --- v6.48: Get target from optimal df for consistency ---
                 total_target = results_df_optimal['Target Output (parts)'].sum() 
                 
                 # Calculate corresponding time values
@@ -891,7 +900,8 @@ if uploaded_file is not None:
                     report_table_target['Loss (RR Downtime)'] = display_df.apply(lambda r: f"{r['Capacity Loss (downtime) (parts)']:,.2f} ({r['Capacity Loss (downtime) (parts %)']:.1%})", axis=1)
                     report_table_target['Loss (Slow Cycles)'] = display_df.apply(lambda r: f"{r['Capacity Loss (slow cycle time) (parts)']:,.2f} ({r['Capacity Loss (slow cycle time) (parts %)']:.1%})", axis=1)
                     report_table_target['Gain (Fast Cycles)'] = display_df.apply(lambda r: f"{r['Capacity Gain (fast cycle time) (parts)']:,.2f} ({r['Capacity Gain (fast cycle time) (parts %)']:.1%})", axis=1)
-                    report_table_target['Total Net Loss'] = display_f.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
+                    # --- v6.48: FIX NameError (display_f -> display_df) ---
+                    report_table_target['Total Net Loss'] = display_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
                     
                     st.dataframe(report_table_target.style.applymap(
                         lambda x: 'color: green' if str(x).startswith('+') else 'color: red' if str(x).startswith('-') else None,
@@ -1011,9 +1021,7 @@ if uploaded_file is not None:
                             width='stretch'
                         )
 
-            # --- v6.47: Handle case where optimal calculation fails ---
-            elif results_df is None: 
-                st.warning("No valid data was found after filtering. Cannot display results.")
+            # --- v6.48: Removed the orphaned 'elif' block that caused the SyntaxError ---
 
 else:
     st.info("👈 Please upload a data file to begin.")
