@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.27 (Run Interval Threshold)"
+__version__ = "6.28 (Waterfall Color Fix)"
 # ==================================================================
 
 # ==================================================================
@@ -666,6 +666,13 @@ if uploaded_file is not None:
                 y_data.append(total_produced)
                 text_data.append(f"{total_produced:,.0f}")
                 measure_data.append("total")
+                
+                # --- v6.28: Prepare color list *before* creating chart ---
+                color_list = ["darkblue"] # First bar is Optimal
+                # Loop through all intermediate steps (losses and gains)
+                for y in y_data[1:-1]:
+                    color_list.append("#89cff0" if y > 0 else "#ff6961") # Light blue for gain, red for loss
+                color_list.append("green") # Last bar is Actual Output
 
                 fig_waterfall = go.Figure(go.Waterfall(
                     name = "Segments",
@@ -677,15 +684,9 @@ if uploaded_file is not None:
                     textposition = "outside",
                     connector = {"line":{"color":"rgb(63, 63, 63)"}},
                     
-                    # --- v5.7 Color Coding ---
-                    increasing = {"marker":{"color":"#89cff0"}}, # Gains (Light Blue)
-                    decreasing = {"marker":{"color":"#ff6961"}},  # Losses (Pastel Red)
-                    totals = {"marker":{"color":"green"}}          # Actual Output
+                    # --- v6.28: Set marker color directly ---
+                    marker_color = color_list
                 ))
-                
-                # --- v6.26: Manually color the first "Optimal" bar ---
-                fig_waterfall.data[0].marker.color = ["darkblue"] + ["#89cff0" if y > 0 else "#ff6961" for y in y_data[1:-1]] + ["green"]
-
 
                 fig_waterfall.update_layout(
                     title="Capacity Breakdown (All Time)",
@@ -937,7 +938,12 @@ if uploaded_file is not None:
                     df_day_shots = all_shots_df[all_shots_df['date'] == selected_date]
                     
                     st.subheader("Chart Controls")
-                    max_ct_for_day = df_day_shots['Actual CT'].max()
+                    # --- v6.27: Filter out huge run breaks from the slider max calculation ---
+                    non_break_df = df_day_shots[df_day_shots['Shot Type'] != 'Run Break (Excluded)']
+                    max_ct_for_day = 100 # Default
+                    if not non_break_df.empty:
+                        max_ct_for_day = non_break_df['Actual CT'].max()
+
                     slider_max = int(np.ceil(max_ct_for_day / 10.0)) * 10
                     slider_max = max(slider_max, 50)
                     slider_max = min(slider_max, 1000)
