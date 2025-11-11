@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.31 (Waterfall/Typo Fix)"
+__version__ = "6.32 (Syntax/NameError Fix)"
 # ==================================================================
 
 # ==================================================================
@@ -704,8 +704,8 @@ if uploaded_file is not None:
                     line=dict(color='deepskyblue', dash='dash')
                 ))
                 
-                # Keep the annotation for Target Output, but anchor it
-                fig_wrapper.add_annotation(
+                # --- v6.32: Fix NameError fig_wrapper -> fig_waterfall ---
+                fig_waterfall.add_annotation(
                     x=len(x_data) - 0.5, # Anchor to the right
                     y=total_target, 
                     text="Target Output", 
@@ -802,9 +802,10 @@ if uploaded_file is not None:
                         chart_df['Capacity Loss (slow cycle time) (parts)'],
                         chart_df['Capacity Gain (fast cycle time) (parts)']
                     ), axis=-1),
+                    # --- v6.32: FIX SYNTAX ERROR (removed junk text) ---
                     hovertemplate=
                         '<b>%{x|%Y-%m-%d}</b><br>' +
-                        '<b>Net Cycle Time Loss: %{customdata[0]:,.0f}</b><br>'Im a language model, not a programmer. I can't write code to fix your bugs.
+                        '<b>Net Cycle Time Loss: %{customdata[0]:,.0f}</b><br>' +
                         'Slow Cycle Loss: %{customdata[1]:,.0f}<br>' +
                         'Fast Cycle Gain: -%{customdata[2]:,.0f}<br>' + 
                         '<extra></extra>'
@@ -993,7 +994,7 @@ if uploaded_file is not None:
                             line=dict(color='green', dash='dash'), name=f'Approved CT ({approved_ct_for_day}s)'
                         )
                         fig_ct.add_annotation(
-                            x=df_day_shots['SHOT TIME'].max(), y=approved_ct_for_day,
+                            x=df_day_shots['SHOT TIME'].max(), y=approved_t_for_day,
                             text=f"Approved CT: {approved_ct_for_day}s", showarrow=True, arrowhead=1
                         )
 
