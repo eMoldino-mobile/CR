@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.32 (Syntax/NameError Fix)"
+__version__ = "6.33 (Waterfall marker.color Fix)"
 # ==================================================================
 
 # ==================================================================
@@ -674,7 +674,7 @@ if uploaded_file is not None:
                     color_list.append("#89cff0" if y > 0 else "#ff6961") # Light blue for gain, red for loss
                 color_list.append("green") # Last bar is Actual Output
 
-                # --- v6.31: FIX for ValueError. Use marker={...} ---
+                # --- v6.33: FIX for ValueError. Use explicit marker object ---
                 fig_waterfall = go.Figure(go.Waterfall(
                     name = "Segments",
                     orientation = "v",
@@ -685,8 +685,8 @@ if uploaded_file is not None:
                     textposition = "outside",
                     connector = {"line":{"color":"rgb(63, 63, 63)"}},
                     
-                    # --- v6.31: Set marker color correctly inside a dict ---
-                    marker = {"color": color_list}
+                    # --- v6.33: Set marker color using the explicit object ---
+                    marker=go.waterfall.Marker(color=color_list)
                 ))
 
                 fig_waterfall.update_layout(
@@ -994,7 +994,7 @@ if uploaded_file is not None:
                             line=dict(color='green', dash='dash'), name=f'Approved CT ({approved_ct_for_day}s)'
                         )
                         fig_ct.add_annotation(
-                            x=df_day_shots['SHOT TIME'].max(), y=approved_t_for_day,
+                            x=df_day_shots['SHOT TIME'].max(), y=approved_ct_for_day,
                             text=f"Approved CT: {approved_ct_for_day}s", showarrow=True, arrowhead=1
                         )
 
