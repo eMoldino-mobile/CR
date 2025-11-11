@@ -6,11 +6,11 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.40 (Netted cycle time *before* allocation)"
+__version__ = "6.42 (Recalculate all losses vs Target CT)"
 # ==================================================================
 
 # ==================================================================
-#          	 	 	 	 	 	 	HELPER FUNCTIONS
+#      	 	 	 	 	 	 	HELPER FUNCTIONS
 # ==================================================================
 
 def format_seconds_to_dhm(total_seconds):
@@ -252,14 +252,32 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         max_cavities = daily_df['Working Cavities'].max()
         if max_cavities == 0 or pd.isna(max_cavities): max_cavities = 1
         
+        # --- MODIFICATION START (v6.42): Define the REFERENCE_CT ---
+        # All calculations will be based on this.
+        
+        target_perc_ratio = target_output_perc / 100.0
+        
+        # This is the NEW reference cycle time for all calculations.
+        # If target_perc is 100 (Optimal View), this is just APPROVED_CT_day.
+        # If target_perc is 90 (Target View), this is APPROVED_CT_day / 0.9 (e.g., 11.11 sec)
+        if target_perc_ratio == 0:
+            REFERENCE_CT_day = np.inf # Set to infinity if target is 0
+        else:
+            REFERENCE_CT_day = APPROVED_CT_day / target_perc_ratio
+        
+        # --- MODIFICATION END ---
+        
+        
         # --- 10. Calculate The 4 Segments (in Parts) ---
 
         # SEGMENT 4: Optimal Production (Theoretical Max)
+        # --- This MUST always use APPROVED_CT_day ---
         results['Optimal Output (parts)'] = (results['Filtered Run Time (sec)'] / APPROVED_CT_day) * max_cavities
 
         # SEGMENT 3: RR Downtime Loss
         results['Capacity Loss (downtime) (sec)'] = df_downtime['adj_ct_sec'].sum()
-        results['Capacity Loss (downtime) (parts)'] = (results['Capacity Loss (downtime) (sec)'] / APPROVED_CT_day) * max_cavities
+        # --- Use REFERENCE_CT_day ---
+        results['Capacity Loss (downtime) (parts)'] = (results['Capacity Loss (downtime) (sec)'] / REFERENCE_CT_day) * max_cavities
 
         # SEGMENT 1: Actual Production
         results['Actual Output (parts)'] = df_production['Working Cavities'].sum()
@@ -268,28 +286,30 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         # SEGMENT 2: Inefficiency (CT Slow/Fast) Loss
         
         # Calculate TIME Loss/Gain
+        # --- Use REFERENCE_CT_day ---
         df_production['time_gain_sec'] = np.where(
-            df_production['Actual CT'] < APPROVED_CT_day,
-            (APPROVED_CT_day - df_production['Actual CT']), # Time gained per shot
+            df_production['Actual CT'] < REFERENCE_CT_day,
+            (REFERENCE_CT_day - df_production['Actual CT']), # Time gained per shot
             0
         )
         df_production['time_loss_sec'] = np.where(
-            df_production['Actual CT'] > APPROVED_CT_day,
-            (df_production['Actual CT'] - APPROVED_CT_day), # Time lost per shot
+            df_production['Actual CT'] > REFERENCE_CT_day,
+            (df_production['Actual CT'] - REFERENCE_CT_day), # Time lost per shot
             0
         )
         results['Capacity Gain (fast cycle time) (sec)'] = df_production['time_gain_sec'].sum()
         results['Capacity Loss (slow cycle time) (sec)'] = df_production['time_loss_sec'].sum()
 
         # Calculate PARTS Loss/Gain
+        # --- Use REFERENCE_CT_day ---
         df_production['parts_gain'] = np.where(
-            df_production['Actual CT'] < APPROVED_CT_day,
-            ((APPROVED_CT_day - df_production['Actual CT']) / APPROVED_CT_day) * max_cavities,
+            df_production['Actual CT'] < REFERENCE_CT_day,
+            ((REFERENCE_CT_day - df_production['Actual CT']) / REFERENCE_CT_day) * max_cavities,
             0
         )
         df_production['parts_loss'] = np.where(
-            df_production['Actual CT'] > APPROVED_CT_day,
-            ((df_production['Actual CT'] - APPROVED_CT_day) / APPROVED_CT_day) * max_cavities,
+            df_production['Actual CT'] > REFERENCE_CT_day,
+            ((df_production['Actual CT'] - REFERENCE_CT_day) / REFERENCE_CT_day) * max_cavities,
             0
         )
         
@@ -297,10 +317,11 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         results['Capacity Gain (fast cycle time) (parts)'] = df_production['parts_gain'].sum()
 
         # --- Create a unified 'Shot Type' column for all shots ---
+        # --- Use REFERENCE_CT_day ---
         conditions = [
-            (df_production['Actual CT'] > APPROVED_CT_day),
-            (df_production['Actual CT'] < APPROVED_CT_day),
-            (df_production['Actual CT'] == APPROVED_CT_day)
+            (df_production['Actual CT'] > REFERENCE_CT_day),
+            (df_production['Actual CT'] < REFERENCE_CT_day),
+            (df_production['Actual CT'] == REFERENCE_CT_day)
         ]
         choices = ['Slow', 'Fast', 'On Target']
         df_production['Shot Type'] = np.select(conditions, choices, default='N/A')
@@ -311,6 +332,8 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         df_rr['Shot Type'].fillna('RR Downtime (Stop)', inplace=True)
         
         df_rr['Approved CT'] = APPROVED_CT_day
+        # --- Add REFERENCE_CT_day to the shot df for analysis ---
+        df_rr['Reference CT'] = REFERENCE_CT_day
 
         if not df_rr.empty:
             all_shots_list.append(df_rr)
@@ -322,10 +345,12 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         results['Total Capacity Loss (sec)'] = results['Capacity Loss (downtime) (sec)'] + net_cycle_loss_sec
 
         # Target Calculations
+        # --- Target Output is based on Optimal (APPROVED_CT) ---
         results['Target Output (parts)'] = results['Optimal Output (parts)'] * (target_output_perc / 100.0)
         results['Gap to Target (parts)'] = results['Actual Output (parts)'] - results['Target Output (parts)'] # Can be positive
         results['Capacity Loss (vs Target) (parts)'] = np.maximum(0, results['Target Output (parts)'] - results['Actual Output (parts)']) # Only the negative gap
-        results['Capacity Loss (vs Target) (sec)'] = (results['Capacity Loss (vs Target) (parts)'] * APPROVED_CT_day) / max_cavities
+        # --- Use REFERENCE_CT_day ---
+        results['Capacity Loss (vs Target) (sec)'] = (results['Capacity Loss (vs Target) (parts)'] * REFERENCE_CT_day) / max_cavities
 
         # New Shot Counts
         results['Total Shots (all)'] = len(daily_df)
@@ -754,28 +779,9 @@ if uploaded_file is not None:
                 display_df['Capacity Loss (vs Target) (parts %)'] = np.where( display_df['Target Output (parts)'] > 0, display_df['Capacity Loss (vs Target) (parts)'] / display_df['Target Output (parts)'], 0)
                 display_df['Total Capacity Loss (cycle time) (parts)'] = display_df['Capacity Loss (slow cycle time) (parts)'] - display_df['Capacity Gain (fast cycle time) (parts)']
 
-                # --- MODIFICATION START (v6.40): Net cycle time *before* allocation ---
-                # Calculate net cycle time loss (only positive values)
-                net_cycle_loss_positive = np.maximum(0, display_df['Total Capacity Loss (cycle time) (parts)'])
-                
-                # Calculate total "causal" loss from Downtime and *Net* Cycle Time Loss
-                total_causal_loss = display_df['Capacity Loss (downtime) (parts)'] + net_cycle_loss_positive
-                
-                # Calculate the ratio of each loss type
-                display_df['loss_downtime_ratio'] = np.where(
-                    total_causal_loss > 0,
-                    display_df['Capacity Loss (downtime) (parts)'] / total_causal_loss,
-                    0
-                )
-                display_df['loss_cycletime_ratio'] = np.where(
-                    total_causal_loss > 0,
-                    net_cycle_loss_positive / total_causal_loss,
-                    0
-                )
-
-                # Allocate the "Gap to Target" based on these new ratios
-                display_df['Allocated Loss (RR Downtime)'] = display_df['Capacity Loss (vs Target) (parts)'] * display_df['loss_downtime_ratio']
-                display_df['Allocated Loss (Net Cycle Time)'] = display_df['Capacity Loss (vs Target) (parts)'] * display_df['loss_cycletime_ratio']
+                # --- MODIFICATION START (v6.41): Remove confusing allocation logic ---
+                # All calculations are now done in the main function based on REFERENCE_CT_day
+                # No allocation logic is needed here.
                 # --- MODIFICATION END ---
 
                 _target_output_perc_array = np.full(len(display_df), target_output_perc / 100.0)
@@ -889,10 +895,11 @@ if uploaded_file is not None:
                     st.dataframe(report_table_optimal, width='stretch')
                 
                 else: # Target View
-                    # --- TABLE 2: vs Target (Restoring Allocation Logic v6.39) ---
+                    # --- TABLE 2: vs Target (Simplified Logic v6.41 / v6.42) ---
                     st.header(f"Capacity Loss & Gain Report (vs Target {target_output_perc:.0f}%) ({data_frequency})")
-                    # --- MODIFICATION START (v6.40): Update info box ---
-                    st.info("This table allocates the 'Gap to Target' based on the *causes* of the total loss (Downtime vs. *Net* Cycle Time Loss).")
+                    
+                    # --- MODIFICATION START (v6.41): Removed confusing info box
+                    # st.info(...) 
                     # --- MODIFICATION END ---
                     
                     report_table_target = pd.DataFrame(index=display_df.index)
@@ -903,32 +910,14 @@ if uploaded_file is not None:
                     report_table_target['Gap to Target (parts)'] = display_df['Gap to Target (parts)'].apply(lambda x: "{:+,.2f}".format(x) if pd.notna(x) else "N/A")
                     report_table_target['Gap % (vs Target)'] = display_df.apply(lambda r: r['Gap to Target (parts)'] / r['Target Output (parts)'] if r['Target Output (parts)'] > 0 else 0, axis=1).apply(lambda x: "{:+.1%}".format(x) if pd.notna(x) else "N/A")
 
-                    # --- MODIFICATION START (v6.40): Update allocation formatting ---
-                    def format_allocation(row, col_name, ratio_col):
-                        gap_numeric = row['Gap to Target (parts)']
-                        
-                        if gap_numeric <= 0: # This is a LOSS
-                            # Show the allocated loss (as a positive number) and its ratio
-                            return f"{row[col_name]:,.2f} ({row[ratio_col]:.1%})"
-                        else: # This is a GAIN
-                            return "N/A (Target Met)"
-
-                    report_table_target['Allocated Loss (RR Downtime)'] = display_df.apply(
-                        format_allocation, 
-                        col_name='Allocated Loss (RR Downtime)', 
-                        ratio_col='loss_downtime_ratio', 
-                        axis=1
-                    )
+                    # --- MODIFICATION START (v6.42): ---
+                    # These columns are now correctly calculated (vs Target CT) in the main function.
+                    # We are just formatting them here. No "N/A" values.
                     
-                    report_table_target['Allocated Loss (Net Cycle Time)'] = display_df.apply(
-                        format_allocation, 
-                        col_name='Allocated Loss (Net Cycle Time)', 
-                        ratio_col='loss_cycletime_ratio', 
-                        axis=1
-                    )
-                    
-                    # Add 'Gain (Fast Cycles)' column. This shows regardless of the gap.
+                    report_table_target['Loss (RR Downtime)'] = display_df.apply(lambda r: f"{r['Capacity Loss (downtime) (parts)']:,.2f} ({r['Capacity Loss (downtime) (parts %)']:.1%})", axis=1)
+                    report_table_target['Loss (Slow Cycles)'] = display_df.apply(lambda r: f"{r['Capacity Loss (slow cycle time) (parts)']:,.2f} ({r['Capacity Loss (slow cycle time) (parts %)']:.1%})", axis=1)
                     report_table_target['Gain (Fast Cycles)'] = display_df.apply(lambda r: f"{r['Capacity Gain (fast cycle time) (parts)']:,.2f} ({r['Capacity Gain (fast cycle time) (parts %)']:.1%})", axis=1)
+                    report_table_target['Total Net Loss'] = display_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
                     # --- MODIFICATION END ---
                     
                     st.dataframe(report_table_target.style.applymap(
@@ -980,6 +969,10 @@ if uploaded_file is not None:
                         st.warning(f"No shots found for {selected_date}.")
                     else:
                         approved_ct_for_day = df_day_shots['Approved CT'].iloc[0]
+                        # --- MODIFICATION START (v6.42): Get Reference CT for chart ---
+                        reference_ct_for_day = df_day_shots['Reference CT'].iloc[0]
+                        reference_ct_label = "Approved CT" if target_output_perc == 100.0 else "Target CT"
+                        # --- MODIFICATION END ---
 
                         fig_ct = go.Figure()
                         # --- v6.27: Add new color for run breaks ---
@@ -1002,17 +995,18 @@ if uploaded_file is not None:
                                     hovertemplate='<b>%{x|%H:%M:%S}</b><br>Shot Type: %{fullData.name}<br>Actual CT: %{y:.2f}s<extra></extra>'
                                 )
                         
-                        # --- v6.7: Fix SyntaxError ---
+                        # --- MODIFICATION START (v6.42): Use Reference CT for line ---
                         fig_ct.add_shape(
                             type='line',
                             x0=df_day_shots['SHOT TIME'].min(), x1=df_day_shots['SHOT TIME'].max(),
-                            y0=approved_ct_for_day, y1=approved_ct_for_day,
-                            line=dict(color='green', dash='dash'), name=f'Approved CT ({approved_ct_for_day}s)'
+                            y0=reference_ct_for_day, y1=reference_ct_for_day,
+                            line=dict(color='green', dash='dash'), name=f'{reference_ct_label} ({reference_ct_for_day:.2f}s)'
                         )
                         fig_ct.add_annotation(
-                            x=df_day_shots['SHOT TIME'].max(), y=approved_ct_for_day,
-                            text=f"Approved CT: {approved_ct_for_day}s", showarrow=True, arrowhead=1
+                            x=df_day_shots['SHOT TIME'].max(), y=reference_ct_for_day,
+                            text=f"{reference_ct_label}: {reference_ct_for_day:.2f}s", showarrow=True, arrowhead=1
                         )
+                        # --- MODIFICATION END ---
 
                         fig_ct.update_layout(
                             title=f"All Shots for {selected_date}",
