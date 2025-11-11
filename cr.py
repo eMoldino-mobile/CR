@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.52 (Fixed KeyError in Daily Summary)"
+__version__ = "6.53 (Fixed NameError for chart_title)"
 # ==================================================================
 
 # ==================================================================
@@ -686,6 +686,9 @@ if uploaded_file is not None:
                     xaxis_title = "Month"
                 else: # Daily
                     agg_df = results_df.copy()
+                    # --- v6.53: FIX NameError ---
+                    chart_title = "Daily Capacity Report"
+                    xaxis_title = "Date"
                 
                 display_df = agg_df
 
