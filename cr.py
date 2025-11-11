@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.28 (Waterfall Color Fix)"
+__version__ = "6.29 (Waterfall Marker Fix)"
 # ==================================================================
 
 # ==================================================================
@@ -684,8 +684,8 @@ if uploaded_file is not None:
                     textposition = "outside",
                     connector = {"line":{"color":"rgb(63, 63, 63)"}},
                     
-                    # --- v6.28: Set marker color directly ---
-                    marker_color = color_list
+                    # --- v6.29: Set marker color correctly inside a dict ---
+                    marker = {"color": color_list}
                 ))
 
                 fig_waterfall.update_layout(
@@ -832,7 +832,7 @@ if uploaded_file is not None:
                     
                 fig_ts.add_trace(go.Scatter(
                     x=chart_df['Date'],
-                    y=chart_df['Optimal Output (parts)'],
+                    y=chart_diff['Optimal Output (parts)'],
                     name='Optimal Output',
                     mode='lines',
                     line=dict(color='darkblue', dash='dot'),
