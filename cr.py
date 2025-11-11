@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.58 (Fixed is_time_gap logic)"
+__version__ = "6.59 (Fixed NameError in chart)"
 # ==================================================================
 
 # ==================================================================
@@ -1023,10 +1023,11 @@ if uploaded_file is not None:
                                 )
                         
                         # --- v6.54: Use Reference CT for line ---
+                        # --- v6.59: Fix NameError ---
                         fig_ct.add_shape(
                             type='line',
                             x0=df_day_shots['SHOT TIME'].min(), x1=df_day_shots['SHOT TIME'].max(),
-                            y0=reference_ct_for_day, y1=reference_static_for_day,
+                            y0=reference_ct_for_day, y1=reference_ct_for_day,
                             line=dict(color='green', dash='dash'), name=f'{reference_ct_label} ({reference_ct_for_day:.2f}s)'
                         )
 
