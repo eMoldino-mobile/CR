@@ -6,11 +6,11 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.25 (Shot-by-Shot Bar Fix)"
+__version__ = "6.26 (True Waterfall Fix)"
 # ==================================================================
 
 # ==================================================================
-#                        HELPER FUNCTIONS
+#                         HELPER FUNCTIONS
 # ==================================================================
 
 def format_seconds_to_dhm(total_seconds):
@@ -148,7 +148,8 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     # This prevents KeyErrors if all days are skipped
     all_result_columns = [
         'Date', 'Filtered Run Time (sec)', 'Optimal Output (parts)',
-        'Capacity Loss (downtime) (sec)', 'Capacity Loss (downtime) (parts)',
+        'Capacity Loss (downtime) (sec)',
+        'Capacity Loss (downtime) (parts)',
         'Actual Output (parts)', 'Actual Cycle Time Total (sec)',
         'Capacity Gain (fast cycle time) (sec)', 'Capacity Loss (slow cycle time) (sec)',
         'Capacity Loss (slow cycle time) (parts)', 'Capacity Gain (fast cycle time) (parts)',
@@ -491,8 +492,9 @@ if uploaded_file is not None:
                 actual_output_perc_val = (total_produced / total_optimal) if total_optimal > 0 else 0
 
                 # --- NEW: Calculate the final headline numbers ---
-                total_net_loss_parts = total_downtime_loss_parts + total_net_cycle_loss_parts
-                total_net_loss_sec = total_downtime_loss_sec + total_net_cycle_loss_sec
+                # --- v6.26: This is the CALCULATED loss from time, not the TRUE loss ---
+                total_calculated_net_loss_parts = total_downtime_loss_parts + total_net_cycle_loss_parts
+                total_calculated_net_loss_sec = total_downtime_loss_sec + total_net_cycle_loss_sec
                 
                 # --- v6.5: Removed percentages for progress bars ---
 
@@ -518,13 +520,16 @@ if uploaded_file is not None:
                         # --- v6.5: Removed progress bar ---
                         
                     with c4:
-                        # --- v6.2: Removed delta ---
-                        st.metric("Total Capacity Loss (Net)", f"{total_net_loss_parts:,.0f} parts")
-                        st.caption(f"Total Time Lost: {format_seconds_to_dhm(total_net_loss_sec)}")
+                        # --- v6.26: Show TRUE net loss ---
+                        total_true_net_loss_parts = total_optimal - total_produced
+                        total_true_net_loss_sec = (total_true_net_loss_parts / total_optimal) * run_time_sec_total if total_optimal > 0 else 0
+                        
+                        st.metric("Total Capacity Loss (True)", f"{total_true_net_loss_parts:,.0f} parts")
+                        st.caption(f"Total Time Lost: {format_seconds_to_dhm(total_true_net_loss_sec)}")
                         # --- v6.5: Removed progress bar ---
 
                 # --- Box 2: Capacity Loss Breakdown ---
-                st.subheader("Capacity Loss Breakdown")
+                st.subheader("Capacity Loss Breakdown (from Time Calculations)")
                 with st.container(border=True):
                     c1, c2, c3, c4 = st.columns(4)
 
@@ -601,44 +606,60 @@ if uploaded_file is not None:
                 # --- 2. NEW 4-SEGMENT WATERFALL CHART ---
                 st.header("Production Output Overview")
                 
-                # --- v6.23: Remove calculated_total, use total_produced ---
-                # calculated_total = total_optimal - total_downtime_loss_parts - total_net_cycle_loss_parts
+                # --- v6.26: Calculate the "Unaccounted" balancing amount ---
+                calculated_output = total_optimal - total_downtime_loss_parts - total_net_cycle_loss_parts
+                unaccounted_gain_loss = total_produced - calculated_output
+                
+                # Set up the data for the true waterfall
+                x_data = [
+                    "<b>Optimal Output</b>", 
+                    "<b>Run Rate Downtime (Stops)</b>", 
+                    "<b>Capacity Loss (cycle time)</b>"
+                ]
+                y_data = [
+                    total_optimal, 
+                    -total_downtime_loss_parts, 
+                    -total_net_cycle_loss_parts
+                ]
+                text_data = [
+                    f"{total_optimal:,.0f}",
+                    f"{-total_downtime_loss_parts:,.0f}",
+                    f"{-total_net_cycle_loss_parts:,.0f}"
+                ]
+                measure_data = ["relative", "relative", "relative"]
 
-                # Replaced the incorrect 'marker' argument with the correct structure
-                # using 'increasing', 'decreasing', and 'totals'
+                # Add the unaccounted bar *only if it's non-zero*
+                if abs(unaccounted_gain_loss) > 0.1: # Use a small tolerance
+                    x_data.append("<b>Unaccounted Gain/Loss</b>")
+                    y_data.append(unaccounted_gain_loss)
+                    text_data.append(f"{unaccounted_gain_loss:+,.0f}")
+                    measure_data.append("relative")
+
+                # Add the final "Actual Output" total
+                x_data.append("<b>Actual Output</b>")
+                y_data.append(total_produced)
+                text_data.append(f"{total_produced:,.0f}")
+                measure_data.append("total")
+
                 fig_waterfall = go.Figure(go.Waterfall(
                     name = "Segments",
                     orientation = "v",
-                    # --- v5.7.1 - FIX: Changed first "absolute" to "relative" to allow different colors ---
-                    measure = ["relative", "relative", "relative", "total"],
-                    x = [
-                        # --- v6.2: Removed "Segment" labels ---
-                        "<b>Optimal Output</b>", 
-                        "<b>Run Rate Downtime (Stops)</b>", 
-                        "<b>Capacity Loss (cycle time)</b>", 
-                        "<b>Actual Output</b>" # <-- v6.23: Reverted to Actual
-                    ],
-                    text = [
-                        f"{total_optimal:,.0f}",
-                        f"{-total_downtime_loss_parts:,.0f}",
-                        f"{-total_net_cycle_loss_parts:,.0f}",
-                        f"{total_produced:,.0f}" # <-- v6.23: Use total_produced
-                    ],
-                    y = [
-                        total_optimal, 
-                        -total_downtime_loss_parts, 
-                        -total_net_cycle_loss_parts, 
-                        total_produced # <-- v6.23: Use total_produced
-                    ],
+                    measure = measure_data,
+                    x = x_data,
+                    text = text_data,
+                    y = y_data,
                     textposition = "outside",
                     connector = {"line":{"color":"rgb(63, 63, 63)"}},
                     
                     # --- v5.7 Color Coding ---
-                    increasing = {"marker":{"color":"darkblue"}}, # Optimal
-                    decreasing = {"marker":{"color":"#ff6961"}},  # Downtime & Cycle Time Loss
+                    increasing = {"marker":{"color":"#89cff0"}}, # Gains (Light Blue)
+                    decreasing = {"marker":{"color":"#ff6961"}},  # Losses (Pastel Red)
                     totals = {"marker":{"color":"green"}}          # Actual Output
-                    # --- End v5.7 Change ---
                 ))
+                
+                # --- v6.26: Manually color the first "Optimal" bar ---
+                fig_waterfall.data[0].marker.color = ["darkblue"] + ["#89cff0" if y > 0 else "#ff6961" for y in y_data[1:-1]] + ["green"]
+
 
                 fig_waterfall.update_layout(
                     title="Capacity Breakdown (All Time)",
@@ -654,12 +675,12 @@ if uploaded_file is not None:
                     mode='lines',
                     line=dict(color='deepskyblue', dash='dash')
                 ))
-
-                # --- v6.23: Remove redundant dotted line for Actual Output ---
                 
                 # Keep the annotation for Target Output, but anchor it
                 fig_waterfall.add_annotation(
-                    x=3.5, y=total_target, text="Target Output", 
+                    x=len(x_data) - 0.5, # Anchor to the right
+                    y=total_target, 
+                    text="Target Output", 
                     showarrow=True, arrowhead=1, ax=20, ay=-20
                 )
                 
