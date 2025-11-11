@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.29 (Waterfall Marker Fix)"
+__version__ = "6.30 (Waterfall/Typo Fix)"
 # ==================================================================
 
 # ==================================================================
@@ -674,6 +674,7 @@ if uploaded_file is not None:
                     color_list.append("#89cff0" if y > 0 else "#ff6961") # Light blue for gain, red for loss
                 color_list.append("green") # Last bar is Actual Output
 
+                # --- v6.30: FIX for ValueError. Use marker_color argument ---
                 fig_waterfall = go.Figure(go.Waterfall(
                     name = "Segments",
                     orientation = "v",
@@ -684,15 +685,14 @@ if uploaded_file is not None:
                     textposition = "outside",
                     connector = {"line":{"color":"rgb(63, 63, 63)"}},
                     
-                    # --- v6.29: Set marker color correctly inside a dict ---
-                    marker = {"color": color_list}
+                    # --- v6.30: Set marker color using the top-level 'marker_color' ---
+                    marker_color = color_list
                 ))
 
                 fig_waterfall.update_layout(
                     title="Capacity Breakdown (All Time)",
                     yaxis_title="Parts",
                     showlegend=True # <-- v6.20: Enable legend
-                )
                 )
                 
                 # Add Target Line as a scatter trace
@@ -833,7 +833,8 @@ if uploaded_file is not None:
                     
                 fig_ts.add_trace(go.Scatter(
                     x=chart_df['Date'],
-                    y=chart_diff['Optimal Output (parts)'],
+                    # --- v6.30: FIX TYPO chart_diff -> chart_df ---
+                    y=chart_df['Optimal Output (parts)'],
                     name='Optimal Output',
                     mode='lines',
                     line=dict(color='darkblue', dash='dot'),
@@ -1001,7 +1002,7 @@ if uploaded_file is not None:
                             xaxis_title='Time of Day',
                             yaxis_title='Actual Cycle Time (sec)',
                             hovermode="closest",
-                            yaxis_range=[0, y_axis_max], # Apply the zoom
+                            yaxis_range=[0, y_aws_max], # Apply the zoom
                             # --- v6.25: REMOVED barmode='overlay' ---
                         )
                         st.plotly_chart(fig_ct, width='stretch')
