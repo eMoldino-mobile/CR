@@ -6,11 +6,11 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.48 (Fixed SyntaxError and NameError)"
+__version__ = "6.49 (Fixed KeyError and Target calculation logic)"
 # ==================================================================
 
 # ==================================================================
-#                         HELPER FUNCTIONS
+#      T                 HELPER FUNCTIONS
 # ==================================================================
 
 def format_seconds_to_dhm(total_seconds):
@@ -507,7 +507,7 @@ if uploaded_file is not None:
             # --- v6.47: Dual Calculation Logic ---
             
             # 1. Always calculate vs. Optimal (100%)
-            cache_key_optimal = f"{__version__}_100.0"
+            # --- v6.49: Removed _cache_version argument ---
             results_df_optimal, all_shots_df_optimal = run_capacity_calculation(
                 df_raw,
                 toggle_filter,
@@ -516,8 +516,7 @@ if uploaded_file is not None:
                 mode_ct_tolerance,      
                 approved_ct_tolerance,   
                 rr_downtime_gap,         
-                run_interval_hours,      
-                _cache_version=cache_key_optimal
+                run_interval_hours
             )
 
             if results_df_optimal is None or results_df_optimal.empty:
@@ -526,7 +525,7 @@ if uploaded_file is not None:
                 # --- v6.48: FIX SYNTAX ERROR. Logic moved inside this block ---
                 # 2. If in Target View, calculate vs. Target as well
                 if benchmark_view == "Target Output":
-                    cache_key_target = f"{__version__}_{target_output_perc}"
+                    # --- v6.49: Removed _cache_version argument ---
                     results_df_target, all_shots_df_target = run_capacity_calculation(
                         df_raw,
                         toggle_filter,
@@ -535,8 +534,7 @@ if uploaded_file is not None:
                         mode_ct_tolerance,      
                         approved_ct_tolerance,   
                         rr_downtime_gap,         
-                        run_interval_hours,      
-                        _cache_version=cache_key_target
+                        run_interval_hours
                     )
                     
                     # --- v6.48: Add check for failed Target calc ---
@@ -567,8 +565,10 @@ if uploaded_file is not None:
                 
                 # These are always based on the 100% (Optimal) run
                 total_optimal = results_df_optimal['Optimal Output (parts)'].sum() 
-                # --- v6.48: Get target from optimal df for consistency ---
-                total_target = results_df_optimal['Target Output (parts)'].sum() 
+                
+                # --- v6.49: FIX total_target calculation ---
+                # Use the global target_output_perc which is set from the slider
+                total_target = total_optimal * (target_output_perc / 100.0)
                 
                 # Calculate corresponding time values
                 total_downtime_loss_sec = results_df['Capacity Loss (downtime) (sec)'].sum()
@@ -617,7 +617,8 @@ if uploaded_file is not None:
                     with c4:
                         # --- v6.42: Show Gap to Target if in Target view ---
                         if benchmark_view == "Target Output":
-                            gap_to_target = total_produced - total_target
+                            # --- v6.49: Use total_produced from the *correct* run ---
+                            gap_to_target = results_df['Actual Output (parts)'].sum() - total_target
                             st.metric("Gap to Target", f"{gap_to_target:+,.0f} parts")
                             gap_perc = (gap_to_target / total_target) if total_target > 0 else 0
                             st.caption(f"Gap: {gap_perc:+.1%}")
@@ -949,6 +950,7 @@ if uploaded_file is not None:
                         help="Adjust the max Y-axis to zoom in on the cluster. (Set to 1000 to see all outliers)."
                     )
 
+                    # --- v6.49: FIX KeyError by moving this check UP ---
                     if df_day_shots.empty:
                         st.warning(f"No shots found for {selected_date}.")
                     else:
@@ -1021,7 +1023,7 @@ if uploaded_file is not None:
                             width='stretch'
                         )
 
-            # --- v6.48: Removed the orphaned 'elif' block that caused the SyntaxError ---
+            # --- vOther.48: Removed the orphaned 'elif' block that caused the SyntaxError ---
 
 else:
     st.info("👈 Please upload a data file to begin.")
