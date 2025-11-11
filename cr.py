@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.35 (Removed waterfall chart)"
+__version__ = "6.37 (Target table shows Slow Loss + Fast Gain always)"
 # ==================================================================
 
 # ==================================================================
@@ -773,7 +773,12 @@ if uploaded_file is not None:
                 # Allocate the "Gap to Target" based on these ratios
                 # Note: 'Capacity Loss (vs Target) (parts)' is the *actual* gap, (e.g., 100 parts)
                 display_df['Allocated Loss (RR Downtime)'] = display_df['Capacity Loss (vs Target) (parts)'] * display_df['loss_downtime_ratio']
-                display_df['Allocated Loss (Cycle Time)'] = display_df['Capacity Loss (vs Target) (parts)'] * display_df['loss_cycletime_ratio']
+                
+                # --- MODIFICATION START (v6.36) ---
+                # Renamed 'Allocated Loss (Cycle Time)' to 'Allocated Loss (Slow Cycle)'
+                display_df['Allocated Loss (Slow Cycle)'] = display_df['Capacity Loss (vs Target) (parts)'] * display_df['loss_cycletime_ratio']
+                # --- MODIFICATION END ---
+                
                 # --- End v6.3 ---
 
                 _target_output_perc_array = np.full(len(display_df), target_output_perc / 100.0)
@@ -814,7 +819,7 @@ if uploaded_file is not None:
                         '<b>%{x|%Y-%m-%d}</b><br>' +
                         '<b>Net Cycle Time Loss: %{customdata[0]:,.0f}</b><br>' +
                         'Slow Cycle Loss: %{customdata[1]:,.0f}<br>' +
-                        'Fast Cycle Gain: -%{customdata[2]:,.0f}<br>' + 
+                        'Fast Cycle Gain: -%{customdata[2]:,.0f}<br>'D' + 
                         '<extra></extra>'
                 ))
                 
@@ -915,12 +920,20 @@ if uploaded_file is not None:
                         ratio_col='loss_downtime_ratio', 
                         axis=1
                     )
-                    report_table_target['Allocated Loss (Cycle Time)'] = display_df.apply(
+                    
+                    # --- MODIFICATION START (v6.36) ---
+                    report_table_target['Allocated Loss (Slow Cycle)'] = display_df.apply(
                         format_allocation, 
-                        col_name='Allocated Loss (Cycle Time)', 
+                        col_name='Allocated Loss (Slow Cycle)', 
                         ratio_col='loss_cycletime_ratio', 
                         axis=1
                     )
+                    # --- MODIFICATION END (v6.36) ---
+                    
+                    # --- MODIFICATION START (v6.37) ---
+                    # Add 'Gain (Fast Cycles)' column. This shows regardless of the gap.
+                    report_table_target['Gain (Fast Cycles)'] = display_df.apply(lambda r: f"{r['Capacity Gain (fast cycle time) (parts)']:,.2f} ({r['Capacity Gain (fast cycle time) (parts %)']:.1%})", axis=1)
+                    # --- MODIFICATION END (v6.37) ---
                     
                     st.dataframe(report_table_target.style.applymap(
                         lambda x: 'color: green' if str(x).startswith('+') else 'color: red' if str(x).startswith('-') else None,
