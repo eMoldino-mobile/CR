@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.56 (Reconciled True Loss and Net Loss)"
+__version__ = "6.57 (Restored Mode CT logic for 2-step downtime)"
 # ==================================================================
 
 # ==================================================================
@@ -51,8 +51,8 @@ def load_data(uploaded_file):
         return None
 
 # Caching is REMOVED from the core calculation function.
-# --- v6.55: Removed mode_ct_tolerance from function arguments ---
-def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_output_perc, approved_ct_tolerance, rr_downtime_gap, run_interval_hours):
+# --- v6.57: Restored mode_ct_tolerance ---
+def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_output_perc, mode_ct_tolerance, approved_ct_tolerance, rr_downtime_gap, run_interval_hours):
     """
     Core function to process the raw DataFrame and calculate all Capacity Risk fields
     using the new hybrid RR (downtime) + CR (inefficiency) logic.
@@ -205,7 +205,12 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         else:
             APPROVED_CT_day = 0
             
-        # --- v6.55: REMOVED Mode CT calculation ---
+        # --- v6.57: Restore Mode CT calculation ---
+        df_for_mode = df_rr[df_rr["Actual CT"] < 999.9]
+        if not df_for_mode.empty and not df_for_mode['Actual CT'].mode().empty:
+            mode_ct = df_for_mode['Actual CT'].mode().iloc[0]
+        else:
+            mode_ct = 0
             
         # --- v6.54: DEFINE REFERENCE CT ---
         target_perc_ratio = target_output_perc / 100.0
@@ -214,7 +219,10 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         else:
             REFERENCE_CT_day = APPROVED_CT_day / target_perc_ratio
 
-        # --- v6.55: Create the ONE "Safe" band based on the REFERENCE_CT ---
+        # --- v6.57: Create the two "Safe" bands ---
+        mode_lower_limit = mode_ct * (1 - mode_ct_tolerance)
+        mode_upper_limit = mode_ct * (1 + mode_ct_tolerance)
+        
         reference_lower_limit = REFERENCE_CT_day * (1 - approved_ct_tolerance)
         reference_upper_limit = REFERENCE_CT_day * (1 + approved_ct_tolerance)
 
@@ -224,11 +232,12 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         # --- v6.54: A time gap is now relative to REFERENCE_CT, not prev_actual_ct ---
         is_time_gap = (df_rr["time_diff_sec"] > (REFERENCE_CT_day + rr_downtime_gap)) & ~is_run_break
         
-        # --- v6.55: Check against REFERENCE band ONLY ---
+        # --- v6.57: Check against BOTH bands ---
+        in_mode_band = (df_rr["Actual CT"] >= mode_lower_limit) & (df_rr["Actual CT"] <= mode_upper_limit)
         in_reference_band = (df_rr["Actual CT"] >= reference_lower_limit) & (df_rr["Actual CT"] <= reference_upper_limit)
         
-        # Abnormal cycle = NOT in reference band
-        is_abnormal_cycle = ~in_reference_band & ~is_hard_stop_code
+        # Abnormal cycle = NOT in mode band AND NOT in reference band
+        is_abnormal_cycle = ~(in_mode_band | in_reference_band) & ~is_hard_stop_code
 
         # --- v6.27: Modify stop_flag to include run breaks ---
         df_rr["stop_flag"] = np.where(is_abnormal_cycle | is_time_gap | is_hard_stop_code | is_run_break, 1, 0)
@@ -393,15 +402,15 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
 # ==================================================================
 
 @st.cache_data
-# --- v6.55: Removed mode_ct_tolerance from function arguments ---
-def run_capacity_calculation(raw_data_df, toggle, cavities, target_perc, approved_tol, rr_gap, run_interval, _cache_version=None):
+# --- v6.57: Restored mode_ct_tolerance ---
+def run_capacity_calculation(raw_data_df, toggle, cavities, target_perc, mode_tol, approved_tol, rr_gap, run_interval, _cache_version=None):
     """Cached wrapper for the main calculation function."""
     return calculate_capacity_risk(
         raw_data_df,
         toggle,
         cavities,
         target_perc,
-        # mode_tol,      # Removed
+        mode_tol,      # Restored
         approved_tol,
         rr_gap,        
         run_interval   
@@ -429,11 +438,14 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("Run Rate Logic (for Downtime)")
 st.sidebar.info("These settings define 'Downtime'.")
 
-# --- v6.55: Removed Mode CT Tolerance slider ---
-# mode_ct_tolerance = st.sidebar.slider( ... )
+# --- v6.57: Restored Mode CT Tolerance slider ---
+mode_ct_tolerance = st.sidebar.slider(
+    "Mode CT Tolerance (%)", 0.01, 0.50, 0.25, 0.01, 
+    help="Tolerance band (±) around the **Actual Mode CT**."
+)
 
 approved_ct_tolerance = st.sidebar.slider(
-    "Benchmark Tolerance (%)", 0.01, 0.50, 0.25, 0.01, 
+    "Approved CT Tolerance (%)", 0.01, 0.50, 0.25, 0.01, 
     help="Tolerance band (±) around the **Benchmark CT** (Optimal or Target). This creates a 'Safe Harbor' for good shots."
 )
 rr_downtime_gap = st.sidebar.slider(
@@ -514,14 +526,14 @@ if uploaded_file is not None:
             # --- v6.54: Dual Calculation Logic ---
             
             # 1. Always calculate vs. Optimal (100%)
-            # --- v6.50: Add cache buster to fix KeyError ---
-            cache_key_optimal = f"{__version__}_{uploaded_file.name}_100.0"
+            # --- v6.57: Add mode_ct_tolerance to cache key ---
+            cache_key_optimal = f"{__version__}_{uploaded_file.name}_100.0_{mode_ct_tolerance}_{approved_ct_tolerance}"
             results_df_optimal, all_shots_df_optimal = run_capacity_calculation(
                 df_raw,
                 toggle_filter,
                 default_cavities,
                 100.0, # Force 100% for this run
-                # mode_ct_tolerance,  # Removed
+                mode_ct_tolerance,  # Restored
                 approved_ct_tolerance,   
                 rr_downtime_gap,         
                 run_interval_hours,      
@@ -533,14 +545,14 @@ if uploaded_file is not None:
             else:
                 # 2. If in Target View, calculate vs. Target as well
                 if benchmark_view == "Target Output":
-                    # --- v6.50: Add cache buster to fix KeyError ---
-                    cache_key_target = f"{__version__}_{uploaded_file.name}_{target_output_perc}"
+                    # --- v6.57: Add mode_ct_tolerance to cache key ---
+                    cache_key_target = f"{__version__}_{uploaded_file.name}_{target_output_perc}_{mode_ct_tolerance}_{approved_ct_tolerance}"
                     results_df_target, all_shots_df_target = run_capacity_calculation(
                         df_raw,
                         toggle_filter,
                         default_cavities,
                         target_output_perc, # Use user-selected target
-                        # mode_ct_tolerance,  # Removed
+                        mode_ct_tolerance,  # Restored
                         approved_ct_tolerance,   
                         rr_downtime_gap,         
                         run_interval_hours,      
