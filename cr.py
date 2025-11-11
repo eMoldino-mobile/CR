@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.35 (Removed waterfall chart)"
+__version__ = "6.36 (Simple Waterfall)"
 # ==================================================================
 
 # ==================================================================
@@ -629,100 +629,87 @@ if uploaded_file is not None:
 
                 st.divider()
 
-                # --- 2. WATERFALL CHART (REMOVED) ---
-                # --- v6.35: Removing this section to prevent crashes. ---
-                # st.header("Production Output Overview")
-                
-                # # --- v6.26: Calculate the "Unaccounted" balancing amount ---
-                # calculated_output = total_optimal - total_downtime_loss_parts - total_net_cycle_loss_parts
-                # unaccounted_gain_loss = total_produced - calculated_output
-                
-                # # Set up the data for the true waterfall
-                # x_data = [
-                #     "<b>Optimal Output</b>", 
-                #     "<b>Run Rate Downtime (Stops)</b>", 
-                #     "<b>Capacity Loss (cycle time)</b>"
-                # ]
-                # y_data = [
-                #     total_optimal, 
-                #     -total_downtime_loss_parts, 
-                #     -total_net_cycle_loss_parts
-                # ]
-                # text_data = [
-                #     f"{total_optimal:,.0f}",
-                #     f"{-total_downtime_loss_parts:,.0f}",
-                #     f"{-total_net_cycle_loss_parts:,.0f}"
-                # ]
-                # measure_data = ["relative", "relative", "relative"]
+                # --- v6.36: ADDING SIMPLE WATERFALL CHART BACK ---
+                st.header("Production Output Overview")
 
-                # # Add the unaccounted bar *only if it's non-zero*
-                # if abs(unaccounted_gain_loss) > 0.1: # Use a small tolerance
-                #     x_data.append("<b>Unaccounted Gain/Loss</b>")
-                #     y_data.append(unaccounted_gain_loss)
-                #     text_data.append(f"{unaccounted_gain_loss:+,.0f}")
-                #     measure_data.append("relative")
-
-                # # Add the final "Actual Output" total
-                # x_data.append("<b>Actual Output</b>")
-                # y_data.append(total_produced)
-                # text_data.append(f"{total_produced:,.0f}")
-                # measure_data.append("total")
-                
-                # # --- v6.28: Prepare color list *before* creating chart ---
-                # color_list = ["darkblue"] # First bar is Optimal
-                # # Loop through all intermediate steps (losses and gains)
-                # for y in y_data[1:-1]:
-                #     color_list.append("#89cff0" if y > 0 else "#ff6961") # Light blue for gain, red for loss
-                # color_list.append("green") # Last bar is Actual Output
-
-                # # --- v6.34: FINAL FIX. Create the chart *first*... ---
-                # fig_waterfall = go.Figure(go.Waterfall(
-                #     name = "Segments",
-                #     orientation = "v",
-                #     measure = measure_data,
-                #     x = x_data,
-                #     text = text_data,
-                #     y = y_data,
-                #     textposition = "outside",
-                #     connector = {"line":{"color":"rgb(63, 63, 63)"}},
+                # This logic creates a simple chart: START -> LOSS/GAIN -> END
+                if benchmark_view == "Optimal Output":
+                    start_val = total_optimal
+                    start_label = "<b>Optimal Output</b>"
+                    start_color = "darkblue"
                     
-                #     # --- Set standard colors, which we will override ---
-                #     increasing = {"marker":{"color":"#89cff0"}}, # Light blue for gain
-                #     decreasing = {"marker":{"color":"#ff6961"}},  # Red for loss
-                #     totals = {"marker":{"color":"green"}}          # Green for total
-                # ))
-                
-                # # --- v6.34: ...THEN update the marker colors *after* creation ---
-                # # This is the robust way to set specific colors
-                # fig_waterfall.data[0].marker.color = color_list
+                    loss_val = total_optimal - total_produced
+                    loss_label = "<b>Total Capacity Loss (True)</b>"
+                    
+                    end_val = total_produced
+                    end_label = "<b>Actual Output</b>"
 
-                # fig_waterfall.update_layout(
-                #     title="Capacity Breakdown (All Time)",
-                #     yaxis_title="Parts",
-                #     showlegend=True # <-- v6.20: Enable legend
-                # )
-                
-                # # Add Target Line as a scatter trace
-                # fig_waterfall.add_trace(go.Scatter(
-                #     x=fig_waterfall.data[0].x, # Use x-axis from waterfall
-                #     y=[total_target] * len(fig_waterfall.data[0].x), # Draw line
-                #     name='Target Output',
-                #     mode='lines',
-                #     line=dict(color='deepskyblue', dash='dash')
-                # ))
-                
-                # # --- v6.32: Fix NameError fig_wrapper -> fig_waterfall ---
-                # fig_waterfall.add_annotation(
-                #     x=len(x_data) - 0.5, # Anchor to the right
-                #     y=total_target, 
-                #     text="Target Output", 
-                #     showarrow=True, arrowhead=1, ax=20, ay=-20
-                # )
-                
-                # st.plotly_chart(fig_waterfall, width='stretch')
+                    x_data = [start_label, loss_label, end_label]
+                    y_data = [start_val, -loss_val, end_val]
+                    text_data = [f"{start_val:,.0f}", f"{-loss_val:,.0f}", f"{end_val:,.0f}"]
+                    measure_data = ["relative", "relative", "total"]
+                    color_list = [start_color, "#ff6961", "green"] # Blue -> Red -> Green
 
+                else: # Target Output View
+                    start_val = total_target
+                    start_label = "<b>Target Output</b>"
+                    start_color = "deepskyblue"
 
-                # st.divider() # <-- Also commenting out this divider
+                    # This "gap" can be positive (a loss) or negative (a gain)
+                    gap_val = total_target - total_produced
+                    
+                    end_val = total_produced
+                    end_label = "<b>Actual Output</b>"
+
+                    x_data = [start_label, "<b>Gap to Target</b>", end_label]
+                    y_data = [start_val, -gap_val, end_val]
+                    text_data = [f"{start_val:,.0f}", f"{-gap_val:+,.0f}", f"{end_val:,.0f}"]
+                    measure_data = ["relative", "relative", "total"]
+                    
+                    # Set color: red if it's a loss (gap_val > 0), blue if it's a gain
+                    gap_color = "#ff6961" if gap_val > 0 else "#89cff0"
+                    color_list = [start_color, gap_color, "green"]
+
+                # --- Create the chart ---
+                fig_waterfall = go.Figure(go.Waterfall(
+                    name = "Segments",
+                    orientation = "v",
+                    measure = measure_data,
+                    x = x_data,
+                    text = text_data,
+                    y = y_data,
+                    textposition = "outside",
+                    connector = {"line":{"color":"rgb(63, 63, 63)"}},
+                    
+                    # Set standard colors, which we will override
+                    increasing = {"marker":{"color":"#89cff0"}}, # Light blue for gain
+                    decreasing = {"marker":{"color":"#ff6961"}},  # Red for loss
+                    totals = {"marker":{"color":"green"}}          # Green for total
+                ))
+                
+                # --- Set the custom colors (this is the robust method) ---
+                fig_waterfall.data[0].marker.color = color_list
+
+                fig_waterfall.update_layout(
+                    title="Capacity Breakdown (All Time)",
+                    yaxis_title="Parts",
+                    showlegend=False # Legend is not needed for this simple chart
+                )
+                
+                # If we are in Optimal view, we still want to see the Target line
+                if benchmark_view == "Optimal Output":
+                    fig_waterfall.add_trace(go.Scatter(
+                        x=fig_waterfall.data[0].x, # Use x-axis from waterfall
+                        y=[total_target] * len(fig_waterfall.data[0].x), # Draw line
+                        name='Target Output',
+                        mode='lines',
+                        line=dict(color='deepskyblue', dash='dash'),
+                        hoverinfo="none" # Hide hover for this line
+                    ))
+                
+                st.plotly_chart(fig_waterfall, width='stretch')
+
+                st.divider()
 
                 # --- 3. AGGREGATED REPORT (Chart & Table) ---
 
@@ -997,7 +984,7 @@ if uploaded_file is not None:
                         fig_ct.add_shape(
                             type='line',
                             x0=df_day_shots['SHOT TIME'].min(), x1=df_day_shots['SHOT TIME'].max(),
-                            y0=approved_ct_for_day, y1=approved_ct_for_day,
+                            y0=approved_ct_for_day, y1=approved_T_day,
                             line=dict(color='green', dash='dash'), name=f'Approved CT ({approved_ct_for_day}s)'
                         )
                         fig_ct.add_annotation(
