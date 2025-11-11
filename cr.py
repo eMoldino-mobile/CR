@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.57 (Restored Mode CT logic for 2-step downtime)"
+__version__ = "6.58 (Fixed is_time_gap logic)"
 # ==================================================================
 
 # ==================================================================
@@ -229,8 +229,9 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         # --- 7b. RR Stop Detection ---
         is_hard_stop_code = df_rr["Actual CT"] >= 999.9
         
-        # --- v6.54: A time gap is now relative to REFERENCE_CT, not prev_actual_ct ---
-        is_time_gap = (df_rr["time_diff_sec"] > (REFERENCE_CT_day + rr_downtime_gap)) & ~is_run_break
+        # --- v6.58: Restore original logic using prev_actual_ct ---
+        prev_actual_ct = df_rr["Actual CT"].shift(1).fillna(0)
+        is_time_gap = (df_rr["time_diff_sec"] > (prev_actual_ct + rr_downtime_gap)) & ~is_run_break
         
         # --- v6.57: Check against BOTH bands ---
         in_mode_band = (df_rr["Actual CT"] >= mode_lower_limit) & (df_rr["Actual CT"] <= mode_upper_limit)
@@ -1025,7 +1026,7 @@ if uploaded_file is not None:
                         fig_ct.add_shape(
                             type='line',
                             x0=df_day_shots['SHOT TIME'].min(), x1=df_day_shots['SHOT TIME'].max(),
-                            y0=reference_ct_for_day, y1=reference_ct_for_day,
+                            y0=reference_ct_for_day, y1=reference_static_for_day,
                             line=dict(color='green', dash='dash'), name=f'{reference_ct_label} ({reference_ct_for_day:.2f}s)'
                         )
 
