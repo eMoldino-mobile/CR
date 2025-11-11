@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.26 (True Waterfall Fix)"
+__version__ = "6.27 (Run Interval Threshold)"
 # ==================================================================
 
 # ==================================================================
@@ -51,7 +51,7 @@ def load_data(uploaded_file):
         return None
 
 # Caching is REMOVED from the core calculation function.
-def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_output_perc, mode_ct_tolerance, approved_ct_tolerance, rr_downtime_gap):
+def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_output_perc, mode_ct_tolerance, approved_ct_tolerance, rr_downtime_gap, run_interval_hours):
     """
     Core function to process the raw DataFrame and calculate all Capacity Risk fields
     using the new hybrid RR (downtime) + CR (inefficiency) logic.
@@ -176,13 +176,23 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         last_shot_ct_series = daily_df.loc[daily_df['SHOT TIME'] == last_shot_time, 'Actual CT']
         last_shot_ct = last_shot_ct_series.iloc[0] if not last_shot_ct_series.empty else 0
         time_span_sec = (last_shot_time - first_shot_time).total_seconds()
-        results['Filtered Run Time (sec)'] = time_span_sec + last_shot_ct
+        # This is the 'wall clock' time. It will be adjusted for run breaks.
+        base_run_time_sec = time_span_sec + last_shot_ct
 
         # --- 7. EMBED RR LOGIC (Pass 1: Find Downtime) ---
         df_rr = daily_df.copy().sort_values("SHOT TIME").reset_index(drop=True)
 
         df_rr["time_diff_sec"] = df_rr["SHOT TIME"].diff().dt.total_seconds()
         df_rr.loc[0, "time_diff_sec"] = df_rr.loc[0, "Actual CT"] 
+
+        # --- v6.27: Identify Run Breaks ---
+        run_break_threshold_sec = run_interval_hours * 3600
+        is_run_break = df_rr["time_diff_sec"] > run_break_threshold_sec
+        run_break_time_sec = df_rr.loc[is_run_break, 'time_diff_sec'].sum()
+
+        # --- MODIFY Filtered Run Time (sec) ---
+        results['Filtered Run Time (sec)'] = base_run_time_sec - run_break_time_sec
+
 
         # --- 7a. "DUAL TOLERANCE" / "SAFE HARBOR" LOGIC ---
         
@@ -209,7 +219,9 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         # --- 7b. RR Stop Detection ---
         is_hard_stop_code = df_rr["Actual CT"] >= 999.9
         prev_actual_ct = df_rr["Actual CT"].shift(1).fillna(0)
-        is_time_gap = df_rr["time_diff_sec"] > (prev_actual_ct + rr_downtime_gap)
+        
+        # --- v6.27: Modify is_time_gap to exclude run breaks ---
+        is_time_gap = (df_rr["time_diff_sec"] > (prev_actual_ct + rr_downtime_gap)) & ~is_run_break
         
         # Check if shot is inside EITHER band
         in_mode_band = (df_rr["Actual CT"] >= mode_lower_limit) & (df_rr["Actual CT"] <= mode_upper_limit)
@@ -218,13 +230,16 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         # Abnormal cycle = NOT in mode band AND NOT in approved band
         is_abnormal_cycle = ~(in_mode_band | in_approved_band) & ~is_hard_stop_code
 
-        df_rr["stop_flag"] = np.where(is_abnormal_cycle | is_time_gap | is_hard_stop_code, 1, 0)
+        # --- v6.27: Modify stop_flag to include run breaks ---
+        df_rr["stop_flag"] = np.where(is_abnormal_cycle | is_time_gap | is_hard_stop_code | is_run_break, 1, 0)
         if not df_rr.empty:
             df_rr.loc[0, "stop_flag"] = 0 
 
         df_rr['adj_ct_sec'] = df_rr['Actual CT']
         df_rr.loc[is_time_gap, 'adj_ct_sec'] = df_rr['time_diff_sec']
         df_rr.loc[is_hard_stop_code, 'adj_ct_sec'] = 0 
+        # --- v6.27: Add exclusion for run breaks (so they aren't counted as downtime) ---
+        df_rr.loc[is_run_break, 'adj_ct_sec'] = 0 
 
         # --- 8. "THE GREAT SEPARATION" ---
         df_production = df_rr[df_rr['stop_flag'] == 0].copy() # For Segments 1 & 2
@@ -291,6 +306,8 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         df_production['Shot Type'] = np.select(conditions, choices, default='N/A')
         
         df_rr['Shot Type'] = df_production['Shot Type'] 
+        # --- v6.27: Add new Shot Type for run breaks ---
+        df_rr.loc[is_run_break, 'Shot Type'] = 'Run Break (Excluded)'
         df_rr['Shot Type'].fillna('RR Downtime (Stop)', inplace=True)
         
         df_rr['Approved CT'] = APPROVED_CT_day
@@ -340,7 +357,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
 # ==================================================================
 
 @st.cache_data
-def run_capacity_calculation(raw_data_df, toggle, cavities, target_perc, mode_tol, approved_tol, rr_gap, _cache_version=None):
+def run_capacity_calculation(raw_data_df, toggle, cavities, target_perc, mode_tol, approved_tol, rr_gap, run_interval, _cache_version=None):
     """Cached wrapper for the main calculation function."""
     return calculate_capacity_risk(
         raw_data_df,
@@ -349,7 +366,8 @@ def run_capacity_calculation(raw_data_df, toggle, cavities, target_perc, mode_to
         target_perc,
         mode_tol,      # Pass new arg
         approved_tol,  # Pass new arg
-        rr_gap         # Pass new arg
+        rr_gap,        # Pass new arg
+        run_interval   # Pass new arg
     )
 
 
@@ -386,6 +404,12 @@ approved_ct_tolerance = st.sidebar.slider(
 rr_downtime_gap = st.sidebar.slider(
     "RR Downtime Gap (sec)", 0.0, 10.0, 2.0, 0.5, 
     help="Minimum idle time between shots to be considered a stop."
+)
+
+# --- v6.27: Add Run Interval Threshold ---
+run_interval_hours = st.sidebar.slider(
+    "Run Interval Threshold (hours)", 1.0, 24.0, 8.0, 0.5,
+    help="Gaps between shots *longer* than this will be excluded from all calculations (e.g., weekends)."
 )
 
 st.sidebar.markdown("---")
@@ -459,6 +483,7 @@ if uploaded_file is not None:
                 mode_ct_tolerance,       # Pass new arg
                 approved_ct_tolerance,   # Pass new arg
                 rr_downtime_gap,         # Pass new arg
+                run_interval_hours,      # Pass new arg
                 _cache_version=__version__ # <-- CACHE BUSTER
             )
 
@@ -530,6 +555,7 @@ if uploaded_file is not None:
 
                 # --- Box 2: Capacity Loss Breakdown ---
                 st.subheader("Capacity Loss Breakdown (from Time Calculations)")
+                st.info("These values are calculated based on the *time-based* logic (Downtime + Slow/Fast Cycles).")
                 with st.container(border=True):
                     c1, c2, c3, c4 = st.columns(4)
 
@@ -931,7 +957,15 @@ if uploaded_file is not None:
                         approved_ct_for_day = df_day_shots['Approved CT'].iloc[0]
 
                         fig_ct = go.Figure()
-                        color_map = {'Slow': '#ff6961', 'Fast': '#ffb347', 'On Target': '#3498DB', 'RR Downtime (Stop)': '#808080'}
+                        # --- v6.27: Add new color for run breaks ---
+                        color_map = {
+                            'Slow': '#ff6961', 
+                            'Fast': '#ffb347', 
+                            'On Target': '#3498DB', 
+                            'RR Downtime (Stop)': '#808080',
+                            'Run Break (Excluded)': '#d3d3d3' # Light grey
+                        }
+
 
                         for shot_type, color in color_map.items():
                             df_subset = df_day_shots[df_day_shots['Shot Type'] == shot_type]
