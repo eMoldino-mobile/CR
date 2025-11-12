@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.80 (Fixed Time Discrepancy & Labels)"
+__version__ = "6.82 (Fixed inconsistent color in Summary)"
 # ==================================================================
 
 # ==================================================================
@@ -575,18 +575,18 @@ if uploaded_file is not None:
                         st.caption(f"Actual Production Time: {total_actual_ct_dhm}")
                         
                     with c4:
-                        # --- v6.42: Show Gap to Target if in Target view ---
+                        # --- v6.81: Always show Total Capacity Loss (True) ---
+                        st.markdown(f"**Total Capacity Loss (True)**")
+                        # --- v6.82: FIX: Add red color to match Optimal view ---
+                        st.markdown(f"<h3><span style='color:red;'>{total_true_net_loss_parts:,.0f} parts</span></h3>", unsafe_allow_html=True) 
+                        st.caption(f"Total Time Lost: {format_seconds_to_dhm(total_calculated_net_loss_sec)}")
+
+                        # --- v6.81: Add Gap to Target as a caption ---
                         if benchmark_view == "Target Output":
                             gap_to_target = total_produced - total_target
-                            # --- v6.76: Add color-coding ---
-                            st.metric("Gap to Target", f"{gap_to_target:+,.0f} parts", delta=f"{gap_to_target:,.0f} parts", delta_color="normal")
                             gap_perc = (gap_to_target / total_target) if total_target > 0 else 0
-                            st.caption(f"Gap: {gap_perc:+.1%}")
-                        else:
-                            # --- v6.80: FIX: Use reconciled time for consistency ---
-                            st.markdown(f"**Total Capacity Loss (True)**")
-                            st.markdown(f"<h3><span style='color:red;'>{total_true_net_loss_parts:,.0f} parts</span></h3>", unsafe_allow_html=True)
-                            st.caption(f"Total Time Lost: {format_seconds_to_dhm(total_calculated_net_loss_sec)}") # <-- USE RECONCILED TIME
+                            st.caption(f"Gap to Target: {gap_to_target:+,.0f} parts ({gap_perc:+.1%})")
+
 
                 # --- v6.79: New Balanced Chart + Styled Dataframe Layout ---
                 st.subheader(f"Capacity Loss Breakdown (vs {benchmark_title})")
