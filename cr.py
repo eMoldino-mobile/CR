@@ -6,11 +6,11 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.71 (Single Stacked Bar Chart Dashboard)"
+__version__ = "6.72 (Compact Horizontal Card Dashboard)"
 # ==================================================================
 
 # ==================================================================
-#                         HELPER FUNCTIONS
+#          T               HELPER FUNCTIONS
 # ==================================================================
 
 def format_seconds_to_dhm(total_seconds):
@@ -587,111 +587,37 @@ if uploaded_file is not None:
                             st.metric("Total Capacity Loss (True)", f"{total_true_net_loss_parts:,.0f} parts")
                             st.caption(f"Total Time Lost: {format_seconds_to_dhm(total_true_net_loss_sec)}")
 
-                # --- v6.71: New Visual Dashboard Layout with Single Stacked Bar ---
+                # --- v6.72: New Compact Horizontal Card Layout ---
                 st.subheader(f"Capacity Loss Breakdown (vs {benchmark_title})")
                 st.info(f"These values are calculated based on the *time-based* logic (Downtime + Slow/Fast Cycles) using **{benchmark_title}** as the benchmark.")
                 
-                # --- Create two columns: 2/3 for charts, 1/3 for metrics ---
-                c1, c2 = st.columns([2, 1])
-
+                st.markdown("<h6>Gross Loss & Gain Categories</h6>", unsafe_allow_html=True)
+                c1, c2, c3 = st.columns(3)
                 with c1:
-                    st.markdown("<h6 style='text-align: center;'>Overall Performance Breakdown</h6>", unsafe_allow_html=True)
-                    
-                    # --- Single Stacked Bar Chart ---
-                    # Use max(0,...) to prevent charting negative numbers
-                    y_data = [
-                        max(0, total_produced), 
-                        max(0, total_downtime_loss_parts), 
-                        max(0, total_net_cycle_loss_parts)
-                    ]
-                    labels = [
-                        'Actual Output', 
-                        'Loss (RR Downtime)', 
-                        'Net Loss (Cycle Time)'
-                    ]
-                    colors = ['#2ca02c', '#ff6961', '#ffb347'] # green, red, orange
-                    
-                    fig_stacked_bar = go.Figure()
-
-                    fig_stacked_bar.add_trace(go.Bar(
-                        x=['Performance'],
-                        y=[y_data[0]],
-                        name=labels[0],
-                        marker_color=colors[0],
-                        text=f"{y_data[0]:,.0f}",
-                        textposition='auto'
-                    ))
-                    fig_stacked_bar.add_trace(go.Bar(
-                        x=['Performance'],
-                        y=[y_data[1]],
-                        name=labels[1],
-                        marker_color=colors[1],
-                        text=f"{y_data[1]:,.0f}",
-                        textposition='auto'
-                    ))
-                    fig_stacked_bar.add_trace(go.Bar(
-                        x=['Performance'],
-                        y=[y_data[2]],
-                        name=labels[2],
-                        marker_color=colors[2],
-                        text=f"{y_data[2]:,.0f}",
-                        textposition='auto'
-                    ))
-                    
-                    fig_stacked_bar.update_layout(
-                        barmode='stack',
-                        showlegend=True,
-                        legend_title_text='Metric',
-                        margin=dict(t=0, b=0, l=0, r=0),
-                        height=400,
-                        yaxis_title='Parts',
-                        xaxis_ticks='',
-                        xaxis_showticklabels=False
-                    )
-                    
-                    # Add a line for Optimal Output
-                    fig_stacked_bar.add_shape(
-                        type='line',
-                        x0=-0.5, x1=0.5,
-                        y0=total_optimal_100, y1=total_optimal_100,
-                        line=dict(color='darkblue', dash='dot', width=3)
-                    )
-                    fig_stacked_bar.add_annotation(
-                        x=0.5,
-                        y=total_optimal_100,
-                        text=f"Optimal: {total_optimal_100:,.0f}",
-                        showarrow=True,
-                        arrowhead=1,
-                        ax=40,
-                        ay=-20
-                    )
-                    
-                    st.plotly_chart(fig_stacked_bar, use_container_width=True, config={'displayModeBar': False})
-                    
-
-                with c2:
-                    # --- Stack all the metrics vertically in the second column ---
                     with st.container(border=True):
                         st.metric("Loss (RR Downtime)", f"{total_downtime_loss_parts:,.0f} parts")
                         st.caption(f"Time Lost: {format_seconds_to_dhm(total_downtime_loss_sec)}")
-                    
+                with c2:
                     with st.container(border=True):
                         st.metric("Loss (Slow Cycles)", f"{total_slow_loss_parts:,.0f} parts")
                         st.caption(f"Time Lost: {format_seconds_to_dhm(total_slow_loss_sec)}")
-
+                with c3:
                     with st.container(border=True):
                         st.metric("Gain (Fast Cycles)", f"{total_fast_gain_parts:,.0f} parts")
                         st.caption(f"Time Gained: {format_seconds_to_dhm(total_fast_gain_sec)}")
-                    
+                
+                st.markdown("<h6>Net Loss Results</h6>", unsafe_allow_html=True)
+                c1, c2 = st.columns(2)
+                with c1:
                     with st.container(border=True):
                         st.metric("Net Loss (Cycle Time)", f"{total_net_cycle_loss_parts:,.0f} parts")
                         st.caption(f"Net Time Lost: {format_seconds_to_dhm(total_net_cycle_loss_sec)}")
-                
+                with c2:
                     with st.container(border=True):
                         st.metric("Total Net Loss", f"{total_calculated_net_loss_parts:,.0f} parts")
                         st.caption(f"Net Time Lost: {format_seconds_to_dhm(total_calculated_net_loss_sec)}")
 
-                # --- End v6.71 Layout ---
+                # --- End v6.72 Layout ---
 
 
                 # --- Collapsible Daily Summary Table ---
