@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.64 (Restored Gap Allocation logic; single calculation)"
+__version__ = "6.65 (Fixed SyntaxError in chart)"
 # ==================================================================
 
 # ==================================================================
@@ -375,6 +375,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
 
 @st.cache_data
 # --- v6.64: Renamed target_perc to target_perc_slider ---
+# --- v6.61: Removed approved_tol ---
 def run_capacity_calculation(raw_data_df, toggle, cavities, target_perc_slider, mode_tol, rr_gap, run_interval, _cache_version=None):
     """Cached wrapper for the main calculation function."""
     return calculate_capacity_risk(
@@ -778,9 +779,10 @@ if uploaded_file is not None:
                         chart_df['Capacity Loss (slow cycle time) (parts)'],
                         chart_df['Capacity Gain (fast cycle time) (parts)']
                     ), axis=-1),
+                    # --- v6.65: Fix SyntaxError ---
                     hovertemplate=
                         '<b>%{x|%Y-%m-%d}</b><br>' +
-                        '<b>Net Cycle Time Loss: %{customdata[0]:,.0f}</b><br>'
+                        '<b>Net Cycle Time Loss: %{customdata[0]:,.0f}</b><br>' +
                         'Slow Cycle Loss: %{customdata[1]:,.0f}<br>' +
                         'Fast Cycle Gain: -%{customdata[2]:,.0f}<br>' + 
                         '<extra></extra>'
