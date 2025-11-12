@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.61 (Simplified downtime logic to Mode CT only)"
+__version__ = "6.62 (Added Mode CT band to shot chart)"
 # ==================================================================
 
 # ==================================================================
@@ -219,16 +219,14 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         else:
             REFERENCE_CT_day = APPROVED_CT_day / target_perc_ratio
 
-        # --- v6.61: Create ONLY the Mode band ---
+        # --- v6.61: Create the *only* "Safe" band (Mode CT) ---
         mode_lower_limit = mode_ct * (1 - mode_ct_tolerance)
         mode_upper_limit = mode_ct * (1 + mode_ct_tolerance)
-        
-        # --- v6.61: REMOVED Reference band ---
 
         # --- 7b. RR Stop Detection ---
         is_hard_stop_code = df_rr["Actual CT"] >= 999.9
         
-        # --- v6.58: Restore original logic using prev_actual_ct ---
+        # --- v6.58: Restore correct time gap logic ---
         prev_actual_ct = df_rr["Actual CT"].shift(1).fillna(0)
         is_time_gap = (df_rr["time_diff_sec"] > (prev_actual_ct + rr_downtime_gap)) & ~is_run_break
         
@@ -240,8 +238,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
 
         # --- v6.27: Modify stop_flag to include run breaks ---
         df_rr["stop_flag"] = np.where(is_abnormal_cycle | is_time_gap | is_hard_stop_code | is_run_break, 1, 0)
-        
-        # --- v6.60: REMOVED first shot logic ---
+        # --- v6.60: REMOVED logic that forced first shot to be a production shot ---
 
         df_rr['adj_ct_sec'] = df_rr['Actual CT']
         df_rr.loc[is_time_gap, 'adj_ct_sec'] = df_rr['time_diff_sec']
@@ -263,14 +260,12 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         
         # --- 10. Calculate The 4 Segments (in Parts) ---
 
-        # SEGMENT 4: Optimal Production (Theoretical Max)
-        # --- This MUST always use APPROVED_CT_day ---
+        # SEGMENT 4: Optimal Production (Benchmark)
         # --- v6.56: Use REFERENCE_CT_day for this calculation ---
         results['Optimal Output (parts)'] = (results['Filtered Run Time (sec)'] / REFERENCE_CT_day) * max_cavities
 
         # SEGMENT 3: RR Downtime Loss
         results['Capacity Loss (downtime) (sec)'] = df_downtime['adj_ct_sec'].sum()
-        # --- v6.54: Use REFERENCE_CT_day ---
         # --- v6.56: THIS CALCULATION IS NOW REPLACED ---
         # results['Capacity Loss (downtime) (parts)'] = (results['Capacity Loss (downtime) (sec)'] / REFERENCE_CT_day) * max_cavities
 
@@ -347,6 +342,9 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         df_rr['Approved CT'] = APPROVED_CT_day
         # --- v6.54: Add REFERENCE_CT_day to the shot df for analysis ---
         df_rr['Reference CT'] = REFERENCE_CT_day
+        # --- v6.62: Add Mode CT band to the shot df for analysis ---
+        df_rr['Mode CT Lower'] = mode_lower_limit
+        df_rr['Mode CT Upper'] = mode_upper_limit
 
 
         if not df_rr.empty:
@@ -401,7 +399,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
 # ==================================================================
 
 @st.cache_data
-# --- v6.61: Removed approved_tol ---
+# --- v6.61: Removed approved_ct_tolerance ---
 def run_capacity_calculation(raw_data_df, toggle, cavities, target_perc, mode_tol, rr_gap, run_interval, _cache_version=None):
     """Cached wrapper for the main calculation function."""
     return calculate_capacity_risk(
@@ -409,13 +407,13 @@ def run_capacity_calculation(raw_data_df, toggle, cavities, target_perc, mode_to
         toggle,
         cavities,
         target_perc,
-        mode_tol,      # Only tolerance
+        mode_tol,      # Restored
         rr_gap,        
         run_interval   
     )
 
 # ==================================================================
-#             M          STREAMLIT APP LAYOUT
+#                        STREAMLIT APP LAYOUT
 # ==================================================================
 
 # --- Page Config ---
@@ -436,13 +434,13 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("Run Rate Logic (for Downtime)")
 st.sidebar.info("These settings define 'Downtime'.")
 
-# --- v6.61: Simplified to Mode CT Tolerance only ---
+# --- v6.57: Restored Mode CT Tolerance slider ---
 mode_ct_tolerance = st.sidebar.slider(
     "Mode CT Tolerance (%)", 0.01, 0.50, 0.25, 0.01, 
-    help="Tolerance band (±) around the **Actual Mode CT**. Shots outside this band are flagged as 'Abnormal' (Downtime)."
+    help="Tolerance band (±) around the **Actual Mode CT**. Shots outside this band are flagged as 'Abnormal Cycle' (Downtime)."
 )
 
-# --- v6.61: REMOVED Approved CT Tolerance slider ---
+# --- v6.61: Removed Approved CT Tolerance slider ---
 
 rr_downtime_gap = st.sidebar.slider(
     "RR Downtime Gap (sec)", 0.0, 10.0, 2.0, 0.5, 
@@ -522,14 +520,14 @@ if uploaded_file is not None:
             # --- v6.54: Dual Calculation Logic ---
             
             # 1. Always calculate vs. Optimal (100%)
-            # --- v6.61: Update cache key ---
-            cache_key_optimal = f"{__version__}_{uploaded_file.name}_100.0_{mode_ct_tolerance}"
+            # --- v6.61: Removed approved_ct_tolerance from cache key ---
+            cache_key_optimal = f"{__version__}_{uploaded_file.name}_100.0_{mode_ct_tolerance}_{rr_downtime_gap}"
             results_df_optimal, all_shots_df_optimal = run_capacity_calculation(
                 df_raw,
                 toggle_filter,
                 default_cavities,
                 100.0, # Force 100% for this run
-                mode_ct_tolerance,
+                mode_ct_tolerance,  # Restored
                 rr_downtime_gap,         
                 run_interval_hours,      
                 _cache_version=cache_key_optimal
@@ -540,14 +538,14 @@ if uploaded_file is not None:
             else:
                 # 2. If in Target View, calculate vs. Target as well
                 if benchmark_view == "Target Output":
-                    # --- v6.61: Update cache key ---
-                    cache_key_target = f"{__version__}_{uploaded_file.name}_{target_output_perc}_{mode_ct_tolerance}"
+                    # --- v6.61: Removed approved_ct_tolerance from cache key ---
+                    cache_key_target = f"{__version__}_{uploaded_file.name}_{target_output_perc}_{mode_ct_tolerance}_{rr_downtime_gap}"
                     results_df_target, all_shots_df_target = run_capacity_calculation(
                         df_raw,
                         toggle_filter,
                         default_cavities,
                         target_output_perc, # Use user-selected target
-                        mode_ct_tolerance,
+                        mode_ct_tolerance,  # Restored
                         rr_downtime_gap,         
                         run_interval_hours,      
                         _cache_version=cache_key_target
@@ -993,6 +991,9 @@ if uploaded_file is not None:
                         # --- v6.54: Use Reference CT for chart ---
                         reference_ct_for_day = df_day_shots['Reference CT'].iloc[0] 
                         reference_ct_label = "Approved CT" if benchmark_view == "Optimal Output" else "Target CT"
+                        # --- v6.62: Get Mode CT limits ---
+                        mode_ct_lower_for_day = df_day_shots['Mode CT Lower'].iloc[0]
+                        mode_ct_upper_for_day = df_day_shots['Mode CT Upper'].iloc[0]
 
                         fig_ct = go.Figure()
                         # --- v6.27: Add new color for run breaks ---
@@ -1015,8 +1016,15 @@ if uploaded_file is not None:
                                     hovertemplate='<b>%{x|%H:%M:%S}</b><br>Shot Type: %{fullData.name}<br>Actual CT: %{y:.2f}s<extra></extra>'
                                 )
                         
+                        # --- v6.62: Add shaded Mode CT band ---
+                        fig_ct.add_hrect(
+                            y0=mode_ct_lower_for_day, y1=mode_ct_upper_for_day,
+                            fillcolor="grey", opacity=0.20,
+                            line_width=0,
+                            name="Mode CT Band"
+                        )
+                        
                         # --- v6.54: Use Reference CT for line ---
-                        # --- v6.59: Fix NameError ---
                         fig_ct.add_shape(
                             type='line',
                             x0=df_day_shots['SHOT TIME'].min(), x1=df_day_shots['SHOT TIME'].max(),
@@ -1045,11 +1053,14 @@ if uploaded_file is not None:
                         st.dataframe(
                             df_day_shots[[
                                 'SHOT TIME', 'Actual CT', 'Approved CT',
-                                'Working Cavities', 'Shot Type', 'stop_flag', 'Reference CT'
+                                'Working Cavities', 'Shot Type', 'stop_flag', 
+                                'Reference CT', 'Mode CT Lower', 'Mode CT Upper' # --- v6.62: Added columns ---
                             ]].style.format({
                                 'Actual CT': '{:.2f}',
                                 'Approved CT': '{:.1f}',
                                 'Reference CT': '{:.2f}',
+                                'Mode CT Lower': '{:.2f}', # --- v6.62: Added format ---
+                                'Mode CT Upper': '{:.2f}', # --- v6.62: Added format ---
                                 'SHOT TIME': lambda t: t.strftime('%H:%M:%S')
                             }),
                             width='stretch'
