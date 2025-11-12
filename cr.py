@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.68 (Updated dashboard layout)"
+__version__ = "6.69 (Visual dashboard with donut charts)"
 # ==================================================================
 
 # ==================================================================
@@ -302,7 +302,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         true_capacity_loss_parts = results['Optimal Output (parts)'] - results['Actual Output (parts)']
         net_cycle_loss_parts = results['Capacity Loss (slow cycle time) (parts)'] - results['Capacity Gain (fast cycle time) (parts)']
         results['Capacity Loss (downtime) (parts)'] = true_capacity_loss_parts - net_cycle_loss_parts
-        # --- END v6.56 RECONCILIATION ---
+        # --- END v.6.56 RECONCILIATION ---
 
 
         # --- Create a unified 'Shot Type' column for all shots ---
@@ -587,36 +587,96 @@ if uploaded_file is not None:
                             st.metric("Total Capacity Loss (True)", f"{total_true_net_loss_parts:,.0f} parts")
                             st.caption(f"Total Time Lost: {format_seconds_to_dhm(total_true_net_loss_sec)}")
 
-                # --- Box 2: Capacity Loss Breakdown ---
+                # --- v6.69: New Visual Dashboard Layout ---
                 st.subheader(f"Capacity Loss Breakdown (vs {benchmark_title})")
                 st.info(f"These values are calculated based on the *time-based* logic (Downtime + Slow/Fast Cycles) using **{benchmark_title}** as the benchmark.")
                 
-                # --- v6.68: Box 2a (RR Downtime) ---
-                with st.container(border=True):
-                    c1 = st.columns(1)
-                    with c1[0]:
+                # --- Create two columns: 2/3 for charts, 1/3 for metrics ---
+                c1, c2 = st.columns([2, 1])
+
+                with c1:
+                    # --- Create two sub-columns for the donut charts ---
+                    chart_c1, chart_c2 = st.columns(2)
+                    
+                    with chart_c1:
+                        st.markdown("<h6 style='text-align: center;'>Overall Performance</h6>", unsafe_allow_html=True)
+                        
+                        # --- Donut 1: Overall Performance (Actual vs. Loss) ---
+                        # Use max(0,...) to prevent errors if total_produced > total_optimal_100
+                        pie_data_overall = [max(0, total_produced), max(0, total_calculated_net_loss_parts)]
+                        pie_labels_overall = ['Actual Output', 'Total Net Loss']
+                        
+                        fig_pie_overall = go.Figure(go.Pie(
+                            labels=pie_labels_overall, 
+                            values=pie_data_overall, 
+                            hole=0.5,
+                            marker=dict(colors=['#2ca02c', '#ff6961']), # green, red
+                            sort=False,
+                            direction='clockwise',
+                            textinfo='percent',
+                            textfont_size=14
+                        ))
+                        fig_pie_overall.update_layout(
+                            annotations=[dict(
+                                text=f"{actual_output_perc_val:.1%}", 
+                                x=0.5, y=0.5, font_size=20, showarrow=False
+                            )],
+                            showlegend=False,
+                            margin=dict(t=0, b=0, l=0, r=0)
+                        )
+                        st.plotly_chart(fig_pie_overall, use_container_width=True, config={'displayModeBar': False})
+
+                    with chart_c2:
+                        st.markdown("<h6 style='text-align: center;'>Gross Loss Breakdown</h6>", unsafe_allow_html=True)
+                        
+                        # --- Donut 2: Gross Loss Breakdown (RR vs. Slow) ---
+                        # Use max(0,...) to handle edge cases
+                        pie_data_loss = [max(0, total_downtime_loss_parts), max(0, total_slow_loss_parts)]
+                        pie_labels_loss = ['Loss (RR Downtime)', 'Loss (Slow Cycles)']
+                        
+                        fig_pie_loss = go.Figure(go.Pie(
+                            labels=pie_labels_loss, 
+                            values=pie_data_loss, 
+                            hole=0.5,
+                            marker=dict(colors=['#ff6961', '#ffb347']), # red, orange
+                            sort=False,
+                            direction='clockwise',
+                            textinfo='percent',
+                            textfont_size=14
+                        ))
+                        fig_pie_loss.update_layout(
+                            annotations=[dict(
+                                text="Gross Loss", 
+                                x=0.5, y=0.5, font_size=16, showarrow=False
+                            )],
+                            showlegend=False,
+                            margin=dict(t=0, b=0, l=0, r=0)
+                        )
+                        st.plotly_chart(fig_pie_loss, use_container_width=True, config={'displayModeBar': False})
+
+                with c2:
+                    # --- Stack all the metrics vertically in the second column ---
+                    with st.container(border=True):
                         st.metric("Loss (RR Downtime)", f"{total_downtime_loss_parts:,.0f} parts")
                         st.caption(f"Time Lost: {format_seconds_to_dhm(total_downtime_loss_sec)}")
-
-                # --- v6.68: Box 2b (Cycle Time) ---
-                with st.container(border=True):
-                    c1, c2, c3 = st.columns(3)
-                    with c1:
+                    
+                    with st.container(border=True):
                         st.metric("Loss (Slow Cycles)", f"{total_slow_loss_parts:,.0f} parts")
                         st.caption(f"Time Lost: {format_seconds_to_dhm(total_slow_loss_sec)}")
-                    with c2:
+
+                    with st.container(border=True):
                         st.metric("Gain (Fast Cycles)", f"{total_fast_gain_parts:,.0f} parts")
                         st.caption(f"Time Gained: {format_seconds_to_dhm(total_fast_gain_sec)}")
-                    with c3:
+                    
+                    with st.container(border=True):
                         st.metric("Net Loss (Cycle Time)", f"{total_net_cycle_loss_parts:,.0f} parts")
                         st.caption(f"Net Time Lost: {format_seconds_to_dhm(total_net_cycle_loss_sec)}")
                 
-                # --- v6.68: Box 2c (Total Net Loss) ---
-                with st.container(border=True):
-                    c1 = st.columns(1)
-                    with c1[0]:
-                        st.metric("Total Net Loss (RR + Cycle Time)", f"{total_calculated_net_loss_parts:,.0f} parts")
+                    with st.container(border=True):
+                        st.metric("Total Net Loss", f"{total_calculated_net_loss_parts:,.0f} parts")
                         st.caption(f"Net Time Lost: {format_seconds_to_dhm(total_calculated_net_loss_sec)}")
+
+                # --- End v6.69 Layout ---
 
 
                 # --- Collapsible Daily Summary Table ---
@@ -813,7 +873,7 @@ if uploaded_file is not None:
                         name='Target Output',
                         mode='lines',
                         line=dict(color='deepskyblue', dash='dash'),
-                        hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Target: %{y:,.0f}<extra></extra>'
+                        hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Target: %{y:,.0f}<extra></Eof>'
                     ))
                     
                 fig_ts.add_trace(go.Scatter(
