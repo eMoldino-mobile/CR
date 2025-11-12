@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.69 (Visual dashboard with donut charts)"
+__version__ = "6.70 (Visual dashboard with Bar charts)"
 # ==================================================================
 
 # ==================================================================
@@ -587,7 +587,7 @@ if uploaded_file is not None:
                             st.metric("Total Capacity Loss (True)", f"{total_true_net_loss_parts:,.0f} parts")
                             st.caption(f"Total Time Lost: {format_seconds_to_dhm(total_true_net_loss_sec)}")
 
-                # --- v6.69: New Visual Dashboard Layout ---
+                # --- v6.70: New Visual Dashboard Layout with Bar Charts ---
                 st.subheader(f"Capacity Loss Breakdown (vs {benchmark_title})")
                 st.info(f"These values are calculated based on the *time-based* logic (Downtime + Slow/Fast Cycles) using **{benchmark_title}** as the benchmark.")
                 
@@ -595,64 +595,48 @@ if uploaded_file is not None:
                 c1, c2 = st.columns([2, 1])
 
                 with c1:
-                    # --- Create two sub-columns for the donut charts ---
+                    # --- Create two sub-columns for the bar charts ---
                     chart_c1, chart_c2 = st.columns(2)
                     
                     with chart_c1:
                         st.markdown("<h6 style='text-align: center;'>Overall Performance</h6>", unsafe_allow_html=True)
                         
-                        # --- Donut 1: Overall Performance (Actual vs. Loss) ---
-                        # Use max(0,...) to prevent errors if total_produced > total_optimal_100
-                        pie_data_overall = [max(0, total_produced), max(0, total_calculated_net_loss_parts)]
-                        pie_labels_overall = ['Actual Output', 'Total Net Loss']
-                        
-                        fig_pie_overall = go.Figure(go.Pie(
-                            labels=pie_labels_overall, 
-                            values=pie_data_overall, 
-                            hole=0.5,
-                            marker=dict(colors=['#2ca02c', '#ff6961']), # green, red
-                            sort=False,
-                            direction='clockwise',
-                            textinfo='percent',
-                            textfont_size=14
+                        # --- Bar 1: Overall Performance (Actual vs. Optimal) ---
+                        fig_bar_overall = go.Figure(go.Bar(
+                            x=['Optimal Output', 'Actual Output'],
+                            y=[total_optimal_100, total_produced],
+                            text=[f"{total_optimal_100:,.0f}", f"{total_produced:,.0f}"],
+                            textposition='auto',
+                            marker_color=['#1f77b4', '#2ca02c'] # blue, green
                         ))
-                        fig_pie_overall.update_layout(
-                            annotations=[dict(
-                                text=f"{actual_output_perc_val:.1%}", 
-                                x=0.5, y=0.5, font_size=20, showarrow=False
-                            )],
+                        fig_bar_overall.update_layout(
                             showlegend=False,
-                            margin=dict(t=0, b=0, l=0, r=0)
+                            margin=dict(t=0, b=0, l=0, r=0),
+                            height=300
                         )
-                        st.plotly_chart(fig_pie_overall, use_container_width=True, config={'displayModeBar': False})
+                        st.plotly_chart(fig_bar_overall, use_container_width=True, config={'displayModeBar': False})
 
                     with chart_c2:
-                        st.markdown("<h6 style='text-align: center;'>Gross Loss Breakdown</h6>", unsafe_allow_html=True)
+                        st.markdown("<h6 style='text-align: center;'>Net Loss Breakdown</h6>", unsafe_allow_html=True)
                         
-                        # --- Donut 2: Gross Loss Breakdown (RR vs. Slow) ---
-                        # Use max(0,...) to handle edge cases
-                        pie_data_loss = [max(0, total_downtime_loss_parts), max(0, total_slow_loss_parts)]
-                        pie_labels_loss = ['Loss (RR Downtime)', 'Loss (Slow Cycles)']
+                        # --- Bar 2: Net Loss Breakdown (RR vs. Cycle Time) ---
+                        # Use max(0,...) to handle negative values (gains) for charting
+                        y_data = [max(0, total_downtime_loss_parts), max(0, total_net_cycle_loss_parts)]
+                        text_data = [f"{total_downtime_loss_parts:,.0f}", f"{total_net_cycle_loss_parts:,.0f}"]
                         
-                        fig_pie_loss = go.Figure(go.Pie(
-                            labels=pie_labels_loss, 
-                            values=pie_data_loss, 
-                            hole=0.5,
-                            marker=dict(colors=['#ff6961', '#ffb347']), # red, orange
-                            sort=False,
-                            direction='clockwise',
-                            textinfo='percent',
-                            textfont_size=14
+                        fig_bar_loss = go.Figure(go.Bar(
+                            x=['Loss (RR Downtime)', 'Net Loss (Cycle Time)'],
+                            y=y_data,
+                            text=text_data,
+                            textposition='auto',
+                            marker_color=['#ff6961', '#ffb347'] # red, orange
                         ))
-                        fig_pie_loss.update_layout(
-                            annotations=[dict(
-                                text="Gross Loss", 
-                                x=0.5, y=0.5, font_size=16, showarrow=False
-                            )],
+                        fig_bar_loss.update_layout(
                             showlegend=False,
-                            margin=dict(t=0, b=0, l=0, r=0)
+                            margin=dict(t=0, b=0, l=0, r=0),
+                            height=300
                         )
-                        st.plotly_chart(fig_pie_loss, use_container_width=True, config={'displayModeBar': False})
+                        st.plotly_chart(fig_bar_loss, use_container_width=True, config={'displayModeBar': False})
 
                 with c2:
                     # --- Stack all the metrics vertically in the second column ---
@@ -676,7 +660,7 @@ if uploaded_file is not None:
                         st.metric("Total Net Loss", f"{total_calculated_net_loss_parts:,.0f} parts")
                         st.caption(f"Net Time Lost: {format_seconds_to_dhm(total_calculated_net_loss_sec)}")
 
-                # --- End v6.69 Layout ---
+                # --- End v6.70 Layout ---
 
 
                 # --- Collapsible Daily Summary Table ---
