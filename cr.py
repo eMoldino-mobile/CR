@@ -6,11 +6,11 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.73 (Balanced Chart + Card Dashboard)"
+__version__ = "6.74 (Compact Dashboard + Highlighted Net Loss)"
 # ==================================================================
 
 # ==================================================================
-#          T               HELPER FUNCTIONS
+#      T  T                 HELPER FUNCTIONS
 # ==================================================================
 
 def format_seconds_to_dhm(total_seconds):
@@ -587,7 +587,7 @@ if uploaded_file is not None:
                             st.metric("Total Capacity Loss (True)", f"{total_true_net_loss_parts:,.0f} parts")
                             st.caption(f"Total Time Lost: {format_seconds_to_dhm(total_true_net_loss_sec)}")
 
-                # --- v6.73: New Balanced Chart + Card Layout ---
+                # --- v6.74: New Balanced Chart + Compact Card Layout ---
                 st.subheader(f"Capacity Loss Breakdown (vs {benchmark_title})")
                 st.info(f"These values are calculated based on the *time-based* logic (Downtime + Slow/Fast Cycles) using **{benchmark_title}** as the benchmark.")
                 
@@ -669,24 +669,26 @@ if uploaded_file is not None:
                     
 
                 with c2:
-                    # --- Stack metrics in 3 compact cards ---
-                    with st.container(border=True):
-                        st.metric("Loss (RR Downtime)", f"{total_downtime_loss_parts:,.0f} parts")
-                        st.caption(f"Time Lost: {format_seconds_to_dhm(total_downtime_loss_sec)}")
-                    
-                    with st.container(border=True):
-                        st.markdown("<h6 style='margin-bottom: 0;'>Cycle Time Breakdown</h6>", unsafe_allow_html=True)
-                        m1, m2 = st.columns(2)
-                        m1.metric("Loss (Slow Cycles)", f"{total_slow_loss_parts:,.0f}")
-                        m2.metric("Gain (Fast Cycles)", f"{total_fast_gain_parts:,.0f}")
-                        st.metric("Net Loss (Cycle Time)", f"{total_net_cycle_loss_parts:,.0f} parts")
-                        st.caption(f"Net Time Lost: {format_seconds_to_dhm(total_net_cycle_loss_sec)}")
-                
+                    # --- v6.74: New compact metric layout ---
                     with st.container(border=True):
                         st.metric("Total Net Loss", f"{total_calculated_net_loss_parts:,.0f} parts")
                         st.caption(f"Net Time Lost: {format_seconds_to_dhm(total_calculated_net_loss_sec)}")
+                    
+                    st.metric("Loss (RR Downtime)", f"{total_downtime_loss_parts:,.0f} parts")
+                    st.caption(f"Time Lost: {format_seconds_to_dhm(total_downtime_loss_sec)}")
+                    
+                    st.metric("Net Loss (Cycle Time)", f"{total_net_cycle_loss_parts:,.0f} parts")
+                    st.caption(f"Net Time Lost: {format_seconds_to_dhm(total_net_cycle_loss_sec)}")
+                    
+                    # --- Sub-metrics for Cycle Time ---
+                    sub_c1, sub_c2 = st.columns(2)
+                    with sub_c1:
+                        st.metric("└ Loss (Slow Cycles)", f"{total_slow_loss_parts:,.0f}")
+                    with sub_c2:
+                        st.metric("└ Gain (Fast Cycles)", f"{total_fast_gain_parts:,.0f}")
 
-                # --- End v6.73 Layout ---
+
+                # --- End v6.74 Layout ---
 
 
                 # --- Collapsible Daily Summary Table ---
@@ -1056,6 +1058,7 @@ if uploaded_file is not None:
                         )
                         
                         # --- v6.54: Use Reference CT for line ---
+                        # --- v6.59: Fix NameError ---
                         fig_ct.add_shape(
                             type='line',
                             x0=df_day_shots['SHOT TIME'].min(), x1=df_day_shots['SHOT TIME'].max(),
