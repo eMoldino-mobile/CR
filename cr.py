@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.77 (Chart + Color-coded Table Dashboard)"
+__version__ = "6.78 (Fixed AttributeError and color-coding)"
 # ==================================================================
 
 # ==================================================================
@@ -585,8 +585,9 @@ if uploaded_file is not None:
                         else:
                             total_true_net_loss_sec = (total_true_net_loss_parts / total_optimal_100) * run_time_sec_total if total_optimal_100 > 0 else 0
                             
-                            # --- v6.76: Add color-coding ---
-                            st.metric("Total Capacity Loss (True)", f"{total_true_net_loss_parts:,.0f} parts", delta=f"{-total_true_net_loss_parts:,.0f} parts", delta_color="inverse")
+                            # --- v6.78: Fix color. Use Markdown for red. ---
+                            st.markdown(f"**Total Capacity Loss (True)**")
+                            st.markdown(f"<h3><span style='color:red;'>{total_true_net_loss_parts:,.0f} parts</span></h3>", unsafe_allow_html=True)
                             st.caption(f"Total Time Lost: {format_seconds_to_dhm(total_true_net_loss_sec)}")
 
                 # --- v6.77: New Balanced Chart + Color-coded Table Layout ---
@@ -740,19 +741,13 @@ if uploaded_file is not None:
                         return styled_df
 
                     # --- Display the styled table ---
-                    st.dataframe(
-                        style_table(df_table),
-                        hide_index=True,
-                        use_container_width=True,
-                        column_config={
-                            "Metric": st.column_config.TextColumn("Metric"),
-                            "Parts": st.column_config.HTML("Parts"),
-                            "Time": st.column_config.TextColumn("Time"),
-                        }
+                    # --- v6.78: Fix AttributeError by using st.markdown ---
+                    st.markdown(
+                        style_table(df_table).to_html(escape=False, index=False, header=True),
+                        unsafe_allow_html=True
                     )
 
-
-                # --- End v6.77 Layout ---
+                # --- End v6.78 Layout ---
 
 
                 # --- Collapsible Daily Summary Table ---
@@ -949,7 +944,7 @@ if uploaded_file is not None:
                         name='Target Output',
                         mode='lines',
                         line=dict(color='deepskyblue', dash='dash'),
-                        hovertemplate='<b>%{x|%Y-%m-%d}</b><g>'
+                        hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Target: %{y:,.0f}<extra></extra>'
                     ))
                     
                 fig_ts.add_trace(go.Scatter(
