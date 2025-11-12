@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.75 (Compact Dashboard with Data Table)"
+__version__ = "6.76 (Color-coded dashboard metrics)"
 # ==================================================================
 
 # ==================================================================
@@ -578,16 +578,18 @@ if uploaded_file is not None:
                         # --- v6.42: Show Gap to Target if in Target view ---
                         if benchmark_view == "Target Output":
                             gap_to_target = total_produced - total_target
-                            st.metric("Gap to Target", f"{gap_to_target:+,.0f} parts")
+                            # --- v6.76: Add color-coding ---
+                            st.metric("Gap to Target", f"{gap_to_target:+,.0f} parts", delta=f"{gap_to_target:,.0f} parts", delta_color="normal")
                             gap_perc = (gap_to_target / total_target) if total_target > 0 else 0
                             st.caption(f"Gap: {gap_perc:+.1%}")
                         else:
                             total_true_net_loss_sec = (total_true_net_loss_parts / total_optimal_100) * run_time_sec_total if total_optimal_100 > 0 else 0
                             
-                            st.metric("Total Capacity Loss (True)", f"{total_true_net_loss_parts:,.0f} parts")
+                            # --- v6.76: Add color-coding ---
+                            st.metric("Total Capacity Loss (True)", f"{total_true_net_loss_parts:,.0f} parts", delta=f"{-total_true_net_loss_parts:,.0f} parts", delta_color="inverse")
                             st.caption(f"Total Time Lost: {format_seconds_to_dhm(total_true_net_loss_sec)}")
 
-                # --- v6.75: New Balanced Chart + Data Table Layout ---
+                # --- v6.74: New Balanced Chart + Compact Card Layout ---
                 st.subheader(f"Capacity Loss Breakdown (vs {benchmark_title})")
                 st.info(f"These values are calculated based on the *time-based* logic (Downtime + Slow/Fast Cycles) using **{benchmark_title}** as the benchmark.")
                 
@@ -669,37 +671,52 @@ if uploaded_file is not None:
                     
 
                 with c2:
-                    # --- v6.75: New compact data table layout ---
+                    # --- v6.76: New compact metric layout with color ---
                     with st.container(border=True):
-                        st.metric("Total Net Loss", f"{total_calculated_net_loss_parts:,.0f} parts")
+                        st.metric(
+                            "Total Net Loss", 
+                            f"{total_calculated_net_loss_parts:,.0f} parts", 
+                            delta=f"{-total_calculated_net_loss_parts:,.0f} parts", 
+                            delta_color="inverse"
+                        )
                         st.caption(f"Net Time Lost: {format_seconds_to_dhm(total_calculated_net_loss_sec)}")
                     
-                    # --- Create a simple dataframe for the rest of the metrics ---
-                    loss_data = {
-                        'Parts': [
-                            f"{total_downtime_loss_parts:,.0f}",
-                            f"{total_net_cycle_loss_parts:,.0f}",
-                            f"{total_slow_loss_parts:,.0f}",
-                            f"{total_fast_gain_parts:,.0f}"
-                        ],
-                        'Time': [
-                            format_seconds_to_dhm(total_downtime_loss_sec),
-                            format_seconds_to_dhm(total_net_cycle_loss_sec),
-                            format_seconds_to_dhm(total_slow_loss_sec),
-                            format_seconds_to_dhm(total_fast_gain_sec)
-                        ]
-                    }
-                    loss_df = pd.DataFrame(loss_data, index=[
-                            'Loss (RR Downtime)', 
-                            'Net Loss (Cycle Time)', 
-                            '  └ Loss (Slow Cycles)', 
-                            '  └ Gain (Fast Cycles)'
-                        ])
+                    st.metric(
+                        "Loss (RR Downtime)", 
+                        f"{total_downtime_loss_parts:,.0f} parts",
+                        delta=f"{-total_downtime_loss_parts:,.0f} parts", 
+                        delta_color="inverse"
+                    )
+                    st.caption(f"Time Lost: {format_seconds_to_dhm(total_downtime_loss_sec)}")
                     
-                    st.dataframe(loss_df, use_container_width=True)
+                    st.metric(
+                        "Net Loss (Cycle Time)", 
+                        f"{total_net_cycle_loss_parts:,.0f} parts",
+                        # --- v6.76: Dynamic delta for Net Cycle Loss ---
+                        delta=f"{total_net_cycle_loss_parts:,.0f} parts", 
+                        delta_color="inverse" if total_net_cycle_loss_parts > 0 else "normal"
+                    )
+                    st.caption(f"Net Time Lost: {format_seconds_to_dhm(total_net_cycle_loss_sec)}")
+                    
+                    # --- Sub-metrics for Cycle Time ---
+                    sub_c1, sub_c2 = st.columns(2)
+                    with sub_c1:
+                        st.metric(
+                            "└ Loss (Slow Cycles)", 
+                            f"{total_slow_loss_parts:,.0f}",
+                            delta=f"{-total_slow_loss_parts:,.0f}", 
+                            delta_color="inverse"
+                        )
+                    with sub_c2:
+                        st.metric(
+                            "└ Gain (Fast Cycles)", 
+                            f"{total_fast_gain_parts:,.0f}",
+                            delta=f"{total_fast_gain_parts:,.0f}", 
+                            delta_color="normal"
+                        )
 
 
-                # --- End v6.75 Layout ---
+                # --- End v6.76 Layout ---
 
 
                 # --- Collapsible Daily Summary Table ---
