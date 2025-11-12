@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.78 (Fixed AttributeError and color-coding)"
+__version__ = "6.79 (Fixed messy table formatting)"
 # ==================================================================
 
 # ==================================================================
@@ -590,7 +590,7 @@ if uploaded_file is not None:
                             st.markdown(f"<h3><span style='color:red;'>{total_true_net_loss_parts:,.0f} parts</span></h3>", unsafe_allow_html=True)
                             st.caption(f"Total Time Lost: {format_seconds_to_dhm(total_true_net_loss_sec)}")
 
-                # --- v6.77: New Balanced Chart + Color-coded Table Layout ---
+                # --- v6.79: New Balanced Chart + Styled Dataframe Layout ---
                 st.subheader(f"Capacity Loss Breakdown (vs {benchmark_title})")
                 st.info(f"These values are calculated based on the *time-based* logic (Downtime + Slow/Fast Cycles) using **{benchmark_title}** as the benchmark.")
                 
@@ -672,19 +672,20 @@ if uploaded_file is not None:
                     
 
                 with c2:
-                    # --- v6.77: New compact table layout with color ---
+                    # --- v6.79: New compact table layout with color ---
                     
                     # --- Helper function for color ---
-                    def get_color(val):
-                        if val > 0: return "red"
-                        if val < 0: return "green"
-                        return "black"
+                    def get_color_css(val):
+                        if val > 0: return "color: red;"
+                        if val < 0: return "color: green;"
+                        return "color: black;"
 
                     # --- Color-code Total Net Loss ---
-                    net_loss_color = get_color(total_calculated_net_loss_parts)
+                    net_loss_val = total_calculated_net_loss_parts
+                    net_loss_color = get_color_css(net_loss_val)
                     with st.container(border=True):
                         st.markdown(f"**Total Net Loss**")
-                        st.markdown(f"<h3><span style='color:{net_loss_color};'>{total_calculated_net_loss_parts:,.0f} parts</span></h3>", unsafe_allow_html=True)
+                        st.markdown(f"<h3><span style='{net_loss_color}'>{net_loss_val:,.0f} parts</span></h3>", unsafe_allow_html=True)
                         st.caption(f"Net Time Lost: {format_seconds_to_dhm(total_calculated_net_loss_sec)}")
                     
                     # --- Create Data for the table ---
@@ -710,44 +711,41 @@ if uploaded_file is not None:
                     }
                     df_table = pd.DataFrame(table_data)
 
-                    # --- Function to apply color styling ---
-                    def style_table(df):
-                        # --- v6.77: Correctly format the "Parts" column first, then apply color ---
+                    # --- Function to apply color styling to the "Parts" column ---
+                    def style_parts_col(val, row_index):
+                        # Get the correct color based on the metric
+                        if row_index == 0: # Loss (RR Downtime)
+                            color_style = get_color_css(val)
+                        elif row_index == 1: # Net Loss (Cycle Time)
+                            color_style = get_color_css(val)
+                        elif row_index == 2: # Loss (Slow Cycles)
+                            color_style = get_color_css(val)
+                        elif row_index == 3: # Gain (Fast Cycles)
+                            color_style = get_color_css(val * -1) # Invert gain for color
+                        else:
+                            color_style = "color: black;"
                         
-                        # Get colors
-                        colors = [
-                            get_color(df.loc[0, "Parts"]), # RR Downtime
-                            get_color(df.loc[1, "Parts"]), # Net Cycle Loss
-                            get_color(df.loc[2, "Parts"]), # Slow Loss
-                            get_color(df.loc[3, "Parts"] * -1) # Fast Gain (invert for coloring)
-                        ]
-                        
-                        # Format Parts column to string with commas
-                        parts_formatted = df['Parts'].map('{:,.0f}'.format)
-                        
-                        # Apply color
-                        styled_parts = [
-                            f"<span style='color:{colors[i]};'>{parts_formatted[i]}</span>"
-                            for i in range(len(colors))
-                        ]
-                        
-                        # Create a new styled df
-                        styled_df = pd.DataFrame({
-                            "Metric": df["Metric"],
-                            "Parts": styled_parts,
-                            "Time": df["Time"]
-                        })
-                        
-                        return styled_df
+                        return color_style
 
+                    # --- Apply styling to the DataFrame ---
+                    styled_df = df_table.style.apply(
+                        lambda row: [style_parts_col(row['Parts'], row.name) if col == 'Parts' else '' for col in row.index],
+                        axis=1
+                    ).format(
+                        {"Parts": "{:,.0f}"} # Apply comma formatting
+                    ).set_properties(
+                        **{'text-align': 'left'}, subset=['Metric', 'Time']
+                    ).set_properties(
+                        **{'text-align': 'right'}, subset=['Parts']
+                    ).hide(axis='index') # Hide the 0,1,2,3 index
+                    
                     # --- Display the styled table ---
-                    # --- v6.78: Fix AttributeError by using st.markdown ---
-                    st.markdown(
-                        style_table(df_table).to_html(escape=False, index=False, header=True),
-                        unsafe_allow_html=True
+                    st.dataframe(
+                        styled_df,
+                        use_container_width=True
                     )
 
-                # --- End v6.78 Layout ---
+                # --- End v6.79 Layout ---
 
 
                 # --- Collapsible Daily Summary Table ---
