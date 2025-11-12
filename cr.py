@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.93 (Fixed Time Gap logic and NameError)"
+__version__ = "6.94 (Fixed TypeError in add_vline and KeyError in by Run)"
 # ==================================================================
 
 # ==================================================================
@@ -1282,13 +1282,20 @@ if uploaded_file is not None:
                             run_starts = df_day_shots.groupby('run_id')['SHOT TIME'].min().sort_values()
                             for start_time in run_starts.iloc[1:]: # Skip the very first run
                                 run_id_val = df_day_shots[df_day_shots['SHOT TIME'] == start_time]['run_id'].iloc[0]
+                                # --- v6.93: Fix TypeError by separating vline and annotation ---
                                 fig_ct.add_vline(
                                     x=start_time, 
                                     line_width=2, 
                                     line_dash="dash", 
-                                    line_color="purple",
-                                    annotation_text=f"Run {run_id_val} Start",
-                                    annotation_position="top left"
+                                    line_color="purple"
+                                )
+                                fig_ct.add_annotation(
+                                    x=start_time,
+                                    y=y_axis_max * 0.95, # Position annotation near the top
+                                    text=f"Run {run_id_val} Start",
+                                    showarrow=False,
+                                    yshift=10,
+                                    textangle=-90
                                 )
 
                         fig_ct.update_layout(
