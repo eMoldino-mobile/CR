@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.76 (Color-coded dashboard metrics)"
+__version__ = "6.77 (Chart + Color-coded Table Dashboard)"
 # ==================================================================
 
 # ==================================================================
@@ -589,7 +589,7 @@ if uploaded_file is not None:
                             st.metric("Total Capacity Loss (True)", f"{total_true_net_loss_parts:,.0f} parts", delta=f"{-total_true_net_loss_parts:,.0f} parts", delta_color="inverse")
                             st.caption(f"Total Time Lost: {format_seconds_to_dhm(total_true_net_loss_sec)}")
 
-                # --- v6.74: New Balanced Chart + Compact Card Layout ---
+                # --- v6.77: New Balanced Chart + Color-coded Table Layout ---
                 st.subheader(f"Capacity Loss Breakdown (vs {benchmark_title})")
                 st.info(f"These values are calculated based on the *time-based* logic (Downtime + Slow/Fast Cycles) using **{benchmark_title}** as the benchmark.")
                 
@@ -671,52 +671,88 @@ if uploaded_file is not None:
                     
 
                 with c2:
-                    # --- v6.76: New compact metric layout with color ---
+                    # --- v6.77: New compact table layout with color ---
+                    
+                    # --- Helper function for color ---
+                    def get_color(val):
+                        if val > 0: return "red"
+                        if val < 0: return "green"
+                        return "black"
+
+                    # --- Color-code Total Net Loss ---
+                    net_loss_color = get_color(total_calculated_net_loss_parts)
                     with st.container(border=True):
-                        st.metric(
-                            "Total Net Loss", 
-                            f"{total_calculated_net_loss_parts:,.0f} parts", 
-                            delta=f"{-total_calculated_net_loss_parts:,.0f} parts", 
-                            delta_color="inverse"
-                        )
+                        st.markdown(f"**Total Net Loss**")
+                        st.markdown(f"<h3><span style='color:{net_loss_color};'>{total_calculated_net_loss_parts:,.0f} parts</span></h3>", unsafe_allow_html=True)
                         st.caption(f"Net Time Lost: {format_seconds_to_dhm(total_calculated_net_loss_sec)}")
                     
-                    st.metric(
-                        "Loss (RR Downtime)", 
-                        f"{total_downtime_loss_parts:,.0f} parts",
-                        delta=f"{-total_downtime_loss_parts:,.0f} parts", 
-                        delta_color="inverse"
+                    # --- Create Data for the table ---
+                    table_data = {
+                        "Metric": [
+                            "Loss (RR Downtime)", 
+                            "Net Loss (Cycle Time)", 
+                            "&nbsp;&nbsp;&nbsp; └ Loss (Slow Cycles)", 
+                            "&nbsp;&nbsp;&nbsp; └ Gain (Fast Cycles)"
+                        ],
+                        "Parts": [
+                            total_downtime_loss_parts,
+                            total_net_cycle_loss_parts,
+                            total_slow_loss_parts,
+                            total_fast_gain_parts
+                        ],
+                        "Time": [
+                            format_seconds_to_dhm(total_downtime_loss_sec),
+                            format_seconds_to_dhm(total_net_cycle_loss_sec),
+                            format_seconds_to_dhm(total_slow_loss_sec),
+                            format_seconds_to_dhm(total_fast_gain_sec)
+                        ]
+                    }
+                    df_table = pd.DataFrame(table_data)
+
+                    # --- Function to apply color styling ---
+                    def style_table(df):
+                        # --- v6.77: Correctly format the "Parts" column first, then apply color ---
+                        
+                        # Get colors
+                        colors = [
+                            get_color(df.loc[0, "Parts"]), # RR Downtime
+                            get_color(df.loc[1, "Parts"]), # Net Cycle Loss
+                            get_color(df.loc[2, "Parts"]), # Slow Loss
+                            get_color(df.loc[3, "Parts"] * -1) # Fast Gain (invert for coloring)
+                        ]
+                        
+                        # Format Parts column to string with commas
+                        parts_formatted = df['Parts'].map('{:,.0f}'.format)
+                        
+                        # Apply color
+                        styled_parts = [
+                            f"<span style='color:{colors[i]};'>{parts_formatted[i]}</span>"
+                            for i in range(len(colors))
+                        ]
+                        
+                        # Create a new styled df
+                        styled_df = pd.DataFrame({
+                            "Metric": df["Metric"],
+                            "Parts": styled_parts,
+                            "Time": df["Time"]
+                        })
+                        
+                        return styled_df
+
+                    # --- Display the styled table ---
+                    st.dataframe(
+                        style_table(df_table),
+                        hide_index=True,
+                        use_container_width=True,
+                        column_config={
+                            "Metric": st.column_config.TextColumn("Metric"),
+                            "Parts": st.column_config.HTML("Parts"),
+                            "Time": st.column_config.TextColumn("Time"),
+                        }
                     )
-                    st.caption(f"Time Lost: {format_seconds_to_dhm(total_downtime_loss_sec)}")
-                    
-                    st.metric(
-                        "Net Loss (Cycle Time)", 
-                        f"{total_net_cycle_loss_parts:,.0f} parts",
-                        # --- v6.76: Dynamic delta for Net Cycle Loss ---
-                        delta=f"{total_net_cycle_loss_parts:,.0f} parts", 
-                        delta_color="inverse" if total_net_cycle_loss_parts > 0 else "normal"
-                    )
-                    st.caption(f"Net Time Lost: {format_seconds_to_dhm(total_net_cycle_loss_sec)}")
-                    
-                    # --- Sub-metrics for Cycle Time ---
-                    sub_c1, sub_c2 = st.columns(2)
-                    with sub_c1:
-                        st.metric(
-                            "└ Loss (Slow Cycles)", 
-                            f"{total_slow_loss_parts:,.0f}",
-                            delta=f"{-total_slow_loss_parts:,.0f}", 
-                            delta_color="inverse"
-                        )
-                    with sub_c2:
-                        st.metric(
-                            "└ Gain (Fast Cycles)", 
-                            f"{total_fast_gain_parts:,.0f}",
-                            delta=f"{total_fast_gain_parts:,.0f}", 
-                            delta_color="normal"
-                        )
 
 
-                # --- End v6.76 Layout ---
+                # --- End v6.77 Layout ---
 
 
                 # --- Collapsible Daily Summary Table ---
@@ -913,7 +949,7 @@ if uploaded_file is not None:
                         name='Target Output',
                         mode='lines',
                         line=dict(color='deepskyblue', dash='dash'),
-                        hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Target: %{y:,.0f}<extra></extra>'
+                        hovertemplate='<b>%{x|%Y-%m-%d}</b><g>'
                     ))
                     
                 fig_ts.add_trace(go.Scatter(
