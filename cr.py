@@ -780,7 +780,7 @@ if uploaded_file is not None:
                     ), axis=-1),
                     hovertemplate=
                         '<b>%{x|%Y-%m-%d}</b><br>' +
-                        '<b>Net Cycle Time Loss: %{customdata[0]:,.0f}</b><br>'I'm 
+                        '<b>Net Cycle Time Loss: %{customdata[0]:,.0f}</b><br>'
                         'Slow Cycle Loss: %{customdata[1]:,.0f}<br>' +
                         'Fast Cycle Gain: -%{customdata[2]:,.0f}<br>' + 
                         '<extra></extra>'
