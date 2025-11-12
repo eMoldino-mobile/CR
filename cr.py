@@ -6,11 +6,11 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.74 (Compact Dashboard + Highlighted Net Loss)"
+__version__ = "6.75 (Compact Dashboard with Data Table)"
 # ==================================================================
 
 # ==================================================================
-#      T  T                 HELPER FUNCTIONS
+#                         HELPER FUNCTIONS
 # ==================================================================
 
 def format_seconds_to_dhm(total_seconds):
@@ -587,7 +587,7 @@ if uploaded_file is not None:
                             st.metric("Total Capacity Loss (True)", f"{total_true_net_loss_parts:,.0f} parts")
                             st.caption(f"Total Time Lost: {format_seconds_to_dhm(total_true_net_loss_sec)}")
 
-                # --- v6.74: New Balanced Chart + Compact Card Layout ---
+                # --- v6.75: New Balanced Chart + Data Table Layout ---
                 st.subheader(f"Capacity Loss Breakdown (vs {benchmark_title})")
                 st.info(f"These values are calculated based on the *time-based* logic (Downtime + Slow/Fast Cycles) using **{benchmark_title}** as the benchmark.")
                 
@@ -669,26 +669,37 @@ if uploaded_file is not None:
                     
 
                 with c2:
-                    # --- v6.74: New compact metric layout ---
+                    # --- v6.75: New compact data table layout ---
                     with st.container(border=True):
                         st.metric("Total Net Loss", f"{total_calculated_net_loss_parts:,.0f} parts")
                         st.caption(f"Net Time Lost: {format_seconds_to_dhm(total_calculated_net_loss_sec)}")
                     
-                    st.metric("Loss (RR Downtime)", f"{total_downtime_loss_parts:,.0f} parts")
-                    st.caption(f"Time Lost: {format_seconds_to_dhm(total_downtime_loss_sec)}")
+                    # --- Create a simple dataframe for the rest of the metrics ---
+                    loss_data = {
+                        'Parts': [
+                            f"{total_downtime_loss_parts:,.0f}",
+                            f"{total_net_cycle_loss_parts:,.0f}",
+                            f"{total_slow_loss_parts:,.0f}",
+                            f"{total_fast_gain_parts:,.0f}"
+                        ],
+                        'Time': [
+                            format_seconds_to_dhm(total_downtime_loss_sec),
+                            format_seconds_to_dhm(total_net_cycle_loss_sec),
+                            format_seconds_to_dhm(total_slow_loss_sec),
+                            format_seconds_to_dhm(total_fast_gain_sec)
+                        ]
+                    }
+                    loss_df = pd.DataFrame(loss_data, index=[
+                            'Loss (RR Downtime)', 
+                            'Net Loss (Cycle Time)', 
+                            '  └ Loss (Slow Cycles)', 
+                            '  └ Gain (Fast Cycles)'
+                        ])
                     
-                    st.metric("Net Loss (Cycle Time)", f"{total_net_cycle_loss_parts:,.0f} parts")
-                    st.caption(f"Net Time Lost: {format_seconds_to_dhm(total_net_cycle_loss_sec)}")
-                    
-                    # --- Sub-metrics for Cycle Time ---
-                    sub_c1, sub_c2 = st.columns(2)
-                    with sub_c1:
-                        st.metric("└ Loss (Slow Cycles)", f"{total_slow_loss_parts:,.0f}")
-                    with sub_c2:
-                        st.metric("└ Gain (Fast Cycles)", f"{total_fast_gain_parts:,.0f}")
+                    st.dataframe(loss_df, use_container_width=True)
 
 
-                # --- End v6.74 Layout ---
+                # --- End v6.75 Layout ---
 
 
                 # --- Collapsible Daily Summary Table ---
@@ -732,7 +743,7 @@ if uploaded_file is not None:
                         daily_kpi_table['Total Capacity Loss (Time)'] = daily_summary_df.apply(lambda r: f"{r['Total Capacity Loss (d/h/m)']} ({r['Total Capacity Loss (time %)']:.1%})", axis=1)
                         daily_kpi_table['Total Capacity Loss (parts)'] = daily_summary_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
                         
-                        st.dataframe(daily_kpi_table, width='stretch')
+                        st.dataframe(daily_kpi_table, use_container_width=True)
 
                     else: # Target Output
                         # --- v6.3.2: FIX for ValueError ---
@@ -749,7 +760,7 @@ if uploaded_file is not None:
                         st.dataframe(daily_kpi_table.style.applymap(
                             lambda x: 'color: green' if str(x).startswith('+') else 'color: red' if str(x).startswith('-') else None,
                             subset=['Gap to Target (parts)']
-                        ), width='stretch')
+                        ), use_container_width=True)
 
                 st.divider()
 
@@ -904,7 +915,7 @@ if uploaded_file is not None:
                     legend_title='Metric',
                     hovermode="x unified"
                 )
-                st.plotly_chart(fig_ts, width='stretch')
+                st.plotly_chart(fig_ts, use_container_width=True)
 
                 # --- Full Data Table (Open by Default) ---
                 
@@ -920,7 +931,7 @@ if uploaded_file is not None:
                 report_table_1[run_time_label] = display_df_totals.apply(lambda r: f"{r['Filtered Run Time (d/h/m)']} ({r['Filtered Run Time (sec)']:,.0f}s)", axis=1)
                 report_table_1['Actual Production Time'] = display_df_totals.apply(lambda r: f"{r['Actual Cycle Time Total (d/h/m)']} ({r['Actual Cycle Time Total (time %)']:.1%})", axis=1)
 
-                st.dataframe(report_table_1, width='stretch')
+                st.dataframe(report_table_1, use_container_width=True)
 
                 # --- v6.64: Conditional Tables ---
                 
@@ -937,7 +948,7 @@ if uploaded_file is not None:
                 report_table_optimal['Loss (Slow Cycles)'] = display_df_optimal.apply(lambda r: f"{r['Capacity Loss (slow cycle time) (parts)']:,.2f} ({r['Capacity Loss (slow cycle time) (parts %)']:.1%})", axis=1)
                 report_table_optimal['Gain (Fast Cycles)'] = display_df_optimal.apply(lambda r: f"{r['Capacity Gain (fast cycle time) (parts)']:,.2f} ({r['Capacity Gain (fast cycle time) (parts %)']:.1%})", axis=1)
                 report_table_optimal['Total Net Loss'] = display_df_optimal.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
-                st.dataframe(report_table_optimal, width='stretch')
+                st.dataframe(report_table_optimal, use_container_width=True)
                 
                 
                 if benchmark_view == "Target Output": 
@@ -975,7 +986,7 @@ if uploaded_file is not None:
                         lambda x: 'color: green' if str(x).startswith('+') else 'color: red' if str(x).startswith('-') else None,
                         # --- v6.67: Add new columns to style ---
                         subset=['Gap to Target (parts)', 'Gap % (vs Target)', 'Allocated Impact (RR Downtime)', 'Allocated Impact (Net Cycle)']
-                    ), width='stretch')
+                    ), use_container_width=True)
                 # --- End v6.64 ---
 
 
@@ -1081,7 +1092,7 @@ if uploaded_file is not None:
                             yaxis_range=[0, y_axis_max], # Apply the zoom
                             # --- v6.25: REMOVED barmode='overlay' ---
                         )
-                        st.plotly_chart(fig_ct, width='stretch')
+                        st.plotly_chart(fig_ct, use_container_width=True)
 
                         st.subheader(f"Data for all {len(df_day_shots)} shots on {selected_date}")
                         st.dataframe(
@@ -1097,7 +1108,7 @@ if uploaded_file is not None:
                                 'Mode CT Upper': '{:.2f}', # --- v6.62: Added format ---
                                 'SHOT TIME': lambda t: t.strftime('%H:%M:%S')
                             }),
-                            width='stretch'
+                            use_container_width=True
                         )
 
 else:
