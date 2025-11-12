@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.67 (Allocates positive gains as well as losses)"
+__version__ = "6.65 (Fixed SyntaxError in chart)"
 # ==================================================================
 
 # ==================================================================
@@ -730,10 +730,9 @@ if uploaded_file is not None:
                         0
                     )
                     
-                    # --- v6.67: Allocate the 'Gap to Target' (positive or negative) ---
-                    agg_df['Allocated Impact (RR Downtime)'] = agg_df['Gap to Target (parts)'] * agg_df['loss_downtime_ratio']
-                    agg_df['Allocated Impact (Net Cycle)'] = agg_df['Gap to Target (parts)'] * agg_df['loss_cycletime_ratio']
-                    # --- End v6.67 ---
+                    agg_df['Allocated Loss (RR Downtime)'] = agg_df['Capacity Loss (vs Target) (parts)'] * agg_df['loss_downtime_ratio']
+                    agg_df['Allocated Loss (Net Cycle)'] = agg_df['Capacity Loss (vs Target) (parts)'] * agg_df['loss_cycletime_ratio']
+                    # --- End v6.64 Allocation Logic ---
                     
                     
                     agg_df['Filtered Run Time (d/h/m)'] = agg_df['Filtered Run Time (sec)'].apply(format_seconds_to_dhm)
@@ -878,13 +877,26 @@ if uploaded_file is not None:
                     report_table_target['Gap % (vs Target)'] = display_df_target.apply(lambda r: r['Gap to Target (parts)'] / r['Target Output (parts)'] if r['Target Output (parts)'] > 0 else 0, axis=1).apply(lambda x: "{:+.1%}".format(x) if pd.notna(x) else "N/A")
                     
                     
-                    # --- v6.67: Renamed columns and logic ---
-                    report_table_target['Allocated Impact (RR Downtime)'] = display_df_target.apply(
-                        lambda r: f"{r['Allocated Impact (RR Downtime)']:,.2f} ({r['loss_downtime_ratio']:.1%})", 
+                    # --- v6.64: Allocation Formatting ---
+                    def format_allocation(row, col_name, ratio_col):
+                        gap_numeric = row['Gap to Target (parts)']
+                        
+                        if gap_numeric <= 0: # This is a LOSS
+                            # Show the allocated loss (as a positive number) and its ratio
+                            return f"{row[col_name]:,.2f} ({row[ratio_col]:.1%})"
+                        else: # This is a GAIN
+                            return "N/A (Target Met)"
+
+                    report_table_target['Allocated Loss (RR Downtime)'] = display_df_target.apply(
+                        format_allocation, 
+                        col_name='Allocated Loss (RR Downtime)', 
+                        ratio_col='loss_downtime_ratio', 
                         axis=1
                     )
-                    report_table_target['Allocated Impact (Net Cycle)'] = display_df_target.apply(
-                        lambda r: f"{r['Allocated Impact (Net Cycle)']:,.2f} ({r['loss_cycletime_ratio']:.1%})", 
+                    report_table_target['Allocated Loss (Net Cycle)'] = display_df_target.apply(
+                        format_allocation, 
+                        col_name='Allocated Loss (Net Cycle)', 
+                        ratio_col='loss_cycletime_ratio', 
                         axis=1
                     )
                     
@@ -895,8 +907,7 @@ if uploaded_file is not None:
                     
                     st.dataframe(report_table_target.style.applymap(
                         lambda x: 'color: green' if str(x).startswith('+') else 'color: red' if str(x).startswith('-') else None,
-                        # --- v6.67: Add new columns to style ---
-                        subset=['Gap to Target (parts)', 'Gap % (vs Target)', 'Allocated Impact (RR Downtime)', 'Allocated Impact (Net Cycle)']
+                        subset=['Gap to Target (parts)', 'Gap % (vs Target)']
                     ), width='stretch')
                 # --- End v6.64 ---
 
@@ -991,7 +1002,7 @@ if uploaded_file is not None:
                             x=df_day_shots['SHOT TIME'].max(), y=reference_ct_for_day,
                             text=f"{reference_ct_label}: {reference_ct_for_day:.2f}s", showarrow=True, arrowhead=1
                         )
-                        # --- vs6.54 End ---
+                        # --- v6.54 End ---
 
                         fig_ct.update_layout(
                             title=f"All Shots for {selected_date}",
