@@ -955,7 +955,6 @@ if uploaded_file is not None:
                 chart_df['Net Cycle Time Loss (positive)'] = np.maximum(0, chart_df['Net Cycle Time Loss (parts)'])
 
                 fig_ts.add_trace(go.Bar(
-                    x=chart_df['Date'],
                     y=chart_df['Net Cycle Time Loss (positive)'],
                     name='Capacity Loss (cycle time)',
                     marker_color='#ffb347', # Pastel Orange
@@ -974,7 +973,6 @@ if uploaded_file is not None:
                 ))
                 
                 fig_ts.add_trace(go.Bar(
-                    x=chart_df['Date'],
                     y=chart_df['Capacity Loss (downtime) (parts)'],
                     name='Run Rate Downtime (Stops)',
                     marker_color='#ff6961', # Pastel Red
@@ -986,7 +984,6 @@ if uploaded_file is not None:
                 
                 # --- v6.83: Add Target/Benchmark line ---
                 fig_ts.add_trace(go.Scatter(
-                    x=chart_df['Date'],
                     y=chart_df['Benchmark Output (parts)'],
                     name=benchmark_label,
                     mode='lines',
@@ -995,7 +992,6 @@ if uploaded_file is not None:
                 ))
                     
                 fig_ts.add_trace(go.Scatter(
-                    x=chart_df['Date'],
                     y=optimal_df_agg['Benchmark Output (parts)'], # Use 100% optimal
                     name='Optimal Output (100%)',
                     mode='lines',
