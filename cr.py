@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.79 (Fixed messy table formatting)"
+__version__ = "6.80 (Fixed Time Discrepancy & Labels)"
 # ==================================================================
 
 # ==================================================================
@@ -583,12 +583,10 @@ if uploaded_file is not None:
                             gap_perc = (gap_to_target / total_target) if total_target > 0 else 0
                             st.caption(f"Gap: {gap_perc:+.1%}")
                         else:
-                            total_true_net_loss_sec = (total_true_net_loss_parts / total_optimal_100) * run_time_sec_total if total_optimal_100 > 0 else 0
-                            
-                            # --- v6.78: Fix color. Use Markdown for red. ---
+                            # --- v6.80: FIX: Use reconciled time for consistency ---
                             st.markdown(f"**Total Capacity Loss (True)**")
                             st.markdown(f"<h3><span style='color:red;'>{total_true_net_loss_parts:,.0f} parts</span></h3>", unsafe_allow_html=True)
-                            st.caption(f"Total Time Lost: {format_seconds_to_dhm(total_true_net_loss_sec)}")
+                            st.caption(f"Total Time Lost: {format_seconds_to_dhm(total_calculated_net_loss_sec)}") # <-- USE RECONCILED TIME
 
                 # --- v6.79: New Balanced Chart + Styled Dataframe Layout ---
                 st.subheader(f"Capacity Loss Breakdown (vs {benchmark_title})")
@@ -684,7 +682,8 @@ if uploaded_file is not None:
                     net_loss_val = total_calculated_net_loss_parts
                     net_loss_color = get_color_css(net_loss_val)
                     with st.container(border=True):
-                        st.markdown(f"**Total Net Loss**")
+                        # --- v6.80: Rename to "Total Net Impact" ---
+                        st.markdown(f"**Total Net Impact**")
                         st.markdown(f"<h3><span style='{net_loss_color}'>{net_loss_val:,.0f} parts</span></h3>", unsafe_allow_html=True)
                         st.caption(f"Net Time Lost: {format_seconds_to_dhm(total_calculated_net_loss_sec)}")
                     
@@ -693,8 +692,9 @@ if uploaded_file is not None:
                         "Metric": [
                             "Loss (RR Downtime)", 
                             "Net Loss (Cycle Time)", 
-                            "&nbsp;&nbsp;&nbsp; └ Loss (Slow Cycles)", 
-                            "&nbsp;&nbsp;&nbsp; └ Gain (Fast Cycles)"
+                            # --- v6.80: Fix &nbsp; formatting ---
+                            "\u00A0\u00A0\u00A0 └ Loss (Slow Cycles)", 
+                            "\u00A0\u00A0\u00A0 └ Gain (Fast Cycles)"
                         ],
                         "Parts": [
                             total_downtime_loss_parts,
@@ -942,7 +942,7 @@ if uploaded_file is not None:
                         name='Target Output',
                         mode='lines',
                         line=dict(color='deepskyblue', dash='dash'),
-                        hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Target: %{y:,.0f}<extra></extra>'
+                        hovertemplate='<b>%{x|%Y-%m-%d}</b><ab.br>Target: %{y:,.0f}<extra></extra>'
                     ))
                     
                 fig_ts.add_trace(go.Scatter(
