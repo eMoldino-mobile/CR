@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.67 (Allocates positive gains as well as losses)"
+__version__ = "6.68 (Updated dashboard layout)"
 # ==================================================================
 
 # ==================================================================
@@ -590,28 +590,33 @@ if uploaded_file is not None:
                 # --- Box 2: Capacity Loss Breakdown ---
                 st.subheader(f"Capacity Loss Breakdown (vs {benchmark_title})")
                 st.info(f"These values are calculated based on the *time-based* logic (Downtime + Slow/Fast Cycles) using **{benchmark_title}** as the benchmark.")
+                
+                # --- v6.68: Box 2a (RR Downtime) ---
                 with st.container(border=True):
-                    c1, c2, c3, c4 = st.columns(4)
-
-                    with c1:
-                        # --- v6.2: Removed delta ---
+                    c1 = st.columns(1)
+                    with c1[0]:
                         st.metric("Loss (RR Downtime)", f"{total_downtime_loss_parts:,.0f} parts")
                         st.caption(f"Time Lost: {format_seconds_to_dhm(total_downtime_loss_sec)}")
 
-                    with c2:
-                        # --- v6.2: Removed delta ---
+                # --- v6.68: Box 2b (Cycle Time) ---
+                with st.container(border=True):
+                    c1, c2, c3 = st.columns(3)
+                    with c1:
                         st.metric("Loss (Slow Cycles)", f"{total_slow_loss_parts:,.0f} parts")
                         st.caption(f"Time Lost: {format_seconds_to_dhm(total_slow_loss_sec)}")
-
-                    with c3:
-                        # --- v6.2: Removed delta ---
+                    with c2:
                         st.metric("Gain (Fast Cycles)", f"{total_fast_gain_parts:,.0f} parts")
                         st.caption(f"Time Gained: {format_seconds_to_dhm(total_fast_gain_sec)}")
-                
-                    with c4:
-                        # --- v6.56: This now equals the True Loss ---
-                        st.metric("Total Net Loss", f"{total_calculated_net_loss_parts:,.0f} parts")
+                    with c3:
+                        st.metric("Net Loss (Cycle Time)", f"{total_net_cycle_loss_parts:,.0f} parts")
                         st.caption(f"Net Time Lost: {format_seconds_to_dhm(total_net_cycle_loss_sec)}")
+                
+                # --- v6.68: Box 2c (Total Net Loss) ---
+                with st.container(border=True):
+                    c1 = st.columns(1)
+                    with c1[0]:
+                        st.metric("Total Net Loss (RR + Cycle Time)", f"{total_calculated_net_loss_parts:,.0f} parts")
+                        st.caption(f"Net Time Lost: {format_seconds_to_dhm(total_calculated_net_loss_sec)}")
 
 
                 # --- Collapsible Daily Summary Table ---
@@ -717,16 +722,17 @@ if uploaded_file is not None:
                     agg_df['(Ref) Net Loss (RR)'] = agg_df['Capacity Loss (downtime) (parts)']
                     agg_df['(Ref) Net Loss (Cycle)'] = agg_df['Total Capacity Loss (cycle time) (parts)']
                     
-                    total_ref_loss = agg_df['(Ref) Net Loss (RR)'] + agg_df['(Ref) Net Loss (Cycle)']
+                    # --- v6.67: Use absolute values for ratio base ---
+                    total_ref_loss_abs = agg_df['(Ref) Net Loss (RR)'].abs() + agg_df['(Ref) Net Loss (Cycle)'].abs()
                     
                     agg_df['loss_downtime_ratio'] = np.where(
-                        total_ref_loss > 0,
-                        agg_df['(Ref) Net Loss (RR)'] / total_ref_loss,
+                        total_ref_loss_abs > 0,
+                        agg_df['(Ref) Net Loss (RR)'].abs() / total_ref_loss_abs,
                         0
                     )
                     agg_df['loss_cycletime_ratio'] = np.where(
-                        total_ref_loss > 0,
-                        agg_df['(Ref) Net Loss (Cycle)'] / total_ref_loss,
+                        total_ref_loss_abs > 0,
+                        agg_df['(Ref) Net Loss (Cycle)'].abs() / total_ref_loss_abs,
                         0
                     )
                     
