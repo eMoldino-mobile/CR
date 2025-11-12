@@ -979,7 +979,7 @@ if uploaded_file is not None:
                     name='Run Rate Downtime (Stops)',
                     marker_color='#ff6961', # Pastel Red
                     customdata=chart_df['Capacity Loss (downtime) (parts %)'],
-                    hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Run Rate Downtime (Stops): %{y:,.0f} (%{customdata:.1%})<extra></all>'
+                    hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Run Rate Downtime (Stops): %{y:,.0f} (%{customdata:.1%})<extra></extra>'
                 ))
                 
                 fig_ts.update_layout(barmode='stack')
