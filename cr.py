@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.91 ('All Dates' & Run Lines in Shot Chart)"
+__version__ = "6.90 (Fixed negative run time bug)"
 # ==================================================================
 
 # ==================================================================
@@ -364,8 +364,6 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         return final_df, pd.DataFrame()
 
     all_shots_df = pd.concat(all_shots_list, ignore_index=True)
-    # --- v6.91: Make run_id 1-based ---
-    all_shots_df['run_id'] = all_shots_df['run_id'] + 1
     all_shots_df['date'] = all_shots_df['SHOT TIME'].dt.date
     
     return final_df, all_shots_df
@@ -462,8 +460,8 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
         return pd.DataFrame()
         
     run_summary_df = pd.DataFrame(run_summary_list).replace([np.inf, -np.inf], np.nan).fillna(0)
-    # --- v6.91: run_id is already 1-based from the main function ---
-    # run_summary_df['run_id'] = run_summary_df['run_id'] + 1
+    # Set Run ID to be 1-based for display
+    run_summary_df['run_id'] = run_summary_df['run_id'] + 1
     run_summary_df = run_summary_df.set_index('run_id')
     
     return run_summary_df
@@ -942,7 +940,7 @@ if uploaded_file is not None:
                     
                     agg_df['Capacity Loss (downtime) (parts %)'] = np.where( perc_base_parts > 0, agg_df['Capacity Loss (downtime) (parts)'] / perc_base_parts, 0)
                     agg_df['Capacity Loss (slow cycle time) (parts %)'] = np.where( perc_base_parts > 0, agg_df['Capacity Loss (slow cycle time) (parts)'] / perc_base_parts, 0)
-                    agg_df['Capacity Loss (fast cycle time) (parts %)'] = np.where( perc_base_parts > 0, agg_df['Capacity Gain (fast cycle time) (parts)'] / perc_base_parts, 0)
+                    agg_df['Capacity Gain (fast cycle time) (parts %)'] = np.where( perc_base_parts > 0, agg_df['Capacity Gain (fast cycle time) (parts)'] / perc_base_parts, 0)
                     agg_df['Total Capacity Loss (parts %)'] = np.where( perc_base_parts > 0, agg_df['Total Capacity Loss (parts)'] / perc_base_parts, 0)
 
                     agg_df['Capacity Loss (vs Target) (parts %)'] = np.where( agg_df['Target Output (parts)'] > 0, agg_df['Capacity Loss (vs Target) (parts)'] / agg_df['Target Output (parts)'], 0)
@@ -1178,23 +1176,14 @@ if uploaded_file is not None:
                 if all_shots_df.empty:
                     st.warning("No shots were found in the file to analyze.")
                 else:
-                    # --- v6.91: Add "All Dates" option ---
-                    available_dates_list = sorted(all_shots_df['date'].unique(), reverse=True)
-                    available_dates = ["All Dates"] + available_dates_list
-                    
+                    available_dates = sorted(all_shots_df['date'].unique(), reverse=True)
                     selected_date = st.selectbox(
                         "Select a Date to Analyze",
                         options=available_dates,
-                        format_func=lambda d: "All Dates" if isinstance(d, str) else d.strftime('%Y-%m-%d') # Format for display
+                        format_func=lambda d: d.strftime('%Y-%m-%d') # Format for display
                     )
 
-                    # --- v6.91: Filter to selected date or all dates ---
-                    if selected_date == "All Dates":
-                        df_day_shots = all_shots_df.copy()
-                        chart_title = "All Shots for Full Period"
-                    else:
-                        df_day_shots = all_shots_df[all_shots_df['date'] == selected_date]
-                        chart_title = f"All Shots for {selected_date}"
+                    df_day_shots = all_shots_df[all_shots_df['date'] == selected_date]
                     
                     st.subheader("Chart Controls")
                     # --- v6.27: Filter out huge run breaks from the slider max calculation ---
@@ -1243,7 +1232,7 @@ if uploaded_file is not None:
                                 fig_ct.add_bar(
                                     x=df_subset['SHOT TIME'], y=df_subset['Actual CT'],
                                     name=shot_type, marker_color=color,
-                                    # --- v6.89: Add run_id to hover text (now 1-based) ---
+                                    # --- v6.89: Add run_id to hover text ---
                                     customdata=df_subset['run_id'],
                                     hovertemplate='<b>%{x|%H:%M:%S}</b><br>Run ID: %{customdata}<br>Shot Type: %{fullData.name}<br>Actual CT: %{y:.2f}s<extra></extra>'
                                 )
@@ -1269,23 +1258,9 @@ if uploaded_file is not None:
                             text=f"{reference_ct_label}: {reference_ct_for_day:.2f}s", showarrow=True, arrowhead=1
                         )
                         # --- vs6.54 End ---
-                        
-                        # --- v6.91: Add vertical lines for new runs ---
-                        if 'run_id' in df_day_shots.columns:
-                            run_starts = df_day_shots.groupby('run_id')['SHOT TIME'].min().sort_values()
-                            for start_time in run_starts.iloc[1:]: # Skip the very first run
-                                run_id_val = df_day_shots[df_day_shots['SHOT TIME'] == start_time]['run_id'].iloc[0]
-                                fig_ct.add_vline(
-                                    x=start_time, 
-                                    line_width=2, 
-                                    line_dash="dash", 
-                                    line_color="purple",
-                                    annotation_text=f"Run {run_id_val} Start",
-                                    annotation_position="top left"
-                                )
 
                         fig_ct.update_layout(
-                            title=chart_title, # --- v6.91: Use dynamic title ---
+                            title=f"All Shots for {selected_date}",
                             xaxis_title='Time of Day',
                             yaxis_title='Actual Cycle Time (sec)',
                             hovermode="closest",
@@ -1295,16 +1270,9 @@ if uploaded_file is not None:
                         )
                         st.plotly_chart(fig_ct, use_container_width=True)
 
-                        # --- v6.91: Handle "All Dates" in table ---
-                        st.subheader(f"Data for all {len(df_day_shots)} shots ({selected_date})")
-                        if len(df_day_shots) > 1000:
-                            st.info(f"Displaying first 1,000 shots of {len(df_day_shots)} total.")
-                            df_to_display = df_day_shots.head(1000)
-                        else:
-                            df_to_display = df_day_shots
-                            
+                        st.subheader(f"Data for all {len(df_day_shots)} shots on {selected_date}")
                         st.dataframe(
-                            df_to_display[[
+                            df_day_shots[[
                                 'SHOT TIME', 'Actual CT', 'Approved CT',
                                 'Working Cavities', 'run_id', 'Shot Type', 'stop_flag', # <-- v6.89: Added run_id
                                 'reference_ct', 'Mode CT Lower', 'Mode CT Upper' # --- v6.62: Added columns ---
@@ -1314,7 +1282,7 @@ if uploaded_file is not None:
                                 'reference_ct': '{:.2f}', # --- v6.89: Renamed ---
                                 'Mode CT Lower': '{:.2f}', # --- v6.62: Added format ---
                                 'Mode CT Upper': '{:.2f}', # --- v6.62: Added format ---
-                                'SHOT TIME': lambda t: t.strftime('%Y-%m-%d %H:%M:%S') if selected_date == "All Dates" else t.strftime('%H:%M:%S')
+                                'SHOT TIME': lambda t: t.strftime('%H:%M:%S')
                             }),
                             use_container_width=True
                         )
