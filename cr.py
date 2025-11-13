@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.92 (Fixed KeyError for 'by Run' mode)"
+__version__ = "6.91 ('All Dates' & Run Lines in Shot Chart)"
 # ==================================================================
 
 # ==================================================================
@@ -229,21 +229,6 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         (df_production['Actual CT'] - df_production['reference_ct']),
         0
     )
-    
-    # --- v6.92: BUG FIX ---
-    # Merge the calculated columns back into df_rr so 'by Run' mode can see them
-    df_rr['parts_gain'] = df_production['parts_gain']
-    df_rr['parts_loss'] = df_production['parts_loss']
-    df_rr['time_gain_sec'] = df_production['time_gain_sec']
-    df_rr['time_loss_sec'] = df_production['time_loss_sec']
-    
-    # Fill NaNs with 0 for all downtime shots
-    df_rr['parts_gain'].fillna(0, inplace=True)
-    df_rr['parts_loss'].fillna(0, inplace=True)
-    df_rr['time_gain_sec'].fillna(0, inplace=True)
-    df_rr['time_loss_sec'].fillna(0, inplace=True)
-    # --- End v6.92 Bug Fix ---
-
 
     # 11. Add Shot Type and date
     conditions = [
@@ -297,6 +282,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         # --- v6.90: BUG FIX ---
         # "Run Breaks" are not subtracted from the day's time. They are
         # just downtime events that are already excluded from loss_sec.
+        # run_break_time_sec = daily_df[daily_df['is_run_break'] == True]['time_diff_sec'].sum()
         results['Filtered Run Time (sec)'] = base_run_time_sec
         # --- End v6.90 Bug Fix ---
 
@@ -417,6 +403,7 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
 
         # --- v6.90: BUG FIX ---
         # "Run Breaks" are not subtracted from the run's time.
+        # run_break_time_sec = df_run[df_run['is_run_break'] == True]['time_diff_sec'].sum()
         results['Filtered Run Time (sec)'] = base_run_time_sec
         # --- End v6.90 Bug Fix ---
         
@@ -438,12 +425,10 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
         results['Actual Output (parts)'] = run_prod['Working Cavities'].sum()
         results['Actual Cycle Time Total (sec)'] = run_prod['Actual CT'].sum()
 
-        # --- v6.92: Fix KeyError ---
         results['Capacity Gain (fast cycle time) (sec)'] = run_prod['time_gain_sec'].sum()
         results['Capacity Loss (slow cycle time) (sec)'] = run_prod['time_loss_sec'].sum()
         results['Capacity Loss (slow cycle time) (parts)'] = run_prod['parts_loss'].sum()
         results['Capacity Gain (fast cycle time) (parts)'] = run_prod['parts_gain'].sum()
-        # --- End v6.92 Fix ---
 
         # 4. Reconciliation
         true_capacity_loss_parts = results['Optimal Output (parts)'] - results['Actual Output (parts)']
@@ -478,6 +463,7 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
         
     run_summary_df = pd.DataFrame(run_summary_list).replace([np.inf, -np.inf], np.nan).fillna(0)
     # --- v6.91: run_id is already 1-based from the main function ---
+    # run_summary_df['run_id'] = run_summary_df['run_id'] + 1
     run_summary_df = run_summary_df.set_index('run_id')
     
     return run_summary_df
@@ -956,7 +942,7 @@ if uploaded_file is not None:
                     
                     agg_df['Capacity Loss (downtime) (parts %)'] = np.where( perc_base_parts > 0, agg_df['Capacity Loss (downtime) (parts)'] / perc_base_parts, 0)
                     agg_df['Capacity Loss (slow cycle time) (parts %)'] = np.where( perc_base_parts > 0, agg_df['Capacity Loss (slow cycle time) (parts)'] / perc_base_parts, 0)
-                    agg_df['Capacity Gain (fast cycle time) (parts %)'] = np.where( perc_base_parts > 0, agg_df['Capacity Gain (fast cycle time) (parts)'] / perc_base_parts, 0)
+                    agg_df['Capacity Loss (fast cycle time) (parts %)'] = np.where( perc_base_parts > 0, agg_df['Capacity Gain (fast cycle time) (parts)'] / perc_base_parts, 0)
                     agg_df['Total Capacity Loss (parts %)'] = np.where( perc_base_parts > 0, agg_df['Total Capacity Loss (parts)'] / perc_base_parts, 0)
 
                     agg_df['Capacity Loss (vs Target) (parts %)'] = np.where( agg_df['Target Output (parts)'] > 0, agg_df['Capacity Loss (vs Target) (parts)'] / agg_df['Target Output (parts)'], 0)
