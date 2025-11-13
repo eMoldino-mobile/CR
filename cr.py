@@ -6,11 +6,12 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.99 (Fixed KeyError for by Run and shot chart)"
+# v7.00: Fixed KeyErrors for 'by Run' mode and Shot Chart
+__version__ = "7.00 (Fixed 'reference_ct' KeyError)"
 # ==================================================================
 
 # ==================================================================
-#                         HELPER FUNCTIONS
+#                            HELPER FUNCTIONS
 # ==================================================================
 
 def format_seconds_to_dhm(total_seconds):
@@ -27,8 +28,6 @@ def format_seconds_to_dhm(total_seconds):
     if minutes > 0 or not parts: parts.append(f"{minutes}m")
     return " ".join(parts) if parts else "0m"
 
-# --- v6.5: Removed get_progress_bar_html ---
-
 # --- v6.89: Define all_result_columns globally to fix NameError ---
 ALL_RESULT_COLUMNS = [
     'Date', 'Filtered Run Time (sec)', 'Optimal Output (parts)',
@@ -44,7 +43,7 @@ ALL_RESULT_COLUMNS = [
 ]
 
 # ==================================================================
-#                        DATA CALCULATION
+#                           DATA CALCULATION
 # ==================================================================
 
 def load_data(uploaded_file):
@@ -172,6 +171,29 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     # 4. Assign a *global* run_id
     df_rr['run_id'] = is_run_break.cumsum()
 
+    # ==================================================================
+    # --- v7.00: KEY BUG FIX ---
+    # Initialize *all* computed columns on df_rr first.
+    # This ensures that all_shots_df (which is made from df_rr)
+    # has these columns, even if logic fails or edge cases occur.
+    # This fixes KeyErrors in 'by Run' mode and the Shot Chart.
+    # ==================================================================
+    df_rr['mode_ct'] = 0.0
+    df_rr['mode_lower_limit'] = 0.0
+    df_rr['mode_upper_limit'] = 0.0
+    df_rr['approved_ct_for_run'] = 0.0
+    df_rr['reference_ct'] = 0.0
+    df_rr['stop_flag'] = 0
+    df_rr['adj_ct_sec'] = 0.0
+    df_rr['parts_gain'] = 0.0
+    df_rr['parts_loss'] = 0.0
+    df_rr['time_gain_sec'] = 0.0
+    df_rr['time_loss_sec'] = 0.0
+    df_rr['Shot Type'] = 'N/A'
+    df_rr['Mode CT Lower'] = 0.0
+    df_rr['Mode CT Upper'] = 0.0
+    # ==================================================================
+    
     # 5. Calculate Mode CT *per global run*
     df_for_mode = df_rr[df_rr["Actual CT"] < 999.9]
     run_modes = df_for_mode.groupby('run_id')['Actual CT'].apply(
@@ -236,13 +258,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         0
     )
     
-    # --- v6.99: BUG FIX ---
-    # Create columns on df_rr *first* (initialized to 0)
-    df_rr['parts_gain'] = 0.0
-    df_rr['parts_loss'] = 0.0
-    df_rr['time_gain_sec'] = 0.0
-    df_rr['time_loss_sec'] = 0.0
-    
+    # --- v6.99: BUG FIX (Now part of v7.00 initialization) ---
     # Now, update df_rr with the values from df_production
     # This will only update rows where stop_flag == 0
     df_rr.update(df_production[['parts_gain', 'parts_loss', 'time_gain_sec', 'time_loss_sec']])
@@ -258,6 +274,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     choices = ['Slow', 'Fast', 'On Target']
     df_production['Shot Type'] = np.select(conditions, choices, default='N/A')
     
+    # Update df_rr with the new 'Shot Type'
     df_rr['Shot Type'] = df_production['Shot Type'] 
     df_rr.loc[is_run_break, 'Shot Type'] = 'Run Break (Excluded)'
     df_rr['Shot Type'].fillna('RR Downtime (Stop)', inplace=True)
@@ -421,13 +438,18 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
         max_cavities = df_run['Working Cavities'].max()
         if max_cavities == 0 or pd.isna(max_cavities): max_cavities = 1
         
-        avg_reference_ct = df_run['reference_ct'].mean()
-        if avg_reference_ct == 0 or pd.isna(avg_reference_ct):
-            avg_reference_ct = 1
-            
-        avg_approved_ct = df_run['approved_ct_for_run'].mean()
-        if avg_approved_ct == 0 or pd.isna(avg_approved_ct):
-            avg_approved_ct = 1
+        # --- v7.00: Add check for columns before using them ---
+        avg_reference_ct = 1
+        if 'reference_ct' in df_run.columns:
+            avg_reference_ct = df_run['reference_ct'].mean()
+            if avg_reference_ct == 0 or pd.isna(avg_reference_ct):
+                avg_reference_ct = 1
+        
+        avg_approved_ct = 1
+        if 'approved_ct_for_run' in df_run.columns:
+            avg_approved_ct = df_run['approved_ct_for_run'].mean()
+            if avg_approved_ct == 0 or pd.isna(avg_approved_ct):
+                avg_approved_ct = 1
 
         # 3. Calculate Segments
         results['Optimal Output (parts)'] = (results['Filtered Run Time (sec)'] / avg_reference_ct) * max_cavities
@@ -435,7 +457,7 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
         results['Actual Output (parts)'] = run_prod['Working Cavities'].sum()
         results['Actual Cycle Time Total (sec)'] = run_prod['Actual CT'].sum()
 
-        # --- v6.95: Fix KeyError ---
+        # --- v6.95: Fix KeyError (v7.00: These columns are now guaranteed by the init fix) ---
         results['Capacity Gain (fast cycle time) (sec)'] = run_prod['time_gain_sec'].sum()
         results['Capacity Loss (slow cycle time) (sec)'] = run_prod['time_loss_sec'].sum()
         results['Capacity Loss (slow cycle time) (parts)'] = run_prod['parts_loss'].sum()
@@ -480,7 +502,7 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
 
 
 # ==================================================================
-#                        CACHING WRAPPER
+#                       CACHING WRAPPER
 # ==================================================================
 
 @st.cache_data
@@ -499,7 +521,7 @@ def run_capacity_calculation(raw_data_df, toggle, cavities, target_perc_slider, 
     )
 
 # ==================================================================
-#                        STREAMLIT APP LAYOUT
+#                       STREAMLIT APP LAYOUT
 # ==================================================================
 
 # --- Page Config ---
@@ -613,7 +635,7 @@ if uploaded_file is not None:
                 default_cavities,
                 target_output_perc, # Pass the slider value
                 mode_ct_tolerance,  
-                rr_downtime_gap,         
+                rr_downtime_gap,      
                 run_interval_hours,      
                 _cache_version=cache_key
             )
@@ -677,7 +699,7 @@ if uploaded_file is not None:
                         st.metric("Optimal Output (100%)", f"{total_optimal_100:,.0f}")
                         if benchmark_view == "Target Output":
                              st.caption(f"Target Output: {total_target:,.0f}")
-                        
+                            
                     with c3:
                         st.metric(f"Actual Output ({actual_output_perc_val:.1%})", f"{total_produced:,.0f} parts")
                         st.caption(f"Actual Production Time: {total_actual_ct_dhm}")
@@ -1234,8 +1256,12 @@ if uploaded_file is not None:
                     )
 
                     # --- v6.98: Fix KeyError by moving this check up ---
+                    # --- v7.00: Further robust check for all required columns ---
+                    required_shot_cols = ['reference_ct', 'Mode CT Lower', 'Mode CT Upper']
                     if df_day_shots.empty:
                         st.warning(f"No shots found for {selected_date}.")
+                    elif not all(col in df_day_shots.columns for col in required_shot_cols):
+                        st.error(f"Error: Shot data is missing required columns. {', '.join(required_shot_cols)}")
                     else:
                         # --- v6.64: Use Reference CT (which is Approved CT) ---
                         reference_ct_for_day = df_day_shots['reference_ct'].iloc[0] 
