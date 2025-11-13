@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.98 (Fixed KeyError on empty dataframes)"
+__version__ = "6.96 (Fixed dynamic Mode CT band on shot chart)"
 # ==================================================================
 
 # ==================================================================
@@ -938,11 +938,6 @@ if uploaded_file is not None:
                     else: # Daily
                         agg_df = daily_df.copy()
                         chart_title_prefix = "Daily"
-                        
-                    # --- v6.98: Fix KeyError by checking for empty agg_df ---
-                    if agg_df.empty:
-                        st.warning(f"No data to display for the '{data_frequency}' frequency.")
-                        return pd.DataFrame(), "No Data"
 
                     # --- Calculate Percentage Columns AFTER aggregation ---
                     # --- v6.64: All calcs are vs Optimal ---
@@ -996,193 +991,191 @@ if uploaded_file is not None:
                 # --- v6.64: Process the main dataframe for the chart ---
                 display_df, chart_title = process_aggregated_dataframe(results_df, all_shots_df, target_output_perc)
                 
-                # --- v6.98: Check if processing failed ---
-                if not display_df.empty:
-                    if data_frequency == 'Weekly':
-                        xaxis_title = "Week"
-                    elif data_frequency == 'Monthly':
-                        xaxis_title = "Month"
-                    elif data_frequency == 'by Run':
-                        xaxis_title = "Run ID" # <-- v6.89: New X-axis title
-                    else: # Daily
-                        xaxis_title = "Date"
-                    
-                    # --- v6.89: Handle different indexes ---
-                    if data_frequency == 'by Run':
-                        chart_df = display_df.reset_index().rename(columns={'run_id': 'X-Axis'})
-                        chart_df['X-Axis'] = 'Run ' + chart_df['X-Axis'].astype(str) # Label as "Run 1", "Run 2"
-                    else:
-                        chart_df = display_df.reset_index().rename(columns={'Date': 'X-Axis'})
-                    
+                if data_frequency == 'Weekly':
+                    xaxis_title = "Week"
+                elif data_frequency == 'Monthly':
+                    xaxis_title = "Month"
+                elif data_frequency == 'by Run':
+                    xaxis_title = "Run ID" # <-- v6.89: New X-axis title
+                else: # Daily
+                    xaxis_title = "Date"
+                
+                # --- v6.89: Handle different indexes ---
+                if data_frequency == 'by Run':
+                    chart_df = display_df.reset_index().rename(columns={'run_id': 'X-Axis'})
+                    chart_df['X-Axis'] = 'Run ' + chart_df['X-Axis'].astype(str) # Label as "Run 1", "Run 2"
+                else:
+                    chart_df = display_df.reset_index().rename(columns={'Date': 'X-Axis'})
+                
 
-                    # --- NEW: Unified Performance Breakdown Chart (Time Series) ---
-                    st.header(f"{data_frequency} Performance Breakdown (vs {benchmark_title})")
-                    fig_ts = go.Figure()
+                # --- NEW: Unified Performance Breakdown Chart (Time Series) ---
+                st.header(f"{data_frequency} Performance Breakdown (vs {benchmark_title})")
+                fig_ts = go.Figure()
 
-                    fig_ts.add_trace(go.Bar(
-                        x=chart_df['X-Axis'],
-                        y=chart_df['Actual Output (parts)'],
-                        name='Actual Output',
-                        marker_color='green',
-                        customdata=chart_df['Actual Output (%)'],
-                        hovertemplate='Actual Output: %{y:,.0f} (%{customdata:.1%})<extra></extra>'
-                    ))
-                    
-                    chart_df['Net Cycle Time Loss (parts)'] = chart_df['Total Capacity Loss (cycle time) (parts)']
-                    chart_df['Net Cycle Time Loss (positive)'] = np.maximum(0, chart_df['Net Cycle Time Loss (parts)'])
+                fig_ts.add_trace(go.Bar(
+                    x=chart_df['X-Axis'],
+                    y=chart_df['Actual Output (parts)'],
+                    name='Actual Output',
+                    marker_color='green',
+                    customdata=chart_df['Actual Output (%)'],
+                    hovertemplate='Actual Output: %{y:,.0f} (%{customdata:.1%})<extra></extra>'
+                ))
+                
+                chart_df['Net Cycle Time Loss (parts)'] = chart_df['Total Capacity Loss (cycle time) (parts)']
+                chart_df['Net Cycle Time Loss (positive)'] = np.maximum(0, chart_df['Net Cycle Time Loss (parts)'])
 
-                    fig_ts.add_trace(go.Bar(
-                        x=chart_df['X-Axis'],
-                        y=chart_df['Net Cycle Time Loss (positive)'],
-                        name='Capacity Loss (cycle time)',
-                        marker_color='#ffb347', # Pastel Orange
-                        customdata=np.stack((
-                            chart_df['Net Cycle Time Loss (parts)'],
-                            chart_df['Capacity Loss (slow cycle time) (parts)'],
-                            chart_df['Capacity Gain (fast cycle time) (parts)']
-                        ), axis=-1),
-                        # --- v6.86: Fix Tooltip ---
-                        hovertemplate=
-                            '<b>Net Cycle Time Loss: %{customdata[0]:,.0f}</b><br>' +
-                            'Slow Cycle Loss: %{customdata[1]:,.0f}<br>' +
-                            'Fast Cycle Gain: -%{customdata[2]:,.0f}<br>' + 
-                            '<extra></extra>'
-                    ))
-                    
-                    fig_ts.add_trace(go.Bar(
-                        x=chart_df['X-Axis'],
-                        y=chart_df['Capacity Loss (downtime) (parts)'],
-                        name='Run Rate Downtime (Stops)',
-                        marker_color='#ff6961', # Pastel Red
-                        customdata=chart_df['Capacity Loss (downtime) (parts %)'],
-                        hovertemplate='Run Rate Downtime (Stops): %{y:,.0f} (%{customdata:.1%})<extra></extra>'
-                    ))
-                    
-                    fig_ts.update_layout(barmode='stack')
+                fig_ts.add_trace(go.Bar(
+                    x=chart_df['X-Axis'],
+                    y=chart_df['Net Cycle Time Loss (positive)'],
+                    name='Capacity Loss (cycle time)',
+                    marker_color='#ffb347', # Pastel Orange
+                    customdata=np.stack((
+                        chart_df['Net Cycle Time Loss (parts)'],
+                        chart_df['Capacity Loss (slow cycle time) (parts)'],
+                        chart_df['Capacity Gain (fast cycle time) (parts)']
+                    ), axis=-1),
+                    # --- v6.86: Fix Tooltip ---
+                    hovertemplate=
+                        '<b>Net Cycle Time Loss: %{customdata[0]:,.0f}</b><br>' +
+                        'Slow Cycle Loss: %{customdata[1]:,.0f}<br>' +
+                        'Fast Cycle Gain: -%{customdata[2]:,.0f}<br>' + 
+                        '<extra></extra>'
+                ))
+                
+                fig_ts.add_trace(go.Bar(
+                    x=chart_df['X-Axis'],
+                    y=chart_df['Capacity Loss (downtime) (parts)'],
+                    name='Run Rate Downtime (Stops)',
+                    marker_color='#ff6961', # Pastel Red
+                    customdata=chart_df['Capacity Loss (downtime) (parts %)'],
+                    hovertemplate='Run Rate Downtime (Stops): %{y:,.0f} (%{customdata:.1%})<extra></extra>'
+                ))
+                
+                fig_ts.update_layout(barmode='stack')
 
-                    if benchmark_view == "Target Output":
-                        fig_ts.add_trace(go.Scatter(
-                            x=chart_df['X-Axis'],
-                            y=chart_df['Target Output (parts)'],
-                            name=f'Target Output ({target_output_perc:.0f}%)',
-                            mode='lines',
-                            line=dict(color='deepskyblue', dash='dash'),
-                            hovertemplate=f'<b>Target Output ({target_output_perc:.0f}%)</b>: %{{y:,.0f}}<extra></extra>'
-                        ))
-                        
+                if benchmark_view == "Target Output":
                     fig_ts.add_trace(go.Scatter(
                         x=chart_df['X-Axis'],
-                        y=chart_df['Optimal Output (parts)'],
-                        name='Optimal Output (100%)',
+                        y=chart_df['Target Output (parts)'],
+                        name=f'Target Output ({target_output_perc:.0f}%)',
                         mode='lines',
-                        line=dict(color='darkblue', dash='dot'),
-                        hovertemplate='Optimal Output (100%): %{y:,.0f}<extra></extra>'
+                        line=dict(color='deepskyblue', dash='dash'),
+                        hovertemplate=f'<b>Target Output ({target_output_perc:.0f}%)</b>: %{{y:,.0f}}<extra></extra>'
                     ))
+                    
+                fig_ts.add_trace(go.Scatter(
+                    x=chart_df['X-Axis'],
+                    y=chart_df['Optimal Output (parts)'],
+                    name='Optimal Output (100%)',
+                    mode='lines',
+                    line=dict(color='darkblue', dash='dot'),
+                    hovertemplate='Optimal Output (100%): %{y:,.0f}<extra></extra>'
+                ))
 
-                    fig_ts.update_layout(
-                        title=chart_title,
-                        xaxis_title=xaxis_title,
-                        yaxis_title='Parts (Output & Loss)',
-                        legend_title='Metric',
-                        hovermode="x unified"
+                fig_ts.update_layout(
+                    title=chart_title,
+                    xaxis_title=xaxis_title,
+                    yaxis_title='Parts (Output & Loss)',
+                    legend_title='Metric',
+                    hovermode="x unified"
+                )
+                st.plotly_chart(fig_ts, use_container_width=True)
+
+                # --- Full Data Table (Open by Default) ---
+                
+                # --- v6.89: Use the already processed display_df ---
+                display_df_totals = display_df
+                
+                st.header(f"Production Totals Report ({data_frequency})")
+                # --- v6.89: Reset index for Run ID table ---
+                if data_frequency == 'by Run':
+                    report_table_1_df = display_df_totals.reset_index().rename(columns={'run_id': 'Run ID'})
+                    report_table_1 = pd.DataFrame(index=report_table_1_df.index)
+                    report_table_1['Run ID'] = report_table_1_df['Run ID']
+                else:
+                    report_table_1 = pd.DataFrame(index=display_df_totals.index)
+                    report_table_1_df = display_df_totals # Use the original df for applying data
+                    
+
+                report_table_1['Total Shots (all)'] = report_table_1_df['Total Shots (all)'].map('{:,.0f}'.format)
+                report_table_1['Production Shots'] = report_table_1_df.apply(lambda r: f"{r['Production Shots']:,.0f} ({r['Production Shots (%)']:.1%})", axis=1)
+                report_table_1['Downtime Shots'] = report_table_1_df['Downtime Shots'].map('{:,.0f}'.format)
+                report_table_1[run_time_label] = report_table_1_df.apply(lambda r: f"{r['Filtered Run Time (d/h/m)']} ({r['Filtered Run Time (sec)']:,.0f}s)", axis=1)
+                report_table_1['Actual Production Time'] = report_table_1_df.apply(lambda r: f"{r['Actual Cycle Time Total (d/h/m)']} ({r['Actual Cycle Time Total (time %)']:.1%})", axis=1)
+
+                st.dataframe(report_table_1, use_container_width=True)
+
+                # --- v6.64: Conditional Tables ---
+                
+                # --- TABLE 1: vs Optimal ---
+                st.header(f"Capacity Loss & Gain Report (vs Optimal) ({data_frequency})")
+                
+                # --- v6.89: Use the already processed display_df ---
+                display_df_optimal = display_df
+
+                # --- v6.89: Reset index for Run ID table ---
+                if data_frequency == 'by Run':
+                    report_table_optimal_df = display_df_optimal.reset_index().rename(columns={'run_id': 'Run ID'})
+                    report_table_optimal = pd.DataFrame(index=report_table_optimal_df.index)
+                    report_table_optimal['Run ID'] = report_table_optimal_df['Run ID']
+                else:
+                    report_table_optimal = pd.DataFrame(index=display_df_optimal.index)
+                    report_table_optimal_df = display_df_optimal
+
+                report_table_optimal['Optimal Output (parts)'] = report_table_optimal_df['Optimal Output (parts)'].map('{:,.2f}'.format)
+                report_table_optimal['Actual Output (parts)'] = report_table_optimal_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
+                report_table_optimal['Loss (RR Downtime)'] = report_table_optimal_df.apply(lambda r: f"{r['Capacity Loss (downtime) (parts)']:,.2f} ({r['Capacity Loss (downtime) (parts %)']:.1%})", axis=1)
+                report_table_optimal['Loss (Slow Cycles)'] = report_table_optimal_df.apply(lambda r: f"{r['Capacity Loss (slow cycle time) (parts)']:,.2f} ({r['Capacity Loss (slow cycle time) (parts %)']:.1%})", axis=1)
+                report_table_optimal['Gain (Fast Cycles)'] = report_table_optimal_df.apply(lambda r: f"{r['Capacity Gain (fast cycle time) (parts)']:,.2f} ({r['Capacity Gain (fast cycle time) (parts %)']:.1%})", axis=1)
+                report_table_optimal['Total Net Loss'] = report_table_optimal_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
+                st.dataframe(report_table_optimal, use_container_width=True)
+                
+                
+                if benchmark_view == "Target Output": 
+                    # --- TABLE 2: vs Target (Gap Allocation) ---
+                    st.header(f"Gap Allocation Report (vs Target {target_output_perc:.0f}%) ({data_frequency})")
+                    st.info("This table allocates the 'Gap to Target' based on the *ratio* of *real* Net Losses (Downtime vs. Net Cycle Time).")
+                    
+                    # --- v6.64: Use same processed df ---
+                    display_df_target = display_df
+                    
+                    # --- v6.89: Reset index for Run ID table ---
+                    if data_frequency == 'by Run':
+                        report_table_target_df = display_df_target.reset_index().rename(columns={'run_id': 'Run ID'})
+                        report_table_target = pd.DataFrame(index=report_table_target_df.index)
+                        report_table_target['Run ID'] = report_table_target_df['Run ID']
+                    else:
+                        report_table_target = pd.DataFrame(index=display_df_target.index)
+                        report_table_target_df = display_df_target
+
+                    report_table_target['Target Output (parts)'] = report_table_target_df.apply(lambda r: f"{r['Target Output (parts)']:,.2f}", axis=1)
+                    report_table_target['Actual Output (parts)'] = report_table_target_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
+                    
+                    report_table_target['Gap to Target (parts)'] = report_table_target_df['Gap to Target (parts)'].apply(lambda x: "{:+,.2f}".format(x) if pd.notna(x) else "N/A")
+                    report_table_target['Gap % (vs Target)'] = report_table_target_df.apply(lambda r: r['Gap to Target (parts)'] / r['Target Output (parts)'] if r['Target Output (parts)'] > 0 else 0, axis=1).apply(lambda x: "{:+.1%}".format(x) if pd.notna(x) else "N/A")
+                    
+                    
+                    # --- v6.67: Renamed columns and logic ---
+                    report_table_target['Allocated Impact (RR Downtime)'] = report_table_target_df.apply(
+                        lambda r: f"{r['Allocated Impact (RR Downtime)']:,.2f} ({r['loss_downtime_ratio']:.1%})", 
+                        axis=1
                     )
-                    st.plotly_chart(fig_ts, use_container_width=True)
-
-                    # --- Full Data Table (Open by Default) ---
+                    report_table_target['Allocated Impact (Net Cycle)'] = report_table_target_df.apply(
+                        lambda r: f"{r['Allocated Impact (Net Cycle)']:,.2f} ({r['loss_cycletime_ratio']:.1%})", 
+                        axis=1
+                    )
                     
-                    # --- v6.89: Use the already processed display_df ---
-                    display_df_totals = display_df
+                    # --- v6.64: Add Reference Loss Columns ---
+                    report_table_target['(Ref) Net Loss (RR)'] = report_table_target_df['(Ref) Net Loss (RR)'].apply(lambda x: "{:,.2f}".format(x))
+                    report_table_target['(Ref) Net Loss (Cycle)'] = report_table_target_df['(Ref) Net Loss (Cycle)'].apply(lambda x: "{:,.2f}".format(x))
+
                     
-                    st.header(f"Production Totals Report ({data_frequency})")
-                    # --- v6.89: Reset index for Run ID table ---
-                    if data_frequency == 'by Run':
-                        report_table_1_df = display_df_totals.reset_index().rename(columns={'run_id': 'Run ID'})
-                        report_table_1 = pd.DataFrame(index=report_table_1_df.index)
-                        report_table_1['Run ID'] = report_table_1_df['Run ID']
-                    else:
-                        report_table_1 = pd.DataFrame(index=display_df_totals.index)
-                        report_table_1_df = display_df_totals # Use the original df for applying data
-                        
-
-                    report_table_1['Total Shots (all)'] = report_table_1_df['Total Shots (all)'].map('{:,.0f}'.format)
-                    report_table_1['Production Shots'] = report_table_1_df.apply(lambda r: f"{r['Production Shots']:,.0f} ({r['Production Shots (%)']:.1%})", axis=1)
-                    report_table_1['Downtime Shots'] = report_table_1_df['Downtime Shots'].map('{:,.0f}'.format)
-                    report_table_1[run_time_label] = report_table_1_df.apply(lambda r: f"{r['Filtered Run Time (d/h/m)']} ({r['Filtered Run Time (sec)']:,.0f}s)", axis=1)
-                    report_table_1['Actual Production Time'] = report_table_1_df.apply(lambda r: f"{r['Actual Cycle Time Total (d/h/m)']} ({r['Actual Cycle Time Total (time %)']:.1%})", axis=1)
-
-                    st.dataframe(report_table_1, use_container_width=True)
-
-                    # --- v6.64: Conditional Tables ---
-                    
-                    # --- TABLE 1: vs Optimal ---
-                    st.header(f"Capacity Loss & Gain Report (vs Optimal) ({data_frequency})")
-                    
-                    # --- v6.89: Use the already processed display_df ---
-                    display_df_optimal = display_df
-
-                    # --- v6.89: Reset index for Run ID table ---
-                    if data_frequency == 'by Run':
-                        report_table_optimal_df = display_df_optimal.reset_index().rename(columns={'run_id': 'Run ID'})
-                        report_table_optimal = pd.DataFrame(index=report_table_optimal_df.index)
-                        report_table_optimal['Run ID'] = report_table_optimal_df['Run ID']
-                    else:
-                        report_table_optimal = pd.DataFrame(index=display_df_optimal.index)
-                        report_table_optimal_df = display_df_optimal
-
-                    report_table_optimal['Optimal Output (parts)'] = report_table_optimal_df['Optimal Output (parts)'].map('{:,.2f}'.format)
-                    report_table_optimal['Actual Output (parts)'] = report_table_optimal_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
-                    report_table_optimal['Loss (RR Downtime)'] = report_table_optimal_df.apply(lambda r: f"{r['Capacity Loss (downtime) (parts)']:,.2f} ({r['Capacity Loss (downtime) (parts %)']:.1%})", axis=1)
-                    report_table_optimal['Loss (Slow Cycles)'] = report_table_optimal_df.apply(lambda r: f"{r['Capacity Loss (slow cycle time) (parts)']:,.2f} ({r['Capacity Loss (slow cycle time) (parts %)']:.1%})", axis=1)
-                    report_table_optimal['Gain (Fast Cycles)'] = report_table_optimal_df.apply(lambda r: f"{r['Capacity Gain (fast cycle time) (parts)']:,.2f} ({r['Capacity Gain (fast cycle time) (parts %)']:.1%})", axis=1)
-                    report_table_optimal['Total Net Loss'] = report_table_optimal_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
-                    st.dataframe(report_table_optimal, use_container_width=True)
-                    
-                    
-                    if benchmark_view == "Target Output": 
-                        # --- TABLE 2: vs Target (Gap Allocation) ---
-                        st.header(f"Gap Allocation Report (vs Target {target_output_perc:.0f}%) ({data_frequency})")
-                        st.info("This table allocates the 'Gap to Target' based on the *ratio* of *real* Net Losses (Downtime vs. Net Cycle Time).")
-                        
-                        # --- v6.64: Use same processed df ---
-                        display_df_target = display_df
-                        
-                        # --- v6.89: Reset index for Run ID table ---
-                        if data_frequency == 'by Run':
-                            report_table_target_df = display_df_target.reset_index().rename(columns={'run_id': 'Run ID'})
-                            report_table_target = pd.DataFrame(index=report_table_target_df.index)
-                            report_table_target['Run ID'] = report_table_target_df['Run ID']
-                        else:
-                            report_table_target = pd.DataFrame(index=display_df_target.index)
-                            report_table_target_df = display_df_target
-
-                        report_table_target['Target Output (parts)'] = report_table_target_df.apply(lambda r: f"{r['Target Output (parts)']:,.2f}", axis=1)
-                        report_table_target['Actual Output (parts)'] = report_table_target_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
-                        
-                        report_table_target['Gap to Target (parts)'] = report_table_target_df['Gap to Target (parts)'].apply(lambda x: "{:+,.2f}".format(x) if pd.notna(x) else "N/A")
-                        report_table_target['Gap % (vs Target)'] = report_table_target_df.apply(lambda r: r['Gap to Target (parts)'] / r['Target Output (parts)'] if r['Target Output (parts)'] > 0 else 0, axis=1).apply(lambda x: "{:+.1%}".format(x) if pd.notna(x) else "N/A")
-                        
-                        
-                        # --- v6.67: Renamed columns and logic ---
-                        report_table_target['Allocated Impact (RR Downtime)'] = report_table_target_df.apply(
-                            lambda r: f"{r['Allocated Impact (RR Downtime)']:,.2f} ({r['loss_downtime_ratio']:.1%})", 
-                            axis=1
-                        )
-                        report_table_target['Allocated Impact (Net Cycle)'] = report_table_target_df.apply(
-                            lambda r: f"{r['Allocated Impact (Net Cycle)']:,.2f} ({r['loss_cycletime_ratio']:.1%})", 
-                            axis=1
-                        )
-                        
-                        # --- v6.64: Add Reference Loss Columns ---
-                        report_table_target['(Ref) Net Loss (RR)'] = report_table_target_df['(Ref) Net Loss (RR)'].apply(lambda x: "{:,.2f}".format(x))
-                        report_table_target['(Ref) Net Loss (Cycle)'] = report_table_target_df['(Ref) Net Loss (Cycle)'].apply(lambda x: "{:,.2f}".format(x))
-
-                        
-                        st.dataframe(report_table_target.style.applymap(
-                            lambda x: 'color: green' if str(x).startswith('+') else 'color: red' if str(x).startswith('-') else None,
-                            # --- v6.67: Add new columns to style ---
-                            subset=['Gap to Target (parts)', 'Gap % (vs Target)', 'Allocated Impact (RR Downtime)', 'Allocated Impact (Net Cycle)']
-                        ), use_container_width=True)
-                    # --- End v6.64 ---
+                    st.dataframe(report_table_target.style.applymap(
+                        lambda x: 'color: green' if str(x).startswith('+') else 'color: red' if str(x).startswith('-') else None,
+                        # --- v6.67: Add new columns to style ---
+                        subset=['Gap to Target (parts)', 'Gap % (vs Target)', 'Allocated Impact (RR Downtime)', 'Allocated Impact (Net Cycle)']
+                    ), use_container_width=True)
+                # --- End v6.64 ---
 
 
                 # --- 4. SHOT-BY-SHOT ANALYSIS ---
@@ -1233,14 +1226,16 @@ if uploaded_file is not None:
                         help="Adjust the max Y-axis to zoom in on the cluster. (Set to 1000 to see all outliers)."
                     )
 
-                    # --- v6.98: Fix KeyError by moving this check up ---
                     if df_day_shots.empty:
                         st.warning(f"No shots found for {selected_date}.")
                     else:
                         # --- v6.64: Use Reference CT (which is Approved CT) ---
                         reference_ct_for_day = df_day_shots['reference_ct'].iloc[0] 
                         reference_ct_label = "Approved CT"
-                        
+                        # --- v6.62: Get Mode CT limits ---
+                        mode_ct_lower_for_day = df_day_shots['Mode CT Lower'].iloc[0]
+                        mode_ct_upper_for_day = df_day_shots['Mode CT Upper'].iloc[0]
+
                         fig_ct = go.Figure()
                         # --- v6.27: Add new color for run breaks ---
                         color_map = {
