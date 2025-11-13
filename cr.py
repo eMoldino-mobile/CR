@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.84 (Restored Waterfall Chart)"
+__version__ = "6.83 (Re-implemented Dual Calculation Logic)"
 # ==================================================================
 
 # ==================================================================
@@ -640,7 +640,7 @@ if uploaded_file is not None:
                             st.caption(f"Gap to Target: {total_gap_to_benchmark:+,.0f} parts ({gap_perc:+.1%})")
 
 
-                # --- v6.84: Replaced Stacked Bar with Waterfall ---
+                # --- v6.79: New Balanced Chart + Styled Dataframe Layout ---
                 st.subheader(f"Capacity Loss Breakdown (vs {benchmark_title})")
                 st.info(f"These values are calculated based on the *time-based* logic (Downtime + Slow/Fast Cycles) using **{benchmark_title}** as the benchmark.")
                 
@@ -649,74 +649,76 @@ if uploaded_file is not None:
                 with c1:
                     st.markdown("<h6 style='text-align: center;'>Overall Performance Breakdown</h6>", unsafe_allow_html=True)
                     
-                    # --- Waterfall Chart ---
-                    # Because of our reconciliation, we have perfect numbers.
-                    # Benchmark = Actual + RR Loss + Net Cycle Loss
+                    # --- Single Stacked Bar Chart ---
+                    # Use max(0,...) to prevent charting negative numbers
+                    y_data = [
+                        max(0, total_produced), 
+                        max(0, total_downtime_loss_parts), 
+                        max(0, total_net_cycle_loss_parts)
+                    ]
+                    labels = [
+                        'Actual Output', 
+                        'Loss (RR Downtime)', 
+                        'Net Loss (Cycle Time)'
+                    ]
+                    colors = ['#2ca02c', '#ff6961', '#ffb347'] # green, red, orange
                     
-                    # We must handle the case where Net Cycle Loss is a GAIN
-                    waterfall_x = ["Benchmark", "Loss (RR Downtime)"]
-                    waterfall_y = [total_benchmark_output, -total_downtime_loss_parts]
-                    waterfall_measure = ["absolute", "relative"]
-                    waterfall_text = [f"{total_benchmark_output:,.0f}", f"{-total_downtime_loss_parts:,.0f}"]
+                    fig_stacked_bar = go.Figure()
 
-                    if total_net_cycle_loss_parts >= 0:
-                        # It's a net loss
-                        waterfall_x.append("Net Loss (Cycle Time)")
-                        waterfall_y.append(-total_net_cycle_loss_parts)
-                        waterfall_measure.append("relative")
-                        waterfall_text.append(f"{-total_net_cycle_loss_parts:,.0f}")
-                    else:
-                        # It's a net gain
-                        waterfall_x.append("Net Gain (Cycle Time)")
-                        waterfall_y.append(abs(total_net_cycle_loss_parts)) # Add it back
-                        waterfall_measure.append("relative")
-                        waterfall_text.append(f"{abs(total_net_cycle_loss_parts):+,.0f}")
-                    
-                    # Add the final total
-                    waterfall_x.append("Actual Output")
-                    waterfall_y.append(total_produced)
-                    waterfall_measure.append("total")
-                    waterfall_text.append(f"{total_produced:,.0f}")
-                    
-
-                    fig_waterfall = go.Figure(go.Waterfall(
-                        name = "Breakdown",
-                        orientation = "v",
-                        measure = waterfall_measure,
-                        x = waterfall_x,
-                        y = waterfall_y,
-                        text = waterfall_text,
-                        textposition = "outside",
-                        connector = {"line":{"color":"rgb(63, 63, 63)"}},
-                        increasing = {"marker":{"color":"#2ca02c"}}, # Green for gains
-                        decreasing = {"marker":{"color":"#ff6961"}},  # Red for losses
-                        totals = {"marker":{"color":"#1f77b4"}} # Blue for totals (Benchmark & Actual)
+                    fig_stacked_bar.add_trace(go.Bar(
+                        x=['Performance'],
+                        y=[y_data[0]],
+                        name=labels[0],
+                        marker_color=colors[0],
+                        text=f"{y_data[0]:,.0f}",
+                        textposition='auto'
+                    ))
+                    fig_stacked_bar.add_trace(go.Bar(
+                        x=['Performance'],
+                        y=[y_data[1]],
+                        name=labels[1],
+                        marker_color=colors[1],
+                        text=f"{y_data[1]:,.0f}",
+                        textposition='auto'
+                    ))
+                    fig_stacked_bar.add_trace(go.Bar(
+                        x=['Performance'],
+                        y=[y_data[2]],
+                        name=labels[2],
+                        marker_color=colors[2],
+                        text=f"{y_data[2]:,.0f}",
+                        textposition='auto'
                     ))
                     
-                    fig_waterfall.update_layout(
-                        title_text="Performance Breakdown",
-                        title_x=0.5,
-                        showlegend=False,
-                        margin=dict(t=40, b=0, l=0, r=0),
+                    fig_stacked_bar.update_layout(
+                        barmode='stack',
+                        showlegend=True,
+                        legend_title_text='Metric',
+                        margin=dict(t=0, b=0, l=0, r=0),
                         height=400,
-                        yaxis_title='Parts'
+                        yaxis_title='Parts',
+                        xaxis_ticks='',
+                        xaxis_showticklabels=False
                     )
                     
-                    # Add Optimal (100%) line if we are in Target view
-                    if benchmark_view == "Target Output":
-                        fig_waterfall.add_shape(
-                            type='line',
-                            x0=-0.5, x1=len(waterfall_x)-0.5, # Span all columns
-                            y0=total_optimal_100, y1=total_optimal_100,
-                            line=dict(color='darkblue', dash='dot', width=3)
-                        )
-                        fig_waterfall.add_annotation(
-                            x=len(waterfall_x)-0.5, y=total_optimal_100,
-                            text=f"Optimal (100%): {total_optimal_100:,.0f}",
-                            showarrow=True, arrowhead=1, ax=40, ay=-20
-                        )
+                    # Add a line for the Benchmark Output
+                    fig_stacked_bar.add_shape(
+                        type='line',
+                        x0=-0.5, x1=0.5,
+                        y0=total_benchmark_output, y1=total_benchmark_output,
+                        line=dict(color='darkblue', dash='dot', width=3)
+                    )
+                    fig_stacked_bar.add_annotation(
+                        x=0.5,
+                        y=total_benchmark_output,
+                        text=f"Benchmark: {total_benchmark_output:,.0f}",
+                        showarrow=True,
+                        arrowhead=1,
+                        ax=40,
+                        ay=-20
+                    )
                     
-                    st.plotly_chart(fig_waterfall, use_container_width=True, config={'displayModeBar': False})
+                    st.plotly_chart(fig_stacked_bar, use_container_width=True, config={'displayModeBar': False})
                     
 
                 with c2:
