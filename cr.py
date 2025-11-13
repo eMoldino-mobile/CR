@@ -6,8 +6,8 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.07: Aligned downtime logic with run_rate_app (removed is_run_break from stop_flag)
-__version__ = "7.07 (Aligned downtime logic with run_rate_app)"
+# v7.08: Aligned time gap logic with run_rate_app (removed ~in_mode_band)
+__version__ = "7.08 (Aligned time gap logic with run_rate_app)"
 # ==================================================================
 
 # ==================================================================
@@ -236,9 +236,11 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     # --- v6.61: Check against MODE band ONLY ---
     in_mode_band = (df_rr["Actual CT"] >= df_rr['mode_lower_limit']) & (df_rr["Actual CT"] <= df_rr['mode_upper_limit'])
     
-    # --- v6.93: FIX --- A "Time Gap" is only a gap if it's ALSO outside the mode band.
-    # --- v7.06: Use the correct diff column ---
-    is_time_gap = (df_rr["rr_time_diff"] > (prev_actual_ct + rr_downtime_gap)) & ~is_run_break & ~in_mode_band
+    # --- v7.08: FIX ---
+    # Removed '& ~in_mode_band' from this calculation.
+    # A time gap is a stop, REGARDLESS of its cycle time.
+    # This aligns the logic with run_rate_app.py and fixes the downtime discrepancy.
+    is_time_gap = (df_rr["rr_time_diff"] > (prev_actual_ct + rr_downtime_gap)) & ~is_run_break
     
     # Abnormal cycle = NOT in mode band
     is_abnormal_cycle = ~in_mode_band & ~is_hard_stop_code
