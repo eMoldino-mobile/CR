@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.93 (Fixed Time Gap logic and NameError)"
+__version__ = "6.92 (Fixed KeyError for 'by Run' mode)"
 # ==================================================================
 
 # ==================================================================
@@ -193,14 +193,8 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     # 8. Run Stop Detection on *all shots*
     is_hard_stop_code = df_rr["Actual CT"] >= 999.9
     prev_actual_ct = df_rr["Actual CT"].shift(1).fillna(0)
-    
-    # --- v6.61: Check against MODE band ONLY ---
+    is_time_gap = (df_rr["time_diff_sec"] > (prev_actual_ct + rr_downtime_gap)) & ~is_run_break
     in_mode_band = (df_rr["Actual CT"] >= df_rr['mode_lower_limit']) & (df_rr["Actual CT"] <= df_rr['mode_upper_limit'])
-    
-    # --- v6.93: FIX --- A "Time Gap" is only a gap if it's ALSO outside the mode band.
-    is_time_gap = (df_rr["time_diff_sec"] > (prev_actual_ct + rr_downtime_gap)) & ~is_run_break & ~in_mode_band
-    
-    # Abnormal cycle = NOT in mode band
     is_abnormal_cycle = ~in_mode_band & ~is_hard_stop_code
     
     df_rr["stop_flag"] = np.where(is_abnormal_cycle | is_time_gap | is_hard_stop_code | is_run_break, 1, 0)
@@ -301,6 +295,8 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         base_run_time_sec = time_span_sec + last_shot_ct
 
         # --- v6.90: BUG FIX ---
+        # "Run Breaks" are not subtracted from the day's time. They are
+        # just downtime events that are already excluded from loss_sec.
         results['Filtered Run Time (sec)'] = base_run_time_sec
         # --- End v6.90 Bug Fix ---
 
@@ -308,13 +304,15 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         max_cavities = daily_df['Working Cavities'].max()
         if max_cavities == 0 or pd.isna(max_cavities): max_cavities = 1
         
+        # Use the average Reference CT for this day (it's per-run, so it could vary)
+        # This is for the *Benchmark Output* calculation only.
         avg_reference_ct = daily_df['reference_ct'].mean()
         if avg_reference_ct == 0 or pd.isna(avg_reference_ct):
-            avg_reference_ct = 1
+            avg_reference_ct = 1 # Avoid divide-by-zero
             
         avg_approved_ct = daily_df['approved_ct_for_run'].mean()
         if avg_approved_ct == 0 or pd.isna(avg_approved_ct):
-            avg_approved_ct = 1
+            avg_approved_ct = 1 # Avoid divide-by-zero
 
 
         # --- 10. Calculate The 4 Segments (in Parts) ---
@@ -330,6 +328,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         results['Actual Cycle Time Total (sec)'] = daily_prod['Actual CT'].sum() # True production time
 
         # SEGMENT 2: Inefficiency (CT Slow/Fast) Loss
+        # Get from pre-calculated per-shot values
         results['Capacity Gain (fast cycle time) (sec)'] = daily_prod['time_gain_sec'].sum()
         results['Capacity Loss (slow cycle time) (sec)'] = daily_prod['time_loss_sec'].sum()
         results['Capacity Loss (slow cycle time) (parts)'] = daily_prod['parts_loss'].sum()
@@ -348,11 +347,13 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
 
         # --- v6.64: This function now ALSO calculates the Target values ---
         target_perc_ratio = target_output_perc_slider / 100.0
+        # Use the 100% Approved CT for this calculation
         optimal_100_parts = (results['Filtered Run Time (sec)'] / avg_approved_ct) * max_cavities
         results['Target Output (parts)'] = optimal_100_parts * target_perc_ratio
         
-        results['Gap to Target (parts)'] = results['Actual Output (parts)'] - results['Target Output (parts)']
-        results['Capacity Loss (vs Target) (parts)'] = np.maximum(0, results['Target Output (parts)'] - results['Actual Output (parts)'])
+        results['Gap to Target (parts)'] = results['Actual Output (parts)'] - results['Target Output (parts)'] # Can be positive
+        results['Capacity Loss (vs Target) (parts)'] = np.maximum(0, results['Target Output (parts)'] - results['Actual Output (parts)']) # Only the negative gap
+        
         results['Capacity Loss (vs Target) (sec)'] = (results['Capacity Loss (vs Target) (parts)'] * avg_reference_ct) / max_cavities
 
 
@@ -368,7 +369,8 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         st.warning("No data found to process.")
         return None, None
 
-    final_df = pd.DataFrame(daily_results_list).replace([np.inf, -np.inf], np.nan).fillna(0)
+    # --- v6.1.1 FIX: Replace inf with NaN before fillna ---
+    final_df = pd.DataFrame(daily_results_list).replace([np.inf, -np.inf], np.nan).fillna(0) # Fill NaNs with 0
     final_df['Date'] = pd.to_datetime(final_df['Date'])
     final_df = final_df.set_index('Date')
 
@@ -376,6 +378,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         return final_df, pd.DataFrame()
 
     all_shots_df = pd.concat(all_shots_list, ignore_index=True)
+    # --- v6.91: Make run_id 1-based ---
     all_shots_df['run_id'] = all_shots_df['run_id'] + 1
     all_shots_df['date'] = all_shots_df['SHOT TIME'].dt.date
     
@@ -396,9 +399,11 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
     # Group by the global run_id
     for run_id, df_run in all_shots_df.groupby('run_id'):
         
+        # --- v6.89: Use ALL_RESULT_COLUMNS ---
         results = {col: 0 for col in ALL_RESULT_COLUMNS}
         results['run_id'] = run_id
         
+        # Get the run's subsets from the pre-processed dataframes
         run_prod = df_run[df_run['stop_flag'] == 0]
         run_down = df_run[df_run['stop_flag'] == 1]
 
@@ -411,6 +416,7 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
         base_run_time_sec = time_span_sec + last_shot_ct
 
         # --- v6.90: BUG FIX ---
+        # "Run Breaks" are not subtracted from the run's time.
         results['Filtered Run Time (sec)'] = base_run_time_sec
         # --- End v6.90 Bug Fix ---
         
@@ -471,6 +477,7 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
         return pd.DataFrame()
         
     run_summary_df = pd.DataFrame(run_summary_list).replace([np.inf, -np.inf], np.nan).fillna(0)
+    # --- v6.91: run_id is already 1-based from the main function ---
     run_summary_df = run_summary_df.set_index('run_id')
     
     return run_summary_df
