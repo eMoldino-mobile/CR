@@ -6,8 +6,8 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.03: Added 'run_id' to main app scope fix
-__version__ = "7.03 (Added 'run_id' to main app scope fix)"
+# v7.04: Fix 'by Run' KeyError, Remove 'All Dates' from shot chart
+__version__ = "7.04 (Fix 'by Run' KeyError, Remove 'All Dates')"
 # ==================================================================
 
 # ==================================================================
@@ -642,7 +642,7 @@ if uploaded_file is not None:
                 _cache_version=cache_key
             )
 
-            # --- v7.03: FIX ---
+            # --- v7.04: FIX ---
             # Apply the redundant fix here, in the main app scope,
             # to ensure all downstream functions get the correct columns.
             if all_shots_df is not None and not all_shots_df.empty:
@@ -671,7 +671,19 @@ if uploaded_file is not None:
                     all_shots_df['reference_ct'] = all_shots_df['Approved CT']
                 else:
                     all_shots_df['reference_ct'] = 0.0
-            # --- End v7.03 Fix ---
+                    
+                # --- v7.04: Add missing gain/loss columns to fix 'by Run' ---
+                if 'time_gain_sec' not in all_shots_df.columns:
+                    all_shots_df['time_gain_sec'] = 0.0
+                if 'time_loss_sec' not in all_shots_df.columns:
+                    all_shots_df['time_loss_sec'] = 0.0
+                if 'parts_gain' not in all_shots_df.columns:
+                    all_shots_df['parts_gain'] = 0.0
+                if 'parts_loss' not in all_shots_df.columns:
+                    all_shots_df['parts_loss'] = 0.0
+                # --- End v7.04 Fix ---
+
+            # --- End v7.03 Fix (now v7.04) ---
 
             if results_df is None or results_df.empty:
                 st.error("No valid data found in file. Cannot proceed.")
@@ -1250,26 +1262,26 @@ if uploaded_file is not None:
                 if all_shots_df.empty:
                     st.warning("No shots were found in the file to analyze.")
                 else:
-                    # --- v6.91: Add "All Dates" option ---
+                    # --- v7.04: Remove "All Dates" option ---
                     available_dates_list = sorted(all_shots_df['date'].unique(), reverse=True)
-                    available_dates = ["All Dates"] + available_dates_list
                     
-                    selected_date = st.selectbox(
-                        "Select a Date to Analyze",
-                        options=available_dates,
-                        format_func=lambda d: "All Dates" if isinstance(d, str) else d.strftime('%Y-%m-%d') # Format for display
-                    )
-
-                    # --- v6.91: Filter to selected date or all dates ---
-                    if selected_date == "All Dates":
-                        df_day_shots = all_shots_df.copy()
-                        chart_title = "All Shots for Full Period"
+                    if not available_dates_list:
+                        st.warning("No dates found in shot data.")
                     else:
+                        available_dates = available_dates_list # No "All Dates"
+                        
+                        selected_date = st.selectbox(
+                            "Select a Date to Analyze",
+                            options=available_dates,
+                            format_func=lambda d: d.strftime('%Y-%m-%d') # Simplified format
+                        )
+
+                        # --- v7.04: Filter to selected date only ---
                         df_day_shots = all_shots_df[all_shots_df['date'] == selected_date]
-                        chart_title = f"All Shots for {selected_date}"
+                        chart_title = f"All Shots for {selected_date.strftime('%Y-%m-%d')}"
                     
-                    st.subheader("Chart Controls")
-                    # --- v6.27: Filter out huge run breaks from the slider max calculation ---
+                        st.subheader("Chart Controls")
+                        # --- v6.27: Filter out huge run breaks from the slider max calculation ---
                     non_break_df = df_day_shots[df_day_shots['Shot Type'] != 'Run Break (Excluded)']
                     max_ct_for_day = 100 # Default
                     if not non_break_df.empty:
@@ -1356,14 +1368,14 @@ if uploaded_file is not None:
                             line=dict(color='green', dash='dash'), name=f'{reference_ct_label} ({reference_ct_for_day:.2f}s)'
                         )
 
-                        fig_ct.add_annotation(
-                            x=df_day_shots['SHOT TIME'].max(), y=reference_ct_for_day,
-                            text=f"{reference_ct_label}: {reference_ct_for_day:.2f}s", showarrow=True, arrowhead=1
-                        )
-                        # --- vs6.54 End ---
-                        
-                        # --- v6.91: Add vertical lines for new runs ---
-                        if 'run_id' in df_day_shots.columns:
+                        # --- v7.04: Check if df_day_shots is empty *after* filtering ---
+                        required_shot_cols = ['reference_ct', 'Mode CT Lower', 'Mode CT Upper']
+                        if df_day_shots.empty:
+                            st.warning(f"No shots found for {selected_date.strftime('%Y-%m-%d')}.")
+                        elif not all(col in df_day_shots.columns for col in required_shot_cols):
+                            st.error(f"Error: Shot data is missing required columns. {', '.join(required_shot_cols)}")
+                        else:
+                            # --- v6.64: Use Reference CT (which is Approved CT) ---
                             run_starts = df_day_shots.groupby('run_id')['SHOT TIME'].min().sort_values()
                             for start_time in run_starts.iloc[1:]: # Skip the very first run
                                 run_id_val = df_day_shots[df_day_shots['SHOT TIME'] == start_time]['run_id'].iloc[0]
@@ -1413,7 +1425,7 @@ if uploaded_file is not None:
                                 'reference_ct': '{:.2f}', # --- v6.89: Renamed ---
                                 'Mode CT Lower': '{:.2f}', # --- v6.62: Added format ---
                                 'Mode CT Upper': '{:.2f}', # --- v6.62: Added format ---
-                                'SHOT TIME': lambda t: t.strftime('%Y-%m-%d %H:%M:%S') if selected_date == "All Dates" else t.strftime('%H:%M:%S')
+                                'SHOT TIME': lambda t: t.strftime('%H:%M:%S') # --- v7.04: Simplified format ---
                             }),
                             use_container_width=True
                         )
