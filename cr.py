@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.85 (Dynamic Waterfall Chart Labels & Lines)"
+__version__ = "6.84 (Restored Waterfall Chart)"
 # ==================================================================
 
 # ==================================================================
@@ -653,8 +653,8 @@ if uploaded_file is not None:
                     # Because of our reconciliation, we have perfect numbers.
                     # Benchmark = Actual + RR Loss + Net Cycle Loss
                     
-                    # --- v6.85: Dynamic Benchmark Label ---
-                    waterfall_x = [f"<b>{benchmark_label}</b>", "Loss (RR Downtime)"]
+                    # We must handle the case where Net Cycle Loss is a GAIN
+                    waterfall_x = ["Benchmark", "Loss (RR Downtime)"]
                     waterfall_y = [total_benchmark_output, -total_downtime_loss_parts]
                     waterfall_measure = ["absolute", "relative"]
                     waterfall_text = [f"{total_benchmark_output:,.0f}", f"{-total_downtime_loss_parts:,.0f}"]
@@ -673,7 +673,7 @@ if uploaded_file is not None:
                         waterfall_text.append(f"{abs(total_net_cycle_loss_parts):+,.0f}")
                     
                     # Add the final total
-                    waterfall_x.append("<b>Actual Output</b>") # --- v6.85: Bold label ---
+                    waterfall_x.append("Actual Output")
                     waterfall_y.append(total_produced)
                     waterfall_measure.append("total")
                     waterfall_text.append(f"{total_produced:,.0f}")
@@ -694,28 +694,16 @@ if uploaded_file is not None:
                     ))
                     
                     fig_waterfall.update_layout(
+                        title_text="Performance Breakdown",
+                        title_x=0.5,
                         showlegend=False,
-                        margin=dict(t=0, b=0, l=0, r=0), # --- v6.84: Removed title, set margin-top to 0 ---
+                        margin=dict(t=40, b=0, l=0, r=0),
                         height=400,
                         yaxis_title='Parts'
                     )
                     
                     # Add Optimal (100%) line if we are in Target view
                     if benchmark_view == "Target Output":
-                        # --- v6.85: Add Target Line ---
-                        fig_waterfall.add_shape(
-                            type='line',
-                            x0=-0.5, x1=len(waterfall_x)-0.5, # Span all columns
-                            y0=total_benchmark_output, y1=total_benchmark_output,
-                            line=dict(color='deepskyblue', dash='dash', width=2)
-                        )
-                        fig_waterfall.add_annotation(
-                            x=0, y=total_benchmark_output,
-                            text=f"Target: {total_benchmark_output:,.0f}",
-                            showarrow=True, arrowhead=1, ax=-40, ay=-20
-                        )
-                        
-                        # --- v6.85: Add Optimal Line ---
                         fig_waterfall.add_shape(
                             type='line',
                             x0=-0.5, x1=len(waterfall_x)-0.5, # Span all columns
