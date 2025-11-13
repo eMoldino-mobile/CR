@@ -6,8 +6,9 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.11: Fix KeyError by expanding redundant fix. Added Mode CT to 'by Run' table.
-__version__ = "7.11 (Fix KeyError. Added Mode CT to 'by Run' table)"
+# v7.14: Bug fix: Reverted logic for is_abnormal_cycle to match run_rate_app
+# This means a "run break" shot can't also be an "abnormal cycle"
+__version__ = "7.14 (Fixed abnormal cycle logic)"
 # ==================================================================
 
 # ==================================================================
@@ -27,6 +28,8 @@ def format_seconds_to_dhm(total_seconds):
     if hours > 0: parts.append(f"{hours}h")
     if minutes > 0 or not parts: parts.append(f"{minutes}m")
     return " ".join(parts) if parts else "0m"
+
+# --- v6.5: Removed get_progress_bar_html ---
 
 # --- v6.89: Define all_result_columns globally to fix NameError ---
 ALL_RESULT_COLUMNS = [
@@ -82,8 +85,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         'Approved CT': ['approved ct', 'approved_ct', 'approved cycle time', 'std ct', 'standard ct'],
         'Actual CT': ['actual ct', 'actual_ct', 'actual cycle time', 'cycle time', 'ct'],
         'Working Cavities': ['working cavities', 'working_cavities', 'cavities', 'cavity'],
-        'Plant Area': ['plant area', 'plant_area', 'area'],
-        # 'TIME DIFF SEC': ['time diff sec', 'time_diff_sec', 'time diff (sec)'] # <-- v7.06: REVERTED v7.05
+        'Plant Area': ['plant area', 'plant_area', 'area']
     }
 
     rename_dict = {}
@@ -160,28 +162,29 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     # 1. Sort all shots by time
     df_rr = df_production_only.sort_values("SHOT TIME").reset_index(drop=True)
 
-    # 2. Calculate time_diff_sec for all shots
-    # --- v7.06: REVERT v7.05 ---
-    # We will calculate two separate diffs.
+    # --- v7.06: DUAL TIME DIFF CALCULATION ---
+    # This is the fix. We calculate two separate time diffs.
     
-    # --- v7.06: LOGIC 1: 'rr_time_diff' for Run Rate (stoppage) logic ---
-    # This looks at all shots, including 999.9, to find small gaps.
+    # 2a. Run Break Logic (Macro): 
+    #     Find gaps between *production shots only* to define a "Run".
+    is_hard_stop_code = df_rr["Actual CT"] >= 999.9
+    df_prod_shots = df_rr[~is_hard_stop_code]
+    run_break_time_diff = df_prod_shots["SHOT TIME"].diff().dt.total_seconds()
+    
+    # Map these "macro" gaps back to the main dataframe
+    df_rr["run_break_time_diff"] = run_break_time_diff
+    df_rr["run_break_time_diff"].fillna(0.0, inplace=True)
+    
+    # 2b. Run Rate Logic (Micro):
+    #     Find gaps between *all shots* to define "Downtime Stops".
     df_rr["rr_time_diff"] = df_rr["SHOT TIME"].diff().dt.total_seconds()
     df_rr.loc[0, "rr_time_diff"] = 0.0 # First shot has no gap
-
-    # --- v7.06: LOGIC 2: 'run_break_time_diff' for Run Break (new run) logic ---
-    # This *only* looks at production shots to find large gaps.
-    df_prod_shots = df_rr[df_rr["Actual CT"] < 999.9].copy()
-    df_prod_shots["run_break_time_diff"] = df_prod_shots["SHOT TIME"].diff().dt.total_seconds()
-    
-    # Merge this one column back into the main df_rr, matching on index
-    df_rr = df_rr.merge(df_prod_shots[['run_break_time_diff']], left_index=True, right_index=True, how='left')
-    df_rr["run_break_time_diff"].fillna(0.0, inplace=True) # Fill 0 for 999.9 shots and first shot
     # --- End v7.06 Fix ---
-    
+
+
     # 3. Identify global "Run Breaks"
     run_break_threshold_sec = run_interval_hours * 3600
-    # --- v7.06: Use the correct diff column ---
+    # Use the "macro" gap for this
     is_run_break = df_rr["run_break_time_diff"] > run_break_threshold_sec
     df_rr['is_run_break'] = is_run_break # Store this for later
     
@@ -189,7 +192,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     df_rr['run_id'] = is_run_break.cumsum()
 
     # ==================================================================
-    # --- v7.00: KEY BUG FIX ---
+    # --- v7.11: KEY BUG FIX ---
     # Initialize *all* computed columns on df_rr first.
     # This ensures that all_shots_df (which is made from df_rr)
     # has these columns, even if logic fails or edge cases occur.
@@ -213,9 +216,13 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     
     # 5. Calculate Mode CT *per global run*
     df_for_mode = df_rr[df_rr["Actual CT"] < 999.9]
+    
+    # --- v7.13: Reverted to .mode() to match run_rate_app ---
     run_modes = df_for_mode.groupby('run_id')['Actual CT'].apply(
         lambda x: x.mode().iloc[0] if not x.mode().empty else 0
     )
+    # --- End v7.13 ---
+    
     df_rr['mode_ct'] = df_rr['run_id'].map(run_modes)
     df_rr['mode_lower_limit'] = df_rr['mode_ct'] * (1 - mode_ct_tolerance)
     df_rr['mode_upper_limit'] = df_rr['mode_ct'] * (1 + mode_ct_tolerance)
@@ -230,32 +237,28 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     df_rr['reference_ct'] = df_rr['approved_ct_for_run']
 
     # 8. Run Stop Detection on *all shots*
-    is_hard_stop_code = df_rr["Actual CT"] >= 999.9
     prev_actual_ct = df_rr["Actual CT"].shift(1).fillna(0)
     
-    # --- v6.61: Check against MODE band ONLY ---
     in_mode_band = (df_rr["Actual CT"] >= df_rr['mode_lower_limit']) & (df_rr["Actual CT"] <= df_rr['mode_upper_limit'])
     
-    # --- v7.08: FIX ---
-    # Removed '& ~in_mode_band' from this calculation.
-    # A time gap is a stop, REGARDLESS of its cycle time.
-    # This aligns the logic with run_rate_app.py and fixes the downtime discrepancy.
+    # --- v7.08: FIX - Removed '& ~in_mode_band' ---
+    # A time gap is a stop, regardless of its CT.
+    # Use the "micro" gap ("rr_time_diff") for this
     is_time_gap = (df_rr["rr_time_diff"] > (prev_actual_ct + rr_downtime_gap)) & ~is_run_break
     
-    # Abnormal cycle = NOT in mode band
-    is_abnormal_cycle = ~in_mode_band & ~is_hard_stop_code
+    # --- v7.14: FIX - Reverted to match run_rate_app ---
+    # A shot can't be an abnormal cycle *if* it's also the start of a new run.
+    is_abnormal_cycle = ~in_mode_band & ~is_hard_stop_code & ~is_run_break
     
-    # --- v7.07: Make logic identical to run_rate_app.py ---
-    # We remove 'is_run_break' from the stop_flag.
-    # A run break is now EXCLUDED from time, but the first shot of the new
-    # run is correctly counted as PRODUCTION, not a stop.
+    # --- v7.07: FIX - Removed 'is_run_break' from stop flag ---
+    # A run break is NOT a stop. It's just a separator.
+    # This matches the logic from run_rate_app.py
     df_rr["stop_flag"] = np.where(is_abnormal_cycle | is_time_gap | is_hard_stop_code, 1, 0)
     
     df_rr['adj_ct_sec'] = df_rr['Actual CT']
-    # --- v7.06: Use the correct diff column ---
-    df_rr.loc[is_time_gap, 'adj_ct_sec'] = df_rr['rr_time_diff']
+    df_rr.loc[is_time_gap, 'adj_ct_sec'] = df_rr['rr_time_diff'] # Use "micro" gap
     df_rr.loc[is_hard_stop_code, 'adj_ct_sec'] = 0 
-    df_rr.loc[is_run_break, 'adj_ct_sec'] = 0 
+    df_rr.loc[is_run_break, 'adj_ct_sec'] = 0 # Run break time is excluded
 
     # 9. Separate all shots into Production and Downtime
     df_production = df_rr[df_rr['stop_flag'] == 0].copy()
@@ -283,11 +286,8 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         0
     )
     
-    # --- v6.99: BUG FIX (Now part of v7.00 initialization) ---
-    # Now, update df_rr with the values from df_production
-    # This will only update rows where stop_flag == 0
+    # Update df_rr with the values from df_production
     df_rr.update(df_production[['parts_gain', 'parts_loss', 'time_gain_sec', 'time_loss_sec']])
-    # --- End v6.99 Bug Fix ---
 
 
     # 11. Add Shot Type and date
@@ -416,9 +416,6 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         return final_df, pd.DataFrame()
 
     all_shots_df = pd.concat(all_shots_list, ignore_index=True)
-    
-    # --- v7.03: 'run_id' increment moved to main app scope ---
-    # all_shots_df['run_id'] = all_shots_df['run_id'] + 1
     all_shots_df['date'] = all_shots_df['SHOT TIME'].dt.date
     
     return final_df, all_shots_df
@@ -446,12 +443,6 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
         results = {col: 0 for col in ALL_RESULT_COLUMNS}
         results['run_id'] = run_id
         
-        # v7.11: Get the mode_ct for this run.
-        # .mean() is safe since all shots in a run share the same mode_ct.
-        results['mode_ct'] = 0.0
-        if 'mode_ct' in df_run.columns:
-            results['mode_ct'] = df_run['mode_ct'].mean()
-
         run_prod = df_run[df_run['stop_flag'] == 0]
         run_down = df_run[df_run['stop_flag'] == 1]
 
@@ -471,18 +462,24 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
         max_cavities = df_run['Working Cavities'].max()
         if max_cavities == 0 or pd.isna(max_cavities): max_cavities = 1
         
-        # --- v7.00: Add check for columns before using them ---
-        avg_reference_ct = 1
-        if 'reference_ct' in df_run.columns:
-            avg_reference_ct = df_run['reference_ct'].mean()
-            if avg_reference_ct == 0 or pd.isna(avg_reference_ct):
-                avg_reference_ct = 1
-        
-        avg_approved_ct = 1
-        if 'approved_ct_for_run' in df_run.columns:
-            avg_approved_ct = df_run['approved_ct_for_run'].mean()
-            if avg_approved_ct == 0 or pd.isna(avg_approved_ct):
-                avg_approved_ct = 1
+        avg_reference_ct = df_run['reference_ct'].mean()
+        if avg_reference_ct == 0 or pd.isna(avg_reference_ct):
+            avg_reference_ct = 1
+            
+        avg_approved_ct = df_run['approved_ct_for_run'].mean()
+        if avg_approved_ct == 0 or pd.isna(avg_approved_ct):
+            avg_approved_ct = 1
+            
+        # --- v7.11: Add Mode CT to results ---
+        # We take the 'mode_ct' value from the first row of the run.
+        # Since 'mode_ct' is calculated per-run, all rows in df_run
+        # will have the same 'mode_ct' value.
+        if not df_run.empty:
+            results['mode_ct'] = df_run['mode_ct'].iloc[0]
+        else:
+            results['mode_ct'] = 0.0
+        # --- End v7.11 ---
+
 
         # 3. Calculate Segments
         results['Optimal Output (parts)'] = (results['Filtered Run Time (sec)'] / avg_reference_ct) * max_cavities
@@ -490,7 +487,7 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
         results['Actual Output (parts)'] = run_prod['Working Cavities'].sum()
         results['Actual Cycle Time Total (sec)'] = run_prod['Actual CT'].sum()
 
-        # --- v6.95: Fix KeyError (v7.00: These columns are now guaranteed by the init fix) ---
+        # --- v6.95: Fix KeyError ---
         results['Capacity Gain (fast cycle time) (sec)'] = run_prod['time_gain_sec'].sum()
         results['Capacity Loss (slow cycle time) (sec)'] = run_prod['time_loss_sec'].sum()
         results['Capacity Loss (slow cycle time) (parts)'] = run_prod['parts_loss'].sum()
@@ -554,7 +551,7 @@ def run_capacity_calculation(raw_data_df, toggle, cavities, target_perc_slider, 
     )
 
 # ==================================================================
-#                       STREAMLIT APP LAYOUT
+#                     STREAMLIT APP LAYOUT
 # ==================================================================
 
 # --- Page Config ---
@@ -668,66 +665,48 @@ if uploaded_file is not None:
                 default_cavities,
                 target_output_perc, # Pass the slider value
                 mode_ct_tolerance,  
-                rr_downtime_gap,      
-                run_interval_hours,      
+                rr_downtime_gap,        
+                run_interval_hours,     
                 _cache_version=cache_key
             )
-
-            # --- v7.04: FIX ---
-            # Apply the redundant fix here, in the main app scope,
-            # to ensure all downstream functions get the correct columns.
-            if all_shots_df is not None and not all_shots_df.empty:
-                
-                # Fix run_id
-                if 'run_id' in all_shots_df.columns:
-                    all_shots_df['run_id'] = all_shots_df['run_id'] + 1 # Increment from 0-based to 1-based
-                else:
-                    all_shots_df['run_id'] = 1 # Fallback
-                
-                # Fix Mode CT bands
-                if 'mode_lower_limit' in all_shots_df.columns:
-                    all_shots_df['Mode CT Lower'] = all_shots_df['mode_lower_limit']
-                else:
-                    all_shots_df['Mode CT Lower'] = 0.0
             
-                if 'mode_upper_limit' in all_shots_df.columns:
-                    all_shots_df['Mode CT Upper'] = all_shots_df['mode_upper_limit']
-                else:
-                    all_shots_df['Mode CT Upper'] = 0.0
-            
-                # Fix reference_ct
-                if 'approved_ct_for_run' in all_shots_df.columns:
-                    all_shots_df['reference_ct'] = all_shots_df['approved_ct_for_run']
-                elif 'Approved CT' in all_shots_df.columns: # Fallback
-                    all_shots_df['reference_ct'] = all_shots_df['Approved CT']
-                else:
-                    all_shots_df['reference_ct'] = 0.0
+            # --- v7.11: REDUNDANT FIX BLOCK ---
+            # This block ensures that all_shots_df (which comes from the cache)
+            # has all the necessary columns, even if the cached version is stale
+            # or an edge case was missed. This fixes KeyErrors downstream.
+            if not all_shots_df.empty:
+                try:
+                    # 1. Add run_id (and increment to 1-based)
+                    if 'run_id' in all_shots_df.columns:
+                        all_shots_df['run_id'] = all_shots_df['run_id'] + 1
+                    else:
+                        all_shots_df['run_id'] = 1
                     
-                # --- v7.04: Add missing gain/loss columns to fix 'by Run' ---
-                if 'time_gain_sec' not in all_shots_df.columns:
-                    all_shots_df['time_gain_sec'] = 0.0
-                if 'time_loss_sec' not in all_shots_df.columns:
-                    all_shots_df['time_loss_sec'] = 0.0
-                if 'parts_gain' not in all_shots_df.columns:
-                    all_shots_df['parts_gain'] = 0.0
-                if 'parts_loss' not in all_shots_df.columns:
-                    all_shots_df['parts_loss'] = 0.0
-                # --- End v7.04 Fix ---
+                    # 2. Add other missing columns, initializing to 0 or 'N/A'
+                    cols_to_check = {
+                        'reference_ct': 0.0,
+                        'Mode CT Lower': 0.0,
+                        'Mode CT Upper': 0.0,
+                        'time_gain_sec': 0.0,
+                        'time_loss_sec': 0.0,
+                        'parts_gain': 0.0,
+                        'parts_loss': 0.0,
+                        'mode_ct': 0.0,
+                        'rr_time_diff': 0.0,
+                        'adj_ct_sec': 0.0,
+                        'Shot Type': 'N/A',
+                        'stop_flag': 0
+                    }
+                    
+                    for col, default_val in cols_to_check.items():
+                        if col not in all_shots_df.columns:
+                            all_shots_df[col] = default_val
+                            
+                except Exception as e:
+                    st.error(f"Error processing cached shot data: {e}")
+                    all_shots_df = pd.DataFrame() # Clear df to prevent further errors
+            # --- END v7.11 FIX ---
 
-                # --- v7.11: Expand redundant fix to prevent KeyError ---
-                if 'mode_ct' not in all_shots_df.columns:
-                    all_shots_df['mode_ct'] = 0.0
-                if 'rr_time_diff' not in all_shots_df.columns:
-                    all_shots_df['rr_time_diff'] = 0.0
-                if 'adj_ct_sec' not in all_shots_df.columns:
-                    all_shots_df['adj_ct_sec'] = 0.0
-                if 'Shot Type' not in all_shots_df.columns:
-                    all_shots_df['Shot Type'] = 'N/A'
-                if 'stop_flag' not in all_shots_df.columns:
-                    all_shots_df['stop_flag'] = 0
-                # --- End v7.11 Fix ---
-
-            # --- End v7.03 Fix (now v7.11) ---
 
             if results_df is None or results_df.empty:
                 st.error("No valid data found in file. Cannot proceed.")
@@ -1028,10 +1007,6 @@ if uploaded_file is not None:
 
                 st.divider()
 
-                # --- 2. WATERFALL CHART (REMOVED) ---
-                # ... (Waterfall code remains commented out) ...
-                # st.divider() # <-- Also commenting out this divider
-
                 # --- 3. AGGREGATED REPORT (Chart & Table) ---
                 
                 # --- v6.64: Helper function for processing dataframes ---
@@ -1166,7 +1141,7 @@ if uploaded_file is not None:
                         name='Run Rate Downtime (Stops)',
                         marker_color='#ff6961', # Pastel Red
                         customdata=chart_df['Capacity Loss (downtime) (parts %)'],
-                        hovertemplate='Run Rate Downtime (Stops): %{y:,.0f} (%{customdata:.1%})<extra></extra>'
+                        hovertemplate='Run Rate Downtime (Stops): %{y:,.0f} (%{customdata:.1%})<extra></L>'
                     ))
                     
                     fig_ts.update_layout(barmode='stack')
@@ -1210,7 +1185,7 @@ if uploaded_file is not None:
                         report_table_1_df = display_df_totals.reset_index().rename(columns={'run_id': 'Run ID'})
                         report_table_1 = pd.DataFrame(index=report_table_1_df.index)
                         report_table_1['Run ID'] = report_table_1_df['Run ID']
-                        # --- v7.11: Add Mode CT to 'by Run' table ---
+                        # --- v7.11: Add Mode CT to this table ---
                         report_table_1['Mode CT'] = report_table_1_df['mode_ct'].map('{:.2f}'.format)
                     else:
                         report_table_1 = pd.DataFrame(index=display_df_totals.index)
@@ -1308,180 +1283,179 @@ if uploaded_file is not None:
                 if all_shots_df.empty:
                     st.warning("No shots were found in the file to analyze.")
                 else:
-                    # --- v7.04: Remove "All Dates" option ---
+                    # --- v7.04: Removed "All Dates" option to fix lag ---
                     available_dates_list = sorted(all_shots_df['date'].unique(), reverse=True)
                     
                     if not available_dates_list:
                         st.warning("No dates found in shot data.")
                     else:
-                        available_dates = available_dates_list # No "All Dates"
-                        
                         selected_date = st.selectbox(
                             "Select a Date to Analyze",
-                            options=available_dates,
-                            format_func=lambda d: d.strftime('%Y-%m-%d') # Simplified format
+                            options=available_dates_list,
+                            format_func=lambda d: d.strftime('%Y-%m-%d') # Format for display
                         )
 
-                        # --- v7.04: Filter to selected date only ---
+                        # --- v7.04: Filter to selected date ---
                         df_day_shots = all_shots_df[all_shots_df['date'] == selected_date]
                         chart_title = f"All Shots for {selected_date.strftime('%Y-%m-%d')}"
-                    
+                        
                         st.subheader("Chart Controls")
                         # --- v6.27: Filter out huge run breaks from the slider max calculation ---
-                    non_break_df = df_day_shots[df_day_shots['Shot Type'] != 'Run Break (Excluded)']
-                    max_ct_for_day = 100 # Default
-                    if not non_break_df.empty:
-                        max_ct_for_day = non_break_df['Actual CT'].max()
+                        non_break_df = df_day_shots[df_day_shots['Shot Type'] != 'Run Break (Excluded)']
+                        max_ct_for_day = 100 # Default
+                        if not non_break_df.empty:
+                            max_ct_for_day = non_break_df['Actual CT'].max()
 
-                    slider_max = int(np.ceil(max_ct_for_day / 10.0)) * 10
-                    slider_max = max(slider_max, 50)
-                    slider_max = min(slider_max, 1000)
+                        slider_max = int(np.ceil(max_ct_for_day / 10.0)) * 10
+                        slider_max = max(slider_max, 50)
+                        slider_max = min(slider_max, 1000)
 
-                    y_axis_max = st.slider(
-                        "Zoom Y-Axis (sec)",
-                        min_value=10,
-                        max_value=1000, # Max to see all outliers
-                        value=min(slider_max, 50), # Default to a "zoomed in" view
-                        step=10,
-                        help="Adjust the max Y-axis to zoom in on the cluster. (Set to 1000 to see all outliers)."
-                    )
-
-                    # --- v6.98: Fix KeyError by moving this check up ---
-                    # --- v7.00: Further robust check for all required columns ---
-                    required_shot_cols = ['reference_ct', 'Mode CT Lower', 'Mode CT Upper']
-                    if df_day_shots.empty:
-                        st.warning(f"No shots found for {selected_date}.")
-                    elif not all(col in df_day_shots.columns for col in required_shot_cols):
-                        st.error(f"Error: Shot data is missing required columns. {', '.join(required_shot_cols)}")
-                    else:
-                        # --- v6.64: Use Reference CT (which is Approved CT) ---
-                        reference_ct_for_day = df_day_shots['reference_ct'].iloc[0] 
-                        reference_ct_label = "Approved CT"
-                        
-                        fig_ct = go.Figure()
-                        # --- v6.27: Add new color for run breaks ---
-                        color_map = {
-                            'Slow': '#ff6961', 
-                            'Fast': '#ffb347', 
-                            'On Target': '#3498DB', 
-                            'RR Downtime (Stop)': '#808080',
-                            'Run Break (Excluded)': '#d3d3d3' # Light grey
-                        }
-
-
-                        for shot_type, color in color_map.items():
-                            df_subset = df_day_shots[df_day_shots['Shot Type'] == shot_type]
-                            if not df_subset.empty:
-                                fig_ct.add_bar(
-                                    x=df_subset['SHOT TIME'], y=df_subset['Actual CT'],
-                                    name=shot_type, marker_color=color,
-                                    # --- v6.89: Add run_id to hover text (now 1-based) ---
-                                    customdata=df_subset['run_id'],
-                                    hovertemplate='<b>%{x|%H:%M:%S}</b><br>Run ID: %{customdata}<br>Shot Type: %{fullData.name}<br>Actual CT: %{y:.2f}s<extra></extra>'
-                                )
-                        
-                        # --- v6.96: Add dynamic, per-run Mode CT bands ---
-                        for run_id, df_run in df_day_shots.groupby('run_id'):
-                            if not df_run.empty:
-                                mode_ct_lower_for_run = df_run['Mode CT Lower'].iloc[0]
-                                mode_ct_upper_for_run = df_run['Mode CT Upper'].iloc[0]
-                                run_start_time = df_run['SHOT TIME'].min()
-                                run_end_time = df_run['SHOT TIME'].max()
-                                
-                                fig_ct.add_hrect(
-                                    x0=run_start_time, x1=run_end_time,
-                                    y0=mode_ct_lower_for_run, y1=mode_ct_upper_for_run,
-                                    fillcolor="grey", opacity=0.20,
-                                    line_width=0,
-                                    name=f"Run {run_id} Mode Band" if len(df_day_shots['run_id'].unique()) > 1 else "Mode CT Band"
-                                )
-                        
-                        # --- Hide duplicate legend entries for the bands ---
-                        legend_names_seen = set()
-                        for trace in fig_ct.data:
-                            if "Mode Band" in trace.name:
-                                if trace.name in legend_names_seen:
-                                    trace.showlegend = False
-                                else:
-                                    legend_names_seen.add(trace.name)
-                        # --- End v6.96 ---
-                        
-                        # --- v6.54: Use Reference CT for line ---
-                        fig_ct.add_shape(
-                            type='line',
-                            x0=df_day_shots['SHOT TIME'].min(), x1=df_day_shots['SHOT TIME'].max(),
-                            y0=reference_ct_for_day, y1=reference_ct_for_day,
-                            line=dict(color='green', dash='dash'), name=f'{reference_ct_label} ({reference_ct_for_day:.2f}s)'
+                        y_axis_max = st.slider(
+                            "Zoom Y-Axis (sec)",
+                            min_value=10,
+                            max_value=1000, # Max to see all outliers
+                            value=min(slider_max, 50), # Default to a "zoomed in" view
+                            step=10,
+                            help="Adjust the max Y-axis to zoom in on the cluster. (Set to 1000 to see all outliers)."
                         )
 
-                        # --- v7.04: Check if df_day_shots is empty *after* filtering ---
-                        required_shot_cols = ['reference_ct', 'Mode CT Lower', 'Mode CT Upper']
-                        if df_day_shots.empty:
-                            st.warning(f"No shots found for {selected_date.strftime('%Y-%m-%d')}.")
-                        elif not all(col in df_day_shots.columns for col in required_shot_cols):
-                            st.error(f"Error: Shot data is missing required columns. {', '.join(required_shot_cols)}")
+                        # --- v7.00: Add check for required columns ---
+                        shot_chart_req_cols = ['reference_ct', 'Mode CT Lower', 'Mode CT Upper', 'run_id']
+                        missing_shot_cols = [col for col in shot_chart_req_cols if col not in df_day_shots.columns]
+                        
+                        if missing_shot_cols:
+                            st.error(f"Error: Shot data is missing required columns. {', '.join(missing_shot_cols)}")
+                        # --- End v7.00 ---
+                        
+                        elif df_day_shots.empty:
+                            st.warning(f"No shots found for {selected_date}.")
                         else:
                             # --- v6.64: Use Reference CT (which is Approved CT) ---
-                            run_starts = df_day_shots.groupby('run_id')['SHOT TIME'].min().sort_values()
-                            for start_time in run_starts.iloc[1:]: # Skip the very first run
-                                run_id_val = df_day_shots[df_day_shots['SHOT TIME'] == start_time]['run_id'].iloc[0]
-                                # --- v6.94: Fix TypeError by separating vline and annotation ---
-                                fig_ct.add_vline(
-                                    x=start_time, 
-                                    line_width=2, 
-                                    line_dash="dash", 
-                                    line_color="purple"
-                                )
-                                fig_ct.add_annotation(
-                                    x=start_time,
-                                    y=y_axis_max * 0.95, # Position annotation near the top
-                                    text=f"Run {run_id_val} Start",
-                                    showarrow=False,
-                                    yshift=10,
-                                    textangle=-90
-                                )
-
-                        fig_ct.update_layout(
-                            title=chart_title, # --- v6.91: Use dynamic title ---
-                            xaxis_title='Time of Day',
-                            yaxis_title='Actual Cycle Time (sec)',
-                            hovermode="closest",
-                            # --- v6.31: Fix typo y_aws_max -> y_axis_max ---
-                            yaxis_range=[0, y_axis_max], # Apply the zoom
-                            # --- v6.25: REMOVED barmode='overlay' ---
-                        )
-                        st.plotly_chart(fig_ct, use_container_width=True)
-
-                        # --- v6.91: Handle "All Dates" in table ---
-                        st.subheader(f"Data for all {len(df_day_shots)} shots ({selected_date})")
-                        if len(df_day_shots) > 1000:
-                            st.info(f"Displaying first 1,000 shots of {len(df_day_shots)} total.")
-                            df_to_display = df_day_shots.head(1000)
-                        else:
-                            df_to_display = df_day_shots
+                            reference_ct_for_day = df_day_shots['reference_ct'].iloc[0] 
+                            reference_ct_label = "Approved CT"
                             
-                        st.dataframe(
-                            df_to_display[[
-                                'SHOT TIME', 'Actual CT', 'Approved CT',
-                                'Working Cavities', 'run_id',
-                                'mode_ct', 
-                                'rr_time_diff', # <-- v7.10: Added this column
-                                'adj_ct_sec',   # <-- v7.10: Added this column
-                                'Shot Type', 'stop_flag', 
-                                'reference_ct', 'Mode CT Lower', 'Mode CT Upper'
-                            ]].style.format({
-                                'Actual CT': '{:.2f}',
-                                'Approved CT': '{:.1f}',
-                                'reference_ct': '{:.2f}', 
-                                'Mode CT Lower': '{:.2f}', 
-                                'Mode CT Upper': '{:.2f}', 
-                                'mode_ct': '{:.2f}', 
-                                'rr_time_diff': '{:.1f}', # <-- v7.10: Added formatter
-                                'adj_ct_sec': '{:.1f}',   # <-- v7.10: Added formatter
-                                'SHOT TIME': lambda t: t.strftime('%H:%M:%S') # --- v7.04: Simplified format ---
-                            }),
-                            use_container_width=True
-                        )
+                            fig_ct = go.Figure()
+                            # --- v6.27: Add new color for run breaks ---
+                            color_map = {
+                                'Slow': '#ff6961', 
+                                'Fast': '#ffb347', 
+                                'On Target': '#3498DB', 
+                                'RR Downtime (Stop)': '#808080',
+                                'Run Break (Excluded)': '#d3d3d3' # Light grey
+                            }
+
+
+                            for shot_type, color in color_map.items():
+                                df_subset = df_day_shots[df_day_shots['Shot Type'] == shot_type]
+                                if not df_subset.empty:
+                                    fig_ct.add_bar(
+                                        x=df_subset['SHOT TIME'], y=df_subset['Actual CT'],
+                                        name=shot_type, marker_color=color,
+                                        # --- v6.89: Add run_id to hover text (now 1-based) ---
+                                        customdata=df_subset['run_id'],
+                                        hovertemplate='<b>%{x|%H:%M:%S}</b><br>Run ID: %{customdata}<br>Shot Type: %{fullData.name}<br>Actual CT: %{y:.2f}s<extra></extra>'
+                                    )
+                            
+                            # --- v6.96: Add dynamic, per-run Mode CT bands ---
+                            for run_id, df_run in df_day_shots.groupby('run_id'):
+                                if not df_run.empty:
+                                    mode_ct_lower_for_run = df_run['Mode CT Lower'].iloc[0]
+                                    mode_ct_upper_for_run = df_run['Mode CT Upper'].iloc[0]
+                                    run_start_time = df_run['SHOT TIME'].min()
+                                    run_end_time = df_run['SHOT TIME'].max()
+                                    
+                                    fig_ct.add_hrect(
+                                        x0=run_start_time, x1=run_end_time,
+                                        y0=mode_ct_lower_for_run, y1=mode_ct_upper_for_run,
+                                        fillcolor="grey", opacity=0.20,
+                                        line_width=0,
+                                        name=f"Run {run_id} Mode Band" if len(df_day_shots['run_id'].unique()) > 1 else "Mode CT Band"
+                                    )
+                            
+                            # --- Hide duplicate legend entries for the bands ---
+                            legend_names_seen = set()
+                            for trace in fig_ct.data:
+                                if "Mode Band" in trace.name:
+                                    if trace.name in legend_names_seen:
+                                        trace.showlegend = False
+                                    else:
+                                        legend_names_seen.add(trace.name)
+                            # --- End v6.96 ---
+                            
+                            # --- v6.54: Use Reference CT for line ---
+                            fig_ct.add_shape(
+                                type='line',
+                                x0=df_day_shots['SHOT TIME'].min(), x1=df_day_shots['SHOT TIME'].max(),
+                                y0=reference_ct_for_day, y1=reference_ct_for_day,
+                                line=dict(color='green', dash='dash'), name=f'{reference_ct_label} ({reference_ct_for_day:.2f}s)'
+                            )
+
+                            fig_ct.add_annotation(
+                                x=df_day_shots['SHOT TIME'].max(), y=reference_ct_for_day,
+                                text=f"{reference_ct_label}: {reference_ct_for_day:.2f}s", showarrow=True, arrowhead=1
+                            )
+                            # --- vs6.54 End ---
+                            
+                            # --- v6.91: Add vertical lines for new runs ---
+                            if 'run_id' in df_day_shots.columns:
+                                run_starts = df_day_shots.groupby('run_id')['SHOT TIME'].min().sort_values()
+                                for start_time in run_starts.iloc[1:]: # Skip the very first run
+                                    run_id_val = df_day_shots[df_day_shots['SHOT TIME'] == start_time]['run_id'].iloc[0]
+                                    # --- v6.94: Fix TypeError by separating vline and annotation ---
+                                    fig_ct.add_vline(
+                                        x=start_time, 
+                                        line_width=2, 
+                                        line_dash="dash", 
+                                        line_color="purple"
+                                    )
+                                    fig_ct.add_annotation(
+                                        x=start_time,
+                                        y=y_axis_max * 0.95, # Position annotation near the top
+                                        text=f"Run {run_id_val} Start",
+                                        showarrow=False,
+                                        yshift=10,
+                                        textangle=-90
+                                    )
+
+                            fig_ct.update_layout(
+                                title=chart_title, # --- v6.91: Use dynamic title ---
+                                xaxis_title='Time of Day',
+                                yaxis_title='Actual Cycle Time (sec)',
+                                hovermode="closest",
+                                # --- v6.31: Fix typo y_aws_max -> y_axis_max ---
+                                yaxis_range=[0, y_axis_max], # Apply the zoom
+                                # --- v6.25: REMOVED barmode='overlay' ---
+                            )
+                            st.plotly_chart(fig_ct, use_container_width=True)
+
+                            # --- v7.04: Handle "All Dates" in table ---
+                            st.subheader(f"Data for all {len(df_day_shots)} shots ({selected_date.strftime('%Y-%m-%d')})")
+                            if len(df_day_shots) > 1000:
+                                st.info(f"Displaying first 1,000 shots of {len(df_day_shots)} total.")
+                                df_to_display = df_day_shots.head(1000)
+                            else:
+                                df_to_display = df_day_shots
+                                
+                            # --- v7.11: Add all new cols to table ---
+                            st.dataframe(
+                                df_to_display[[
+                                    'SHOT TIME', 'Actual CT', 'Approved CT',
+                                    'Working Cavities', 'run_id', 'Shot Type', 'stop_flag',
+                                    'mode_ct', 'rr_time_diff', 'adj_ct_sec',
+                                    'reference_ct', 'Mode CT Lower', 'Mode CT Upper'
+                                ]].style.format({
+                                    'Actual CT': '{:.2f}',
+                                    'Approved CT': '{:.1f}',
+                                    'reference_ct': '{:.2f}', 
+                                    'Mode CT Lower': '{:.2f}',
+                                    'Mode CT Upper': '{:.2f}',
+                                    'mode_ct': '{:.2f}',
+                                    'rr_time_diff': '{:.2f}',
+                                    'adj_ct_sec': '{:.2f}',
+                                    'SHOT TIME': lambda t: t.strftime('%H:%M:%S')
+                                }),
+                                use_container_width=True
+                            )
 
 else:
     st.info("👈 Please upload a data file to begin.")
