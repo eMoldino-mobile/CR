@@ -6,8 +6,8 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.04: Fix 'by Run' KeyError, Remove 'All Dates' from shot chart
-__version__ = "7.04 (Fix 'by Run' KeyError, Remove 'All Dates')"
+# v7.05: Fix run_id logic to USE 'TIME DIFF SEC' from file
+__version__ = "7.05 (Fix run_id logic to USE 'TIME DIFF SEC' from file)"
 # ==================================================================
 
 # ==================================================================
@@ -82,7 +82,8 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         'Approved CT': ['approved ct', 'approved_ct', 'approved cycle time', 'std ct', 'standard ct'],
         'Actual CT': ['actual ct', 'actual_ct', 'actual cycle time', 'cycle time', 'ct'],
         'Working Cavities': ['working cavities', 'working_cavities', 'cavities', 'cavity'],
-        'Plant Area': ['plant area', 'plant_area', 'area']
+        'Plant Area': ['plant area', 'plant_area', 'area'],
+        'TIME DIFF SEC': ['time diff sec', 'time_diff_sec', 'time diff (sec)'] # <-- v7.05: ADDED
     }
 
     rename_dict = {}
@@ -160,8 +161,18 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     df_rr = df_production_only.sort_values("SHOT TIME").reset_index(drop=True)
 
     # 2. Calculate time_diff_sec for all shots
-    df_rr["time_diff_sec"] = df_rr["SHOT TIME"].diff().dt.total_seconds()
+    # --- v7.05: USE 'TIME DIFF SEC' from file if it exists ---
+    if not found_cols.get('TIME DIFF SEC'):
+        st.info("Calculating 'time_diff_sec' manually (column not found).")
+        df_rr["time_diff_sec"] = df_rr["SHOT TIME"].diff().dt.total_seconds()
+    else:
+        st.info("Using 'TIME DIFF SEC' column from file.")
+        # Column already exists, just need to convert it and fill NaNs
+        df_rr['time_diff_sec'] = pd.to_numeric(df_rr['time_diff_sec'], errors='coerce')
+        
+    df_rr["time_diff_sec"].fillna(0.0, inplace=True) # Fill NaNs (from diff or coerce)
     df_rr.loc[0, "time_diff_sec"] = 0.0 # First shot has no gap
+    # --- End v7.05 Fix ---
 
     # 3. Identify global "Run Breaks"
     run_break_threshold_sec = run_interval_hours * 3600
