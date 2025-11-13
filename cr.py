@@ -6,8 +6,8 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.15: FIX: Remove '~is_run_break' from 'is_abnormal_cycle'
-__version__ = "7.15 (Fix: Count first shot of run as downtime if abnormal)"
+# v7.16: Reconcile Actual Prod Time = Run Time - Downtime Sec
+__version__ = "7.16 (Reconcile Actual Prod Time to match RR app)"
 # ==================================================================
 
 # ==================================================================
@@ -356,7 +356,11 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
 
         # SEGMENT 1: Actual Production
         results['Actual Output (parts)'] = daily_prod['Working Cavities'].sum()
-        results['Actual Cycle Time Total (sec)'] = daily_prod['Actual CT'].sum() # True production time
+        
+        # --- v7.16: RECONCILIATION ---
+        # Force Actual Prod Time to be Run Time - Downtime to match RR app
+        results['Actual Cycle Time Total (sec)'] = results['Filtered Run Time (sec)'] - results['Capacity Loss (downtime) (sec)']
+        # --- END v7.16 ---
 
         # SEGMENT 2: Inefficiency (CT Slow/Fast) Loss
         results['Capacity Gain (fast cycle time) (sec)'] = daily_prod['time_gain_sec'].sum()
@@ -473,7 +477,12 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
         results['Optimal Output (parts)'] = (results['Filtered Run Time (sec)'] / avg_reference_ct) * max_cavities
         results['Capacity Loss (downtime) (sec)'] = run_down['adj_ct_sec'].sum()
         results['Actual Output (parts)'] = run_prod['Working Cavities'].sum()
-        results['Actual Cycle Time Total (sec)'] = run_prod['Actual CT'].sum()
+        
+        # --- v7.16: RECONCILIATION ---
+        # Force Actual Prod Time to be Run Time - Downtime to match RR app
+        results['Actual Cycle Time Total (sec)'] = results['Filtered Run Time (sec)'] - results['Capacity Loss (downtime) (sec)']
+        # --- END v7.16 ---
+
 
         # --- v6.95: Fix KeyError ---
         results['Capacity Gain (fast cycle time) (sec)'] = run_prod['time_gain_sec'].sum()
@@ -736,6 +745,7 @@ if uploaded_file is not None:
                 total_fast_gain_sec = results_df['Capacity Gain (fast cycle time) (sec)'].sum()
                 total_net_cycle_loss_sec = total_slow_loss_sec - total_fast_gain_sec
 
+                # --- v7.16: Use reconciled 'Actual Cycle Time Total (sec)' ---
                 total_actual_ct_sec = results_df['Actual Cycle Time Total (sec)'].sum()
                 total_actual_ct_dhm = format_seconds_to_dhm(total_actual_ct_sec)
 
