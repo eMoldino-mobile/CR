@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.95 (Fixed TypeError and KeyError in by Run)"
+__version__ = "6.96 (Fixed dynamic Mode CT band on shot chart)"
 # ==================================================================
 
 # ==================================================================
@@ -1253,13 +1253,31 @@ if uploaded_file is not None:
                                     hovertemplate='<b>%{x|%H:%M:%S}</b><br>Run ID: %{customdata}<br>Shot Type: %{fullData.name}<br>Actual CT: %{y:.2f}s<extra></extra>'
                                 )
                         
-                        # --- v6.62: Add shaded Mode CT band ---
-                        fig_ct.add_hrect(
-                            y0=mode_ct_lower_for_day, y1=mode_ct_upper_for_day,
-                            fillcolor="grey", opacity=0.20,
-                            line_width=0,
-                            name="Mode CT Band"
-                        )
+                        # --- v6.96: Add dynamic, per-run Mode CT bands ---
+                        for run_id, df_run in df_day_shots.groupby('run_id'):
+                            if not df_run.empty:
+                                mode_ct_lower_for_run = df_run['Mode CT Lower'].iloc[0]
+                                mode_ct_upper_for_run = df_run['Mode CT Upper'].iloc[0]
+                                run_start_time = df_run['SHOT TIME'].min()
+                                run_end_time = df_run['SHOT TIME'].max()
+                                
+                                fig_ct.add_hrect(
+                                    x0=run_start_time, x1=run_end_time,
+                                    y0=mode_ct_lower_for_run, y1=mode_ct_upper_for_run,
+                                    fillcolor="grey", opacity=0.20,
+                                    line_width=0,
+                                    name=f"Run {run_id} Mode Band" if len(df_day_shots['run_id'].unique()) > 1 else "Mode CT Band"
+                                )
+                        
+                        # --- Hide duplicate legend entries for the bands ---
+                        legend_names_seen = set()
+                        for trace in fig_ct.data:
+                            if "Mode Band" in trace.name:
+                                if trace.name in legend_names_seen:
+                                    trace.showlegend = False
+                                else:
+                                    legend_names_seen.add(trace.name)
+                        # --- End v6.96 ---
                         
                         # --- v6.54: Use Reference CT for line ---
                         fig_ct.add_shape(
