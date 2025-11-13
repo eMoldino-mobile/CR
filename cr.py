@@ -389,11 +389,6 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
     instead of by date.
     """
     
-    # --- v6.97: Fix KeyError ---
-    if all_shots_df.empty or 'run_id' not in all_shots_df.columns:
-        return pd.DataFrame()
-    # --- End Fix ---
-    
     run_summary_list = []
     
     # Group by the global run_id
