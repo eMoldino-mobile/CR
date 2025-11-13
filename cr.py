@@ -6,8 +6,8 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.02: Moved column fix to main app scope
-__version__ = "7.02 (Moved column fix to main app scope)"
+# v7.03: Added 'run_id' to main app scope fix
+__version__ = "7.03 (Added 'run_id' to main app scope fix)"
 # ==================================================================
 
 # ==================================================================
@@ -392,11 +392,8 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
 
     all_shots_df = pd.concat(all_shots_list, ignore_index=True)
     
-    # --- v7.01: REDUNDANT FIX ---
-    # (This block has been removed from here)
-    # --- End v7.01 Fix ---
-
-    all_shots_df['run_id'] = all_shots_df['run_id'] + 1
+    # --- v7.03: 'run_id' increment moved to main app scope ---
+    # all_shots_df['run_id'] = all_shots_df['run_id'] + 1
     all_shots_df['date'] = all_shots_df['SHOT TIME'].dt.date
     
     return final_df, all_shots_df
@@ -645,10 +642,18 @@ if uploaded_file is not None:
                 _cache_version=cache_key
             )
 
-            # --- v7.02: FIX ---
+            # --- v7.03: FIX ---
             # Apply the redundant fix here, in the main app scope,
             # to ensure all downstream functions get the correct columns.
             if all_shots_df is not None and not all_shots_df.empty:
+                
+                # Fix run_id
+                if 'run_id' in all_shots_df.columns:
+                    all_shots_df['run_id'] = all_shots_df['run_id'] + 1 # Increment from 0-based to 1-based
+                else:
+                    all_shots_df['run_id'] = 1 # Fallback
+                
+                # Fix Mode CT bands
                 if 'mode_lower_limit' in all_shots_df.columns:
                     all_shots_df['Mode CT Lower'] = all_shots_df['mode_lower_limit']
                 else:
@@ -659,13 +664,14 @@ if uploaded_file is not None:
                 else:
                     all_shots_df['Mode CT Upper'] = 0.0
             
+                # Fix reference_ct
                 if 'approved_ct_for_run' in all_shots_df.columns:
                     all_shots_df['reference_ct'] = all_shots_df['approved_ct_for_run']
                 elif 'Approved CT' in all_shots_df.columns: # Fallback
                     all_shots_df['reference_ct'] = all_shots_df['Approved CT']
                 else:
                     all_shots_df['reference_ct'] = 0.0
-            # --- End v7.02 Fix ---
+            # --- End v7.03 Fix ---
 
             if results_df is None or results_df.empty:
                 st.error("No valid data found in file. Cannot proceed.")
