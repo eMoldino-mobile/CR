@@ -6,8 +6,8 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.01: Force-add columns to all_shots_df to fix by Run/Shot Chart
-__version__ = "7.01 (Redundant fix for 'reference_ct' KeyError)"
+# v7.02: Moved column fix to main app scope
+__version__ = "7.02 (Moved column fix to main app scope)"
 # ==================================================================
 
 # ==================================================================
@@ -393,23 +393,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     all_shots_df = pd.concat(all_shots_list, ignore_index=True)
     
     # --- v7.01: REDUNDANT FIX ---
-    # Force-create these columns on the final all_shots_df.
-    # This should not be necessary, but it will fix the downstream
-    # KeyErrors in the Shot Chart and 'by Run' mode.
-    if 'mode_lower_limit' in all_shots_df.columns:
-        all_shots_df['Mode CT Lower'] = all_shots_df['mode_lower_limit']
-    else:
-        all_shots_df['Mode CT Lower'] = 0.0
-
-    if 'mode_upper_limit' in all_shots_df.columns:
-        all_shots_df['Mode CT Upper'] = all_shots_df['mode_upper_limit']
-    else:
-        all_shots_df['Mode CT Upper'] = 0.0
-
-    if 'approved_ct_for_run' in all_shots_df.columns:
-        all_shots_df['reference_ct'] = all_shots_df['approved_ct_for_run']
-    else:
-        all_shots_df['reference_ct'] = 0.0
+    # (This block has been removed from here)
     # --- End v7.01 Fix ---
 
     all_shots_df['run_id'] = all_shots_df['run_id'] + 1
@@ -660,6 +644,28 @@ if uploaded_file is not None:
                 run_interval_hours,      
                 _cache_version=cache_key
             )
+
+            # --- v7.02: FIX ---
+            # Apply the redundant fix here, in the main app scope,
+            # to ensure all downstream functions get the correct columns.
+            if all_shots_df is not None and not all_shots_df.empty:
+                if 'mode_lower_limit' in all_shots_df.columns:
+                    all_shots_df['Mode CT Lower'] = all_shots_df['mode_lower_limit']
+                else:
+                    all_shots_df['Mode CT Lower'] = 0.0
+            
+                if 'mode_upper_limit' in all_shots_df.columns:
+                    all_shots_df['Mode CT Upper'] = all_shots_df['mode_upper_limit']
+                else:
+                    all_shots_df['Mode CT Upper'] = 0.0
+            
+                if 'approved_ct_for_run' in all_shots_df.columns:
+                    all_shots_df['reference_ct'] = all_shots_df['approved_ct_for_run']
+                elif 'Approved CT' in all_shots_df.columns: # Fallback
+                    all_shots_df['reference_ct'] = all_shots_df['Approved CT']
+                else:
+                    all_shots_df['reference_ct'] = 0.0
+            # --- End v7.02 Fix ---
 
             if results_df is None or results_df.empty:
                 st.error("No valid data found in file. Cannot proceed.")
