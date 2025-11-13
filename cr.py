@@ -6,8 +6,8 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.17: Fix All-Time Summary calc. Use global min/max time.
-__version__ = "7.17 (Fix All-Time Summary Run Time calc)"
+# v7.18: Fix All-Time Summary calc. Use sum of 'by Run' data.
+__version__ = "7.18 (Fix All-Time Summary calc. Use sum of 'by Run' data.)"
 # ==================================================================
 
 # ==================================================================
@@ -728,41 +728,38 @@ if uploaded_file is not None:
                 # --- 1. All-Time Summary Dashboard Calculations ---
                 st.header("All-Time Summary")
 
-                # 1. Calculate totals (based on primary calculation)
-                total_produced = results_df['Actual Output (parts)'].sum()
-                total_downtime_loss_parts = results_df['Capacity Loss (downtime) (parts)'].sum()
-                total_slow_loss_parts = results_df['Capacity Loss (slow cycle time) (parts)'].sum()
-                total_fast_gain_parts = results_df['Capacity Gain (fast cycle time) (parts)'].sum()
-                total_net_cycle_loss_parts = total_slow_loss_parts - total_fast_gain_parts
+                # --- v7.18: FIX for All-Time Summary ---
+                # Calculate All-Time totals by summing the 'by Run' data,
+                # which correctly handles run time logic.
                 
-                # These are always based on the 100% (Optimal) run
-                total_optimal_100 = results_df['Optimal Output (parts)'].sum()
-                total_target = results_df['Target Output (parts)'].sum()
+                # 1. Get the 'by Run' summary dataframe
+                run_summary_df_for_total = calculate_run_summaries(all_shots_df, target_output_perc)
                 
-                # Calculate corresponding time values
-                total_downtime_loss_sec = results_df['Capacity Loss (downtime) (sec)'].sum()
-                total_slow_loss_sec = results_df['Capacity Loss (slow cycle time) (sec)'].sum()
-                total_fast_gain_sec = results_df['Capacity Gain (fast cycle time) (sec)'].sum()
-                total_net_cycle_loss_sec = total_slow_loss_sec - total_fast_gain_sec
-
-                
-                # --- v7.17: FIX for All-Time Summary ---
-                # Calculate Run Time from the *full* dataset, not summing daily.
-                
-                # 1. Get Wall Clock Time for *all data*
-                global_first_shot_time = all_shots_df['SHOT TIME'].min()
-                global_last_shot_time = all_shots_df['SHOT TIME'].max()
-                global_last_shot_ct = all_shots_df.iloc[-1]['Actual CT'] if not all_shots_df.empty else 0
-                
-                global_time_span_sec = (global_last_shot_time - global_first_shot_time).total_seconds()
-                run_time_sec_total = global_time_span_sec + global_last_shot_ct
-                run_time_dhm_total = format_seconds_to_dhm(run_time_sec_total)
-                
-                # 2. Reconcile Actual Prod Time
-                # Use the *summed* downtime, but the *global* run time
-                total_actual_ct_sec = run_time_sec_total - total_downtime_loss_sec
-                total_actual_ct_dhm = format_seconds_to_dhm(total_actual_ct_sec)
-                # --- End v7.17 Fix ---
+                if run_summary_df_for_total.empty:
+                    st.error("Failed to calculate 'by Run' summary for All-Time totals.")
+                else:
+                    # 2. Sum the 'by Run' totals to get the All-Time totals
+                    total_produced = run_summary_df_for_total['Actual Output (parts)'].sum()
+                    total_downtime_loss_parts = run_summary_df_for_total['Capacity Loss (downtime) (parts)'].sum()
+                    total_slow_loss_parts = run_summary_df_for_total['Capacity Loss (slow cycle time) (parts)'].sum()
+                    total_fast_gain_parts = run_summary_df_for_total['Capacity Gain (fast cycle time) (parts)'].sum()
+                    total_net_cycle_loss_parts = total_slow_loss_parts - total_fast_gain_parts
+                    
+                    total_optimal_100 = run_summary_df_for_total['Optimal Output (parts)'].sum()
+                    total_target = run_summary_df_for_total['Target Output (parts)'].sum()
+                    
+                    total_downtime_loss_sec = run_summary_df_for_total['Capacity Loss (downtime) (sec)'].sum()
+                    total_slow_loss_sec = run_summary_df_for_total['Capacity Loss (slow cycle time) (sec)'].sum()
+                    total_fast_gain_sec = run_summary_df_for_total['Capacity Gain (fast cycle time) (sec)'].sum()
+                    total_net_cycle_loss_sec = total_slow_loss_sec - total_fast_gain_sec
+                    
+                    # These are the key metrics that are now correct:
+                    run_time_sec_total = run_summary_df_for_total['Filtered Run Time (sec)'].sum()
+                    run_time_dhm_total = format_seconds_to_dhm(run_time_sec_total)
+                    
+                    total_actual_ct_sec = run_summary_df_for_total['Actual Cycle Time Total (sec)'].sum()
+                    total_actual_ct_dhm = format_seconds_to_dhm(total_actual_ct_sec)
+                # --- End v7.18 Fix ---
                 
 
                 run_time_label = "Overall Run Time" if not toggle_filter else "Filtered Run Time"
