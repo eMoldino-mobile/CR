@@ -6,8 +6,8 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.10: Added 'rr_time_diff' and 'adj_ct_sec' to shot table
-__version__ = "7.10 (Added 'rr_time_diff' and 'adj_ct_sec' to shot table)"
+# v7.11: Fix KeyError by expanding redundant fix. Added Mode CT to 'by Run' table.
+__version__ = "7.11 (Fix KeyError. Added Mode CT to 'by Run' table)"
 # ==================================================================
 
 # ==================================================================
@@ -446,6 +446,12 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
         results = {col: 0 for col in ALL_RESULT_COLUMNS}
         results['run_id'] = run_id
         
+        # v7.11: Get the mode_ct for this run.
+        # .mean() is safe since all shots in a run share the same mode_ct.
+        results['mode_ct'] = 0.0
+        if 'mode_ct' in df_run.columns:
+            results['mode_ct'] = df_run['mode_ct'].mean()
+
         run_prod = df_run[df_run['stop_flag'] == 0]
         run_down = df_run[df_run['stop_flag'] == 1]
 
@@ -708,7 +714,20 @@ if uploaded_file is not None:
                     all_shots_df['parts_loss'] = 0.0
                 # --- End v7.04 Fix ---
 
-            # --- End v7.03 Fix (now v7.04) ---
+                # --- v7.11: Expand redundant fix to prevent KeyError ---
+                if 'mode_ct' not in all_shots_df.columns:
+                    all_shots_df['mode_ct'] = 0.0
+                if 'rr_time_diff' not in all_shots_df.columns:
+                    all_shots_df['rr_time_diff'] = 0.0
+                if 'adj_ct_sec' not in all_shots_df.columns:
+                    all_shots_df['adj_ct_sec'] = 0.0
+                if 'Shot Type' not in all_shots_df.columns:
+                    all_shots_df['Shot Type'] = 'N/A'
+                if 'stop_flag' not in all_shots_df.columns:
+                    all_shots_df['stop_flag'] = 0
+                # --- End v7.11 Fix ---
+
+            # --- End v7.03 Fix (now v7.11) ---
 
             if results_df is None or results_df.empty:
                 st.error("No valid data found in file. Cannot proceed.")
@@ -1191,6 +1210,8 @@ if uploaded_file is not None:
                         report_table_1_df = display_df_totals.reset_index().rename(columns={'run_id': 'Run ID'})
                         report_table_1 = pd.DataFrame(index=report_table_1_df.index)
                         report_table_1['Run ID'] = report_table_1_df['Run ID']
+                        # --- v7.11: Add Mode CT to 'by Run' table ---
+                        report_table_1['Mode CT'] = report_table_1_df['mode_ct'].map('{:.2f}'.format)
                     else:
                         report_table_1 = pd.DataFrame(index=display_df_totals.index)
                         report_table_1_df = display_df_totals # Use the original df for applying data
