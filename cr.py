@@ -6,8 +6,8 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.08: Aligned time gap logic with run_rate_app (removed ~in_mode_band)
-__version__ = "7.08 (Aligned time gap logic with run_rate_app)"
+# v7.10: Added 'rr_time_diff' and 'adj_ct_sec' to shot table
+__version__ = "7.10 (Added 'rr_time_diff' and 'adj_ct_sec' to shot table)"
 # ==================================================================
 
 # ==================================================================
@@ -1442,14 +1442,21 @@ if uploaded_file is not None:
                         st.dataframe(
                             df_to_display[[
                                 'SHOT TIME', 'Actual CT', 'Approved CT',
-                                'Working Cavities', 'run_id', 'Shot Type', 'stop_flag', # <-- v6.89: Added run_id
-                                'reference_ct', 'Mode CT Lower', 'Mode CT Upper' # --- v6.62: Added columns ---
+                                'Working Cavities', 'run_id',
+                                'mode_ct', 
+                                'rr_time_diff', # <-- v7.10: Added this column
+                                'adj_ct_sec',   # <-- v7.10: Added this column
+                                'Shot Type', 'stop_flag', 
+                                'reference_ct', 'Mode CT Lower', 'Mode CT Upper'
                             ]].style.format({
                                 'Actual CT': '{:.2f}',
                                 'Approved CT': '{:.1f}',
-                                'reference_ct': '{:.2f}', # --- v6.89: Renamed ---
-                                'Mode CT Lower': '{:.2f}', # --- v6.62: Added format ---
-                                'Mode CT Upper': '{:.2f}', # --- v6.62: Added format ---
+                                'reference_ct': '{:.2f}', 
+                                'Mode CT Lower': '{:.2f}', 
+                                'Mode CT Upper': '{:.2f}', 
+                                'mode_ct': '{:.2f}', 
+                                'rr_time_diff': '{:.1f}', # <-- v7.10: Added formatter
+                                'adj_ct_sec': '{:.1f}',   # <-- v7.10: Added formatter
                                 'SHOT TIME': lambda t: t.strftime('%H:%M:%S') # --- v7.04: Simplified format ---
                             }),
                             use_container_width=True
