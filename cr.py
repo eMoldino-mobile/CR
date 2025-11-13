@@ -6,8 +6,8 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.16: Reconcile Actual Prod Time = Run Time - Downtime Sec
-__version__ = "7.16 (Reconcile Actual Prod Time to match RR app)"
+# v7.17: Fix All-Time Summary calc. Use global min/max time.
+__version__ = "7.17 (Fix All-Time Summary Run Time calc)"
 # ==================================================================
 
 # ==================================================================
@@ -720,7 +720,7 @@ if uploaded_file is not None:
 
             # --- END REDUNDANT FIX BLOCK ---
 
-            if results_df is None or results_df.empty:
+            if results_df is None or results_df.empty or all_shots_df.empty:
                 st.error("No valid data found in file. Cannot proceed.")
             else:
                 # --- End v6.64 ---
@@ -745,12 +745,26 @@ if uploaded_file is not None:
                 total_fast_gain_sec = results_df['Capacity Gain (fast cycle time) (sec)'].sum()
                 total_net_cycle_loss_sec = total_slow_loss_sec - total_fast_gain_sec
 
-                # --- v7.16: Use reconciled 'Actual Cycle Time Total (sec)' ---
-                total_actual_ct_sec = results_df['Actual Cycle Time Total (sec)'].sum()
-                total_actual_ct_dhm = format_seconds_to_dhm(total_actual_ct_sec)
-
-                run_time_sec_total = results_df['Filtered Run Time (sec)'].sum()
+                
+                # --- v7.17: FIX for All-Time Summary ---
+                # Calculate Run Time from the *full* dataset, not summing daily.
+                
+                # 1. Get Wall Clock Time for *all data*
+                global_first_shot_time = all_shots_df['SHOT TIME'].min()
+                global_last_shot_time = all_shots_df['SHOT TIME'].max()
+                global_last_shot_ct = all_shots_df.iloc[-1]['Actual CT'] if not all_shots_df.empty else 0
+                
+                global_time_span_sec = (global_last_shot_time - global_first_shot_time).total_seconds()
+                run_time_sec_total = global_time_span_sec + global_last_shot_ct
                 run_time_dhm_total = format_seconds_to_dhm(run_time_sec_total)
+                
+                # 2. Reconcile Actual Prod Time
+                # Use the *summed* downtime, but the *global* run time
+                total_actual_ct_sec = run_time_sec_total - total_downtime_loss_sec
+                total_actual_ct_dhm = format_seconds_to_dhm(total_actual_ct_sec)
+                # --- End v7.17 Fix ---
+                
+
                 run_time_label = "Overall Run Time" if not toggle_filter else "Filtered Run Time"
                 actual_output_perc_val = (total_produced / total_optimal_100) if total_optimal_100 > 0 else 0
 
