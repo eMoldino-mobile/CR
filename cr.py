@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-__version__ = "6.99 (Fixed KeyError for by Run and shot chart)"
+__version__ = "6.98 (Fixed KeyError on empty dataframes)"
 # ==================================================================
 
 # ==================================================================
@@ -236,7 +236,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         0
     )
     
-    # --- v6.99: BUG FIX ---
+    # --- v6.95: BUG FIX ---
     # Create columns on df_rr *first* (initialized to 0)
     df_rr['parts_gain'] = 0.0
     df_rr['parts_loss'] = 0.0
@@ -246,7 +246,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     # Now, update df_rr with the values from df_production
     # This will only update rows where stop_flag == 0
     df_rr.update(df_production[['parts_gain', 'parts_loss', 'time_gain_sec', 'time_loss_sec']])
-    # --- End v6.99 Bug Fix ---
+    # --- End v6.95 Bug Fix ---
 
 
     # 11. Add Shot Type and date
