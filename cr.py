@@ -6,8 +6,8 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.04: Fix 'by Run' KeyError, Remove 'All Dates' from shot chart
-__version__ = "7.04 (Fix 'by Run' KeyError, Remove 'All Dates')"
+# v7.06: Differentiated "Run Break" logic from "RR Stoppage" logic
+__version__ = "7.06 (Fixed Run Break vs. RR Stoppage logic)"
 # ==================================================================
 
 # ==================================================================
@@ -82,7 +82,8 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         'Approved CT': ['approved ct', 'approved_ct', 'approved cycle time', 'std ct', 'standard ct'],
         'Actual CT': ['actual ct', 'actual_ct', 'actual cycle time', 'cycle time', 'ct'],
         'Working Cavities': ['working cavities', 'working_cavities', 'cavities', 'cavity'],
-        'Plant Area': ['plant area', 'plant_area', 'area']
+        'Plant Area': ['plant area', 'plant_area', 'area'],
+        # 'TIME DIFF SEC': ['time diff sec', 'time_diff_sec', 'time diff (sec)'] # <-- v7.06: REVERTED v7.05
     }
 
     rename_dict = {}
@@ -160,12 +161,28 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     df_rr = df_production_only.sort_values("SHOT TIME").reset_index(drop=True)
 
     # 2. Calculate time_diff_sec for all shots
-    df_rr["time_diff_sec"] = df_rr["SHOT TIME"].diff().dt.total_seconds()
-    df_rr.loc[0, "time_diff_sec"] = 0.0 # First shot has no gap
+    # --- v7.06: REVERT v7.05 ---
+    # We will calculate two separate diffs.
+    
+    # --- v7.06: LOGIC 1: 'rr_time_diff' for Run Rate (stoppage) logic ---
+    # This looks at all shots, including 999.9, to find small gaps.
+    df_rr["rr_time_diff"] = df_rr["SHOT TIME"].diff().dt.total_seconds()
+    df_rr.loc[0, "rr_time_diff"] = 0.0 # First shot has no gap
 
+    # --- v7.06: LOGIC 2: 'run_break_time_diff' for Run Break (new run) logic ---
+    # This *only* looks at production shots to find large gaps.
+    df_prod_shots = df_rr[df_rr["Actual CT"] < 999.9].copy()
+    df_prod_shots["run_break_time_diff"] = df_prod_shots["SHOT TIME"].diff().dt.total_seconds()
+    
+    # Merge this one column back into the main df_rr, matching on index
+    df_rr = df_rr.merge(df_prod_shots[['run_break_time_diff']], left_index=True, right_index=True, how='left')
+    df_rr["run_break_time_diff"].fillna(0.0, inplace=True) # Fill 0 for 999.9 shots and first shot
+    # --- End v7.06 Fix ---
+    
     # 3. Identify global "Run Breaks"
     run_break_threshold_sec = run_interval_hours * 3600
-    is_run_break = df_rr["time_diff_sec"] > run_break_threshold_sec
+    # --- v7.06: Use the correct diff column ---
+    is_run_break = df_rr["run_break_time_diff"] > run_break_threshold_sec
     df_rr['is_run_break'] = is_run_break # Store this for later
     
     # 4. Assign a *global* run_id
@@ -220,7 +237,8 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     in_mode_band = (df_rr["Actual CT"] >= df_rr['mode_lower_limit']) & (df_rr["Actual CT"] <= df_rr['mode_upper_limit'])
     
     # --- v6.93: FIX --- A "Time Gap" is only a gap if it's ALSO outside the mode band.
-    is_time_gap = (df_rr["time_diff_sec"] > (prev_actual_ct + rr_downtime_gap)) & ~is_run_break & ~in_mode_band
+    # --- v7.06: Use the correct diff column ---
+    is_time_gap = (df_rr["rr_time_diff"] > (prev_actual_ct + rr_downtime_gap)) & ~is_run_break & ~in_mode_band
     
     # Abnormal cycle = NOT in mode band
     is_abnormal_cycle = ~in_mode_band & ~is_hard_stop_code
@@ -228,7 +246,8 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     df_rr["stop_flag"] = np.where(is_abnormal_cycle | is_time_gap | is_hard_stop_code | is_run_break, 1, 0)
     
     df_rr['adj_ct_sec'] = df_rr['Actual CT']
-    df_rr.loc[is_time_gap, 'adj_ct_sec'] = df_rr['time_diff_sec']
+    # --- v7.06: Use the correct diff column ---
+    df_rr.loc[is_time_gap, 'adj_ct_sec'] = df_rr['rr_time_diff']
     df_rr.loc[is_hard_stop_code, 'adj_ct_sec'] = 0 
     df_rr.loc[is_run_break, 'adj_ct_sec'] = 0 
 
