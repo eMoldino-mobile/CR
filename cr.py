@@ -6,8 +6,8 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.06: Differentiated "Run Break" logic from "RR Stoppage" logic
-__version__ = "7.06 (Fixed Run Break vs. RR Stoppage logic)"
+# v7.07: Aligned downtime logic with run_rate_app (removed is_run_break from stop_flag)
+__version__ = "7.07 (Aligned downtime logic with run_rate_app)"
 # ==================================================================
 
 # ==================================================================
@@ -243,7 +243,11 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     # Abnormal cycle = NOT in mode band
     is_abnormal_cycle = ~in_mode_band & ~is_hard_stop_code
     
-    df_rr["stop_flag"] = np.where(is_abnormal_cycle | is_time_gap | is_hard_stop_code | is_run_break, 1, 0)
+    # --- v7.07: Make logic identical to run_rate_app.py ---
+    # We remove 'is_run_break' from the stop_flag.
+    # A run break is now EXCLUDED from time, but the first shot of the new
+    # run is correctly counted as PRODUCTION, not a stop.
+    df_rr["stop_flag"] = np.where(is_abnormal_cycle | is_time_gap | is_hard_stop_code, 1, 0)
     
     df_rr['adj_ct_sec'] = df_rr['Actual CT']
     # --- v7.06: Use the correct diff column ---
