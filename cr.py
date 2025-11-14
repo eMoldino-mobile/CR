@@ -307,10 +307,6 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     df_production['date'] = df_production['SHOT TIME'].dt.date # df_production is still used for daily calcs
     df_downtime['date'] = df_downtime['SHOT TIME'].dt.date   # df_downtime is still used for daily calcs
     
-    df_rr['date'] = df_rr['SHOT TIME'].dt.date
-    df_production['date'] = df_production['SHOT TIME'].dt.date
-    df_downtime['date'] = df_downtime['SHOT TIME'].dt.date
-    
     # 13. Add Mode CT band columns for the chart
     df_rr['Mode CT Lower'] = df_rr['mode_lower_limit']
     df_rr['Mode CT Upper'] = df_rr['mode_upper_limit']
@@ -745,7 +741,7 @@ if uploaded_file is not None:
 
                 # --- 1. All-Time Summary Dashboard Calculations ---
                 st.header("All-Time Summary")
-
+                
                 # --- v7.18: FIX for All-Time Summary ---
                 # Calculate All-Time totals by summing the 'by Run' data,
                 # which correctly handles run time logic.
@@ -1315,7 +1311,7 @@ if uploaded_file is not None:
                     report_table_optimal['Gain (Fast Cycles)'] = report_table_optimal_df.apply(lambda r: f"{r['Capacity Gain (fast cycle time) (parts)']:,.2f} ({r['Capacity Gain (fast cycle time) (parts %)']:.1%})", axis=1)
                     report_table_optimal['Total Net Loss'] = report_table_optimal_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
                     
-                    # --- v7.23: Add color styling to Loss/Gain table ---
+                    # --- v7.25: Add consistent color styling to Loss/Gain table ---
                     def style_loss_gain_table(col):
                         if col.name == 'Loss (RR Downtime)':
                             return ['color: red'] * len(col)
@@ -1325,9 +1321,9 @@ if uploaded_file is not None:
                             return ['color: green'] * len(col)
                         if col.name == 'Total Net Loss':
                             # Style based on the raw numeric value from the underlying dataframe
-                            # --- v7.25: Fix styling for multi-index vs single-index ---
                             raw_values = display_df_optimal['Total Capacity Loss (parts)']
-                            if isinstance(raw_values.index, pd.MultiIndex):
+                            # Handle different index types after resampling
+                            if isinstance(raw_values.index, pd.MultiIndex) or isinstance(raw_values.index, pd.DatetimeIndex):
                                 raw_values = raw_values.reset_index(drop=True)
                             return ['color: green' if v < 0 else 'color: red' for v in raw_values]
                         return [''] * len(col)
@@ -1336,7 +1332,7 @@ if uploaded_file is not None:
                         report_table_optimal.style.apply(style_loss_gain_table, axis=0),
                         use_container_width=True
                     )
-                    # --- End v7.23 ---
+                    # --- End v7.25 ---
                     
                     
                     if benchmark_view == "Target Output": 
@@ -1384,7 +1380,6 @@ if uploaded_file is not None:
                             subset=['Gap to Target (parts)', 'Gap % (vs Target)', 'Allocated Impact (RR Downtime)', 'Allocated Impact (Net Cycle)']
                         ), use_container_width=True)
                     # --- End v6.64 ---
-
 
                 # --- 4. SHOT-BY-SHOT ANALYSIS ---
                 st.divider()
