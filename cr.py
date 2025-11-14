@@ -6,8 +6,8 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.19: Make All-Time Summary dynamic to Target/Optimal view.
-__version__ = "7.19 (Dynamic All-Time Summary)"
+# v7.20: Fix NameError in shot chart, standardize colors
+__version__ = "7.20 (Fix NameError & Color Consistency)"
 # ==================================================================
 
 # ==================================================================
@@ -285,6 +285,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         (df_production['Actual CT'] < df_production['reference_ct']),
         (df_production['Actual CT'] == df_production['reference_ct'])
     ]
+    # --- v7.20: Standardize colors ---
     choices = ['Slow', 'Fast', 'On Target']
     df_production['Shot Type'] = np.select(conditions, choices, default='N/A')
     
@@ -1154,11 +1155,12 @@ if uploaded_file is not None:
                     st.header(f"{data_frequency} Performance Breakdown (vs {benchmark_title})")
                     fig_ts = go.Figure()
 
+                    # --- v7.20: Standardize colors ---
                     fig_ts.add_trace(go.Bar(
                         x=chart_df['X-Axis'],
                         y=chart_df['Actual Output (parts)'],
                         name='Actual Output',
-                        marker_color='green',
+                        marker_color='#77dd77', # Pastel Green
                         customdata=chart_df['Actual Output (%)'],
                         hovertemplate='Actual Output: %{y:,.0f} (%{customdata:.1%})<extra></extra>'
                     ))
@@ -1188,7 +1190,7 @@ if uploaded_file is not None:
                         x=chart_df['X-Axis'],
                         y=chart_df['Capacity Loss (downtime) (parts)'],
                         name='Run Rate Downtime (Stops)',
-                        marker_color='#ff6961', # Pastel Red
+                        marker_color='#808080', # Grey
                         customdata=chart_df['Capacity Loss (downtime) (parts %)'],
                         hovertemplate='Run Rate Downtime (Stops): %{y:,.0f} (%{customdata:.1%})<extra></extra>'
                     ))
@@ -1382,13 +1384,13 @@ if uploaded_file is not None:
                             reference_ct_label = "Approved CT"
                             
                             fig_ct = go.Figure()
-                            # --- v6.27: Add new color for run breaks ---
+                            # --- v7.20: Standardize colors ---
                             color_map = {
-                                'Slow': '#ff6961', 
-                                'Fast': '#ffb347', 
-                                'On Target': '#3498DB', 
-                                'RR Downtime (Stop)': '#808080',
-                                'Run Break (Excluded)': '#d3d3d3' # Light grey
+                                'Slow': '#ff6961',                 # Pastel Red
+                                'Fast': '#ffb347',                 # Pastel Orange
+                                'On Target': '#77dd77',            # Pastel Green
+                                'RR Downtime (Stop)': '#808080',   # Grey
+                                'Run Break (Excluded)': '#d3d3d3'  # Light grey
                             }
 
 
@@ -1430,10 +1432,11 @@ if uploaded_file is not None:
                             # --- End v6.96 ---
                             
                             # --- v6.54: Use Reference CT for line ---
+                            # --- v7.20: BUG FIX (NameError) ---
                             fig_ct.add_shape(
                                 type='line',
                                 x0=df_day_shots['SHOT TIME'].min(), x1=df_day_shots['SHOT TIME'].max(),
-                                y0=reference_ct_for_day, y1=reference_i_for_day,
+                                y0=reference_ct_for_day, y1=reference_ct_for_day,
                                 line=dict(color='green', dash='dash'), name=f'{reference_ct_label} ({reference_ct_for_day:.2f}s)'
                             )
 
