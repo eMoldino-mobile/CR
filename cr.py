@@ -733,14 +733,16 @@ if uploaded_file is not None:
             else:
                 # --- End v6.64 ---
 
+                # --- v7.29: REFACTOR ---
+                # Calculate all dataframes ONCE at the top.
+                daily_summary_df = results_df.copy()
+                run_summary_df = calculate_run_summaries(all_shots_df, target_output_perc)
+                
                 # --- 1. All-Time Summary Dashboard Calculations ---
                 st.header("All-Time Summary")
-                # --- v7.18: FIX for All-Time Summary ---
-                # Calculate All-Time totals by summing the 'by Run' data,
-                # which correctly handles run time logic.
                 
                 # 1. Get the 'by Run' summary dataframe
-                run_summary_df_for_total = calculate_run_summaries(all_shots_df, target_output_perc)
+                run_summary_df_for_total = run_summary_df.copy() # Use the one we just calculated
                 
                 if run_summary_df_for_total.empty:
                     st.error("Failed to calculate 'by Run' summary for All-Time totals.")
@@ -1063,33 +1065,29 @@ if uploaded_file is not None:
 
                 # --- 3. AGGREGATED REPORT (Chart & Table) ---
                 
-                # --- v6.64: Helper function for processing dataframes ---
-                def process_aggregated_dataframe(daily_df, all_shots_df, target_perc):
-                    if data_frequency == 'by Run':
-                        # --- v6.89: Use new 'by Run' aggregation ---
-                        agg_df = calculate_run_summaries(all_shots_df, target_perc)
-                        chart_title_prefix = "Run-by-Run"
-                    elif data_frequency == 'Weekly':
-                        agg_df = daily_df.resample('W').sum().replace([np.inf, -np.inf], np.nan).fillna(0)
-                        chart_title_prefix = "Weekly"
-                    elif data_frequency == 'Monthly':
-                        agg_df = daily_df.resample('ME').sum().replace([np.inf, -np.inf], np.nan).fillna(0)
-                        chart_title_prefix = "Monthly"
-                    else: # Daily
-                        agg_df = daily_df.copy()
-                        chart_title_prefix = "Daily"
-                        
-                    # --- v6.98: Fix KeyError by checking for empty agg_df ---
-                    if agg_df.empty:
-                        st.warning(f"No data to display for the '{data_frequency}' frequency.")
-                        return pd.DataFrame(), "No Data"
-
+                # --- v7.29: REMOVED process_aggregated_dataframe helper function ---
+                
+                # --- v7.29: Create the display_df based on the radio button ---
+                if data_frequency == 'by Run':
+                    agg_df = run_summary_df.copy() # Use the one we calculated
+                    chart_title_prefix = "Run-by-Run"
+                elif data_frequency == 'Weekly':
+                    agg_df = daily_summary_df.resample('W').sum().replace([np.inf, -np.inf], np.nan).fillna(0)
+                    chart_title_prefix = "Weekly"
+                elif data_frequency == 'Monthly':
+                    agg_df = daily_summary_df.resample('ME').sum().replace([np.inf, -np.inf], np.nan).fillna(0)
+                    chart_title_prefix = "Monthly"
+                else: # Daily
+                    agg_df = daily_summary_df.copy()
+                    chart_title_prefix = "Daily"
+                
+                if agg_df.empty:
+                    st.warning(f"No data to display for the '{data_frequency}' frequency.")
+                else:
                     # --- Calculate Percentage Columns AFTER aggregation ---
-                    # --- v6.64: All calcs are vs Optimal ---
                     perc_base_parts = agg_df['Optimal Output (parts)']
                     chart_title = f"{chart_title_prefix} Capacity Report (vs Optimal)"
                     optimal_100_base = agg_df['Optimal Output (parts)']
-
 
                     agg_df['Actual Output (%)'] = np.where( optimal_100_base > 0, agg_df['Actual Output (parts)'] / optimal_100_base, 0)
                     agg_df['Production Shots (%)'] = np.where( agg_df['Total Shots (all)'] > 0, agg_df['Production Shots'] / agg_df['Total Shots (all)'], 0)
@@ -1138,15 +1136,18 @@ if uploaded_file is not None:
                     #     agg_df['Avg Actual CT_str'] = agg_df['Avg Actual CT'].map('{:.2f}s'.format)
                     # if 'Std/Approved CT' in agg_df.columns:
                     #     agg_df['Std/Approved CT_str'] = agg_df['Std/Approved CT'].map('{:.2f}s'.format)
+                    
+                    # --- v7.29: Set display_df to the fully processed agg_df ---
+                    display_df = agg_df
+                # --- End v7.29 Refactor ---
 
-                    return agg_df, chart_title
-                # --- End v6.64 Helper ---
-                
                 # --- v6.64: Process the main dataframe for the chart ---
-                display_df, chart_title = process_aggregated_dataframe(results_df, all_shots_df, target_output_perc)
+                # display_df, chart_title = process_aggregated_dataframe(results_df, all_shots_df, target_output_perc)
                 
                 # --- v6.98: Check if processing failed ---
-                if not display_df.empty:
+                if display_df.empty:
+                    st.warning("No data to display for the selected frequency.")
+                else:
                     if data_frequency == 'Weekly':
                         xaxis_title = "Week"
                     elif data_frequency == 'Monthly':
@@ -1402,27 +1403,28 @@ if uploaded_file is not None:
                             df_day_shots = all_shots_df[all_shots_df['date'] == selected_date]
                             chart_title = f"All Shots for {selected_date}"
                         
-                        # --- v7.29: REMOVE Chart Controls subheader and slider ---
-                        # st.subheader("Chart Controls")
-                        # # --- v6.27: Filter out huge run breaks from the slider max calculation ---
-                        # non_break_df = df_day_shots[df_day_shots['Shot Type'] != 'Run Break (Excluded)']
-                        # max_ct_for_day = 100 # Default
-                        # if not non_break_df.empty:
-                        #     max_ct_for_day = non_break_df['Actual CT'].max()
+                        # --- v7.29: Re-introduce Chart Controls + Slider ---
+                        st.subheader("Chart Controls")
+                        # --- v6.27: Filter out huge run breaks from the slider max calculation ---
+                        non_break_df = df_day_shots[df_day_shots['Shot Type'] != 'Run Break (Excluded)']
+                        max_ct_for_day = 100 # Default
+                        if not non_break_df.empty:
+                            # --- v7.29: Get 99th percentile to avoid 999.9 skewing the max ---
+                            max_ct_for_day = non_break_df['Actual CT'].quantile(0.99)
 
-                        # slider_max = int(np.ceil(max_ct_for_day / 10.0)) * 10
-                        # slider_max = max(slider_max, 50)
-                        # slider_max = min(slider_max, 1000)
+                        slider_max = int(np.ceil(max_ct_for_day / 10.0)) * 10
+                        slider_max = max(slider_max, 200) # Ensure slider max is at least 200
+                        slider_max = min(slider_max, 1000) # Cap slider at 1000
 
-                        # y_axis_max = st.slider(
-                        #     "Zoom Y-Axis (sec)",
-                        #     min_value=10,
-                        #     max_value=1000, # Max to see all outliers
-                        #     value=min(slider_max, 50), # Default to a "zoomed in" view
-                        #     step=10,
-                        #     help="Adjust the max Y-axis to zoom in on the cluster. (Set to 1000 to see all outliers)."
-                        # )
-                        # --- End v7.29 REMOVE ---
+                        y_axis_max = st.slider(
+                            "Zoom Y-Axis (sec)",
+                            min_value=10,
+                            max_value=1000, # Max to see all outliers
+                            value=200, # Default to 200 as requested
+                            step=10,
+                            help="Adjust the max Y-axis to zoom in on the cluster. (Set to 1000 to see all outliers)."
+                        )
+                        # --- End v7.29 Re-introduce ---
 
                         # --- v7.02: Check for all required columns ---
                         required_shot_cols = ['reference_ct', 'Mode CT Lower', 'Mode CT Upper', 'run_id', 'mode_ct', 'rr_time_diff', 'adj_ct_sec']
@@ -1514,8 +1516,8 @@ if uploaded_file is not None:
                                     )
                                     fig_ct.add_annotation(
                                         x=start_time,
-                                        # --- v7.29: Use autorange, so set y to top edge ---
-                                        yref="paper", y=1.0, # y=y_axis_max * 0.95,
+                                        # --- v7.29: Set y relative to slider ---
+                                        y=y_axis_max * 0.95,
                                         text=f"Run {run_id_val} Start",
                                         showarrow=False,
                                         yshift=10,
@@ -1526,8 +1528,8 @@ if uploaded_file is not None:
                                 xaxis_title='Time of Day',
                                 yaxis_title='Actual Cycle Time (sec)',
                                 hovermode="closest",
-                                # --- v7.29: Remove fixed y-axis range to enable autorange ---
-                                # yaxis_range=[0, y_axis_max], # Apply the zoom
+                                # --- v7.29: Re-apply fixed y-axis range ---
+                                yaxis_range=[0, y_axis_max], # Apply the zoom
                                 # --- End v7.29 ---
                                 # --- v6.25: REMOVED barmode='overlay' ---
                             )
