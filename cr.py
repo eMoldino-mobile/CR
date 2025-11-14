@@ -1381,21 +1381,26 @@ if uploaded_file is not None:
                 if all_shots_df.empty:
                     st.warning("No shots were found in the file to analyze.")
                 else:
-                    # --- v7.04: Remove "All Dates" option ---
+                    # --- v7.29: Add "All Dates" option back ---
                     available_dates_list = sorted(all_shots_df['date'].unique(), reverse=True)
+                    available_dates = ["All Dates"] + available_dates_list
                     
                     if not available_dates_list:
                         st.warning("No valid dates found in shot data.")
                     else:
                         selected_date = st.selectbox(
                             "Select a Date to Analyze",
-                            options=available_dates_list,
-                            format_func=lambda d: d.strftime('%Y-%m-%d') # Format for display
+                            options=available_dates,
+                            format_func=lambda d: "All Dates" if isinstance(d, str) else d.strftime('%Y-%m-%d') # Format for display
                         )
 
-                        # --- v7.04: Filter to selected date ---
-                        df_day_shots = all_shots_df[all_shots_df['date'] == selected_date]
-                        chart_title = f"All Shots for {selected_date}"
+                        # --- v7.29: Filter to selected date or all dates ---
+                        if selected_date == "All Dates":
+                            df_day_shots = all_shots_df.copy()
+                            chart_title = "All Shots for Full Period"
+                        else:
+                            df_day_shots = all_shots_df[all_shots_df['date'] == selected_date]
+                            chart_title = f"All Shots for {selected_date}"
                         
                         # --- v7.29: REMOVE Chart Controls subheader and slider ---
                         # st.subheader("Chart Controls")
@@ -1528,8 +1533,9 @@ if uploaded_file is not None:
                             )
                             st.plotly_chart(fig_ct, use_container_width=True)
 
-                            # --- v6.91: Handle "All Dates" in table ---
-                            st.subheader(f"Data for all {len(df_day_shots)} shots ({selected_date.strftime('%Y-%m-%d')})")
+                            # --- v7.29: Handle "All Dates" in table title ---
+                            selected_date_str = "All Dates" if isinstance(selected_date, str) else selected_date.strftime('%Y-%m-%d')
+                            st.subheader(f"Data for all {len(df_day_shots)} shots ({selected_date_str})")
                             if len(df_day_shots) > 1000:
                                 st.info(f"Displaying first 1,000 shots of {len(df_day_shots)} total.")
                                 df_to_display = df_day_shots.head(1000)
@@ -1553,7 +1559,8 @@ if uploaded_file is not None:
                                     'mode_ct': '{:.2f}',
                                     'rr_time_diff': '{:.1f}s',
                                     'adj_ct_sec': '{:.1f}s',
-                                    'SHOT TIME': lambda t: t.strftime('%H:%M:%S')
+                                    # --- v7.29: Conditionally format time ---
+                                    'SHOT TIME': lambda t: t.strftime('%Y-%m-%d %H:%M:%S') if selected_date == "All Dates" else t.strftime('%H:%M:%S')
                                 }),
                                 use_container_width=True
                             )
