@@ -7,8 +7,8 @@ from datetime import datetime # v7.21: Import datetime for formatting
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.22: Remove confusing table cols, align colors with run_rate_app
-__version__ = "7.22 (Align colors & table with RR app)"
+# v7.21: Fix NameError, standardize colors, add comprehensive 'by Run' table
+__version__ = "7.21 (Fix NameError, Colors, & 'by Run' Table)"
 # ==================================================================
 
 # ==================================================================
@@ -475,9 +475,8 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
             results['Mode CT'] = 0.0
 
         # --- v7.21: Add Avg Actual CT and Std/Approved CT for table ---
-        # --- v7.22: REMOVED Avg Actual CT and Std/Approved CT ---
-        # results['Avg Actual CT'] = run_prod['Actual CT'].mean() if not run_prod.empty else 0.0
-        # results['Std/Approved CT'] = avg_approved_ct
+        results['Avg Actual CT'] = run_prod['Actual CT'].mean() if not run_prod.empty else 0.0
+        results['Std/Approved CT'] = avg_approved_ct
 
         # 3. Calculate Segments
         results['Optimal Output (parts)'] = (results['Filtered Run Time (sec)'] / avg_reference_ct) * max_cavities
@@ -1134,11 +1133,10 @@ if uploaded_file is not None:
                     # --- v7.21: Add formatted columns for the 'by Run' table ---
                     if 'Start Time' in agg_df.columns:
                         agg_df['Start Time_str'] = pd.to_datetime(agg_df['Start Time']).dt.strftime('%Y-%m-%d %H:%M')
-                    # --- v7.22: REMOVED Avg Actual CT and Std/Approved CT ---
-                    # if 'Avg Actual CT' in agg_df.columns:
-                    #     agg_df['Avg Actual CT_str'] = agg_df['Avg Actual CT'].map('{:.2f}s'.format)
-                    # if 'Std/Approved CT' in agg_df.columns:
-                    #     agg_df['Std/Approved CT_str'] = agg_df['Std/Approved CT'].map('{:.2f}s'.format)
+                    if 'Avg Actual CT' in agg_df.columns:
+                        agg_df['Avg Actual CT_str'] = agg_df['Avg Actual CT'].map('{:.2f}s'.format)
+                    if 'Std/Approved CT' in agg_df.columns:
+                        agg_df['Std/Approved CT_str'] = agg_df['Std/Approved CT'].map('{:.2f}s'.format)
 
                     return agg_df, chart_title
                 # --- End v6.64 Helper ---
@@ -1170,7 +1168,6 @@ if uploaded_file is not None:
                     fig_ts = go.Figure()
 
                     # --- v7.20: Standardize colors ---
-                    # --- v7.22: Align colors with run_rate_app ---
                     fig_ts.add_trace(go.Bar(
                         x=chart_df['X-Axis'],
                         y=chart_df['Actual Output (parts)'],
@@ -1187,7 +1184,7 @@ if uploaded_file is not None:
                         x=chart_df['X-Axis'],
                         y=chart_df['Net Cycle Time Loss (positive)'],
                         name='Capacity Loss (cycle time)',
-                        marker_color='#ffb347', # Pastel Orange (Matches run_rate_app)
+                        marker_color='#ffb347', # Pastel Orange
                         customdata=np.stack((
                             chart_df['Net Cycle Time Loss (parts)'],
                             chart_df['Capacity Loss (slow cycle time) (parts)'],
@@ -1205,7 +1202,7 @@ if uploaded_file is not None:
                         x=chart_df['X-Axis'],
                         y=chart_df['Capacity Loss (downtime) (parts)'],
                         name='Run Rate Downtime (Stops)',
-                        marker_color='#ff6961', # Pastel Red (Matches run_rate_app)
+                        marker_color='#808080', # Grey
                         customdata=chart_df['Capacity Loss (downtime) (parts %)'],
                         hovertemplate='Run Rate Downtime (Stops): %{y:,.0f} (%{customdata:.1%})<extra></extra>'
                     ))
@@ -1263,10 +1260,9 @@ if uploaded_file is not None:
                         report_table_1['Total Shots'] = report_table_1_df['Total Shots (all)'].map('{:,.0f}'.format)
                         report_table_1['Production Shots'] = report_table_1_df['Production Shots'].map('{:,.0f}'.format)
                         report_table_1['Downtime Shots'] = report_table_1_df['Downtime Shots'].map('{:,.0f}'.format)
-                        # --- v7.22: Remove confusing columns ---
-                        # report_table_1['Avg Actual CT'] = report_table_1_df['Avg Actual CT_str']
+                        report_table_1['Avg Actual CT'] = report_table_1_df['Avg Actual CT_str']
                         report_table_1['Mode CT'] = report_table_1_df['Mode CT'].map('{:.2f}s'.format)
-                        # report_table_1['Std/Approved CT'] = report_table_1_df['Std/Approved CT_str']
+                        report_table_1['Std/Approved CT'] = report_table_1_df['Std/Approved CT_str']
                     
                     else: # Daily, Weekly, Monthly
                         report_table_1 = pd.DataFrame(index=display_df_totals.index)
@@ -1413,12 +1409,12 @@ if uploaded_file is not None:
                             reference_ct_label = "Approved CT"
                             
                             fig_ct = go.Figure()
-                            # --- v7.22: Align colors with run_rate_app ---
+                            # --- v7.20: Standardize colors ---
                             color_map = {
-                                'Slow': '#ffb347',                 # Pastel Orange
+                                'Slow': '#ff6961',                 # Pastel Red
                                 'Fast': '#ffb347',                 # Pastel Orange
                                 'On Target': '#77dd77',            # Pastel Green
-                                'RR Downtime (Stop)': '#ff6961',   # Pastel Red
+                                'RR Downtime (Stop)': '#808080',   # Grey
                                 'Run Break (Excluded)': '#d3d3d3'  # Light grey
                             }
 
