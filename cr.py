@@ -7,8 +7,8 @@ from datetime import datetime # v7.21: Import datetime for formatting
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.26: Fixed NameError on selected_date
-__version__ = "7.26 (Fixed NameError on selected_date)"
+# v7.28: Set 'On Target' to Blue + consistent chart colors
+__version__ = "7.28 (Blue 'On Target' + Consistent Colors)"
 # ==================================================================
 
 # ==================================================================
@@ -282,26 +282,20 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
 
     # 12. Add Shot Type and date
     
-    # --- v7.25: BUG FIX ---
-    # Replaced entire Shot Type logic with the superior logic from run_rate_app.
-    # This correctly flags stops first, preventing them from being mis-labeled as 'Fast' or 'Slow'.
+    # --- v7.27: Reverted Shot Type logic to fix bug ---
     conditions = [
-        (df_rr['stop_flag'] == 1) & (is_hard_stop_code),
-        (df_rr['stop_flag'] == 1) & (~is_hard_stop_code),
-        (df_rr['stop_flag'] == 0) & (df_rr["Actual CT"] > df_rr['mode_upper_limit']), # Slow
-        (df_rr['stop_flag'] == 0) & (df_rr["Actual CT"] < df_rr['mode_lower_limit']), # Fast
-        (df_rr['stop_flag'] == 0) # On Target
+        (df_production['Actual CT'] > df_production['reference_ct']),
+        (df_production['Actual CT'] < df_production['reference_ct']),
+        (df_production['Actual CT'] == df_production['reference_ct'])
     ]
-    choices = [
-        'RR Downtime (Hard Stop)', 
-        'RR Downtime (Gap/Abnormal)', 
-        'Slow', 
-        'Fast', 
-        'On Target'
-    ]
-    df_rr['Shot Type'] = np.select(conditions, choices, default='N/A')
+    choices = ['Slow', 'Fast', 'On Target']
+    df_production['Shot Type'] = np.select(conditions, choices, default='N/A')
+    
+    # Update df_rr with the new 'Shot Type'
+    df_rr['Shot Type'] = df_production['Shot Type'] 
     df_rr.loc[is_run_break, 'Shot Type'] = 'Run Break (Excluded)'
-    # --- End v7.25 Fix ---
+    df_rr['Shot Type'].fillna('RR Downtime (Stop)', inplace=True) 
+    # --- End v7.27 Revert ---
     
     df_rr['date'] = df_rr['SHOT TIME'].dt.date
     df_production['date'] = df_production['SHOT TIME'].dt.date # df_production is still used for daily calcs
@@ -741,7 +735,6 @@ if uploaded_file is not None:
 
                 # --- 1. All-Time Summary Dashboard Calculations ---
                 st.header("All-Time Summary")
-                
                 # --- v7.18: FIX for All-Time Summary ---
                 # Calculate All-Time totals by summing the 'by Run' data,
                 # which correctly handles run time logic.
@@ -757,7 +750,6 @@ if uploaded_file is not None:
                     total_downtime_loss_sec, total_slow_loss_sec, total_fast_gain_sec, total_net_cycle_loss_sec = 0,0,0,0
                     run_time_sec_total, run_time_dhm_total = 0, "0m"
                     total_actual_ct_sec, total_actual_ct_dhm = 0, "0m"
-
                 else:
                     # 2. Sum the 'by Run' totals to get the All-Time totals
                     total_produced = run_summary_df_for_total['Actual Output (parts)'].sum()
@@ -782,7 +774,6 @@ if uploaded_file is not None:
                     total_actual_ct_dhm = format_seconds_to_dhm(total_actual_ct_sec)
                 # --- End v7.18 Fix ---
                 
-
                 run_time_label = "Overall Run Time" if not toggle_filter else "Filtered Run Time"
                 actual_output_perc_val = (total_produced / total_optimal_100) if total_optimal_100 > 0 else 0
 
@@ -1177,12 +1168,12 @@ if uploaded_file is not None:
                     st.header(f"{data_frequency} Performance Breakdown (vs {benchmark_title})")
                     fig_ts = go.Figure()
 
-                    # --- v7.23: Align colors with user request ---
+                    # --- v7.28: Set 'Actual Output' to Blue ---
                     fig_ts.add_trace(go.Bar(
                         x=chart_df['X-Axis'],
                         y=chart_df['Actual Output (parts)'],
                         name='Actual Output',
-                        marker_color='#77dd77', # Pastel Green
+                        marker_color='#3498DB', # Blue
                         customdata=chart_df['Actual Output (%)'],
                         hovertemplate='Actual Output: %{y:,.0f} (%{customdata:.1%})<extra></extra>'
                     ))
@@ -1190,6 +1181,7 @@ if uploaded_file is not None:
                     chart_df['Net Cycle Time Loss (parts)'] = chart_df['Total Capacity Loss (cycle time) (parts)']
                     chart_df['Net Cycle Time Loss (positive)'] = np.maximum(0, chart_df['Net Cycle Time Loss (parts)'])
 
+                    # --- v7.28: Set 'Cycle Time' to Orange ---
                     fig_ts.add_trace(go.Bar(
                         x=chart_df['X-Axis'],
                         y=chart_df['Net Cycle Time Loss (positive)'],
@@ -1208,11 +1200,12 @@ if uploaded_file is not None:
                             '<extra></extra>'
                     ))
                     
+                    # --- v7.28: Set 'Downtime' to Grey ---
                     fig_ts.add_trace(go.Bar(
                         x=chart_df['X-Axis'],
                         y=chart_df['Capacity Loss (downtime) (parts)'],
                         name='Run Rate Downtime (Stops)',
-                        marker_color='#ff6961', # Pastel Red
+                        marker_color='#808080', # Grey
                         customdata=chart_df['Capacity Loss (downtime) (parts %)'],
                         hovertemplate='Run Rate Downtime (Stops): %{y:,.0f} (%{customdata:.1%})<extra></extra>'
                     ))
@@ -1321,11 +1314,7 @@ if uploaded_file is not None:
                             return ['color: green'] * len(col)
                         if col.name == 'Total Net Loss':
                             # Style based on the raw numeric value from the underlying dataframe
-                            raw_values = display_df_optimal['Total Capacity Loss (parts)']
-                            # Handle different index types after resampling
-                            if isinstance(raw_values.index, pd.MultiIndex) or isinstance(raw_values.index, pd.DatetimeIndex):
-                                raw_values = raw_values.reset_index(drop=True)
-                            return ['color: green' if v < 0 else 'color: red' for v in raw_values]
+                            return ['color: green' if v < 0 else 'color: red' for v in display_df_optimal['Total Capacity Loss (parts)']]
                         return [''] * len(col)
 
                     st.dataframe(
@@ -1381,6 +1370,7 @@ if uploaded_file is not None:
                         ), use_container_width=True)
                     # --- End v6.64 ---
 
+
                 # --- 4. SHOT-BY-SHOT ANALYSIS ---
                 st.divider()
                 st.header("Shot-by-Shot Analysis (All Shots)")
@@ -1404,7 +1394,6 @@ if uploaded_file is not None:
                         )
 
                         # --- v7.04: Filter to selected date ---
-                        # --- v7.26: BUG FIX (NameError: selected.date -> selected_date) ---
                         df_day_shots = all_shots_df[all_shots_df['date'] == selected_date]
                         chart_title = f"All Shots for {selected_date}"
                         
@@ -1442,15 +1431,13 @@ if uploaded_file is not None:
                             reference_ct_label = "Approved CT"
                             
                             fig_ct = go.Figure()
-                            
-                            # --- v7.25: Revert to grey-scale for downtime, align with new logic ---
+                            # --- v7.28: Set 'On Target' to Blue ---
                             color_map = {
                                 'Slow': '#ff6961',                 # Red
                                 'Fast': '#ffb347',                 # Orange
-                                'On Target': '#77dd77',            # Green
-                                'RR Downtime (Gap/Abnormal)': '#d3d3d3',  # Light Grey
-                                'RR Downtime (Hard Stop)': '#808080',   # Dark Grey
-                                'Run Break (Excluded)': '#a9a9a9'  # A different grey for breaks
+                                'On Target': '#3498DB',            # Blue
+                                'RR Downtime (Stop)': '#808080',   # Dark Grey
+                                'Run Break (Excluded)': '#d3d3d3'  # Light grey
                             }
 
 
@@ -1526,7 +1513,6 @@ if uploaded_file is not None:
                                         yshift=10,
                                         textangle=-90
                                     )
-
                             fig_ct.update_layout(
                                 title=chart_title, # --- v6.91: Use dynamic title ---
                                 xaxis_title='Time of Day',
