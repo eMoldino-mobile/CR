@@ -7,8 +7,8 @@ from datetime import datetime # v7.21: Import datetime for formatting
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.28: Set 'On Target' to Blue + consistent chart colors
-__version__ = "7.28 (Blue 'On Target' + Consistent Colors)"
+# v7.29: Refactored data flow to fix table inconsistency
+__version__ = "7.29 (Refactored data flow to fix table inconsistency)"
 # ==================================================================
 
 # ==================================================================
@@ -42,7 +42,6 @@ ALL_RESULT_COLUMNS = [
     'Capacity Loss (vs Target) (parts)', 'Capacity Loss (vs Target) (sec)',
     'Total Shots (all)', 'Production Shots', 'Downtime Shots'
 ]
-
 # ==================================================================
 #                           DATA CALCULATION
 # ==================================================================
@@ -1259,7 +1258,7 @@ if uploaded_file is not None:
                         report_table_1['Run ID'] = report_table_1_df['Run ID']
                         report_table_1['Start Time'] = report_table_1_df['Start Time_str']
                         report_table_1['Overall Run Time'] = report_table_1_df.apply(lambda r: f"{r['Filtered Run Time (d/h/m)']}", axis=1)
-                        report_table_1['Actual Production Time'] = report_table_1_df.apply(lambda r: f"{r['Actual Cycle Time Total (d/h/m)']}", axis=1)
+                        report_table_1['Actual Production Time'] = report_table_1_df.apply(lambda r: f"{r['Actual Cycle Time Total (d/to_dhm)']}", axis=1)
                         report_table_1['Total Downtime'] = report_table_1_df.apply(lambda r: f"{r['Total Downtime (d/h/m)']}", axis=1)
                         report_table_1['Total Shots'] = report_table_1_df['Total Shots (all)'].map('{:,.0f}'.format)
                         report_table_1['Production Shots'] = report_table_1_df['Production Shots'].map('{:,.0f}'.format)
