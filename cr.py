@@ -6,8 +6,8 @@ import plotly.graph_objects as go
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.18: Fix All-Time Summary calc. Use sum of 'by Run' data.
-__version__ = "7.18 (Fix All-Time Summary calc. Use sum of 'by Run' data.)"
+# v7.19: Make All-Time Summary dynamic to Target/Optimal view.
+__version__ = "7.19 (Dynamic All-Time Summary)"
 # ==================================================================
 
 # ==================================================================
@@ -737,6 +737,13 @@ if uploaded_file is not None:
                 
                 if run_summary_df_for_total.empty:
                     st.error("Failed to calculate 'by Run' summary for All-Time totals.")
+                    # Set defaults to avoid crashing dashboard
+                    total_produced, total_downtime_loss_parts, total_slow_loss_parts, total_fast_gain_parts, total_net_cycle_loss_parts = 0,0,0,0,0
+                    total_optimal_100, total_target = 0,0
+                    total_downtime_loss_sec, total_slow_loss_sec, total_fast_gain_sec, total_net_cycle_loss_sec = 0,0,0,0
+                    run_time_sec_total, run_time_dhm_total = 0, "0m"
+                    total_actual_ct_sec, total_actual_ct_dhm = 0, "0m"
+
                 else:
                     # 2. Sum the 'by Run' totals to get the All-Time totals
                     total_produced = run_summary_df_for_total['Actual Output (parts)'].sum()
@@ -787,26 +794,40 @@ if uploaded_file is not None:
                     with c1:
                         st.metric(run_time_label, run_time_dhm_total)
                     
+                    # --- v7.19: Make Box 2 dynamic ---
                     with c2:
-                        st.metric("Optimal Output (100%)", f"{total_optimal_100:,.0f}")
                         if benchmark_view == "Target Output":
-                             st.caption(f"Target Output: {total_target:,.0f}")
-                            
+                            st.metric(f"Target Output ({target_output_perc:.0f}%)", f"{total_target:,.0f}")
+                            st.caption(f"Optimal (100%): {total_optimal_100:,.0f}")
+                        else:
+                            st.metric("Optimal Output (100%)", f"{total_optimal_100:,.0f}")
+                    
+                    # --- v7.19: Make Box 3 dynamic ---
                     with c3:
                         st.metric(f"Actual Output ({actual_output_perc_val:.1%})", f"{total_produced:,.0f} parts")
                         st.caption(f"Actual Production Time: {total_actual_ct_dhm}")
                         
-                    with c4:
-                        # --- v6.82: Make color consistent ---
-                        st.markdown(f"**Total Capacity Loss (True)**")
-                        st.markdown(f"<h3><span style='color:red;'>{total_true_net_loss_parts:,.0f} parts</span></h3>", unsafe_allow_html=True) 
-                        st.caption(f"Total Time Lost: {format_seconds_to_dhm(total_true_net_loss_sec)}")
-
                         if benchmark_view == "Target Output":
                             gap_to_target = total_produced - total_target
                             gap_perc = (gap_to_target / total_target) if total_target > 0 else 0
                             gap_color = "green" if gap_to_target > 0 else "red"
-                            st.caption(f"Gap to Target: <span style='color:{gap_color};'>{gap_to_target:+,.0f} parts ({gap_perc:+.1%})</span>", unsafe_allow_html=True)
+                            st.caption(f"Gap to Target: <span style='color:{gap_color};'>{gap_to_target:+,.0f} ({gap_perc:+.1%})</span>", unsafe_allow_html=True)
+                    
+                    # --- v7.19: Make Box 4 dynamic ---
+                    with c4:
+                        if benchmark_view == "Target Output":
+                            # Calculate Loss vs Target totals
+                            total_loss_vs_target_parts = run_summary_df_for_total['Capacity Loss (vs Target) (parts)'].sum()
+                            total_loss_vs_target_sec = run_summary_df_for_total['Capacity Loss (vs Target) (sec)'].sum()
+                            
+                            st.markdown(f"**Capacity Loss (vs Target)**")
+                            st.markdown(f"<h3><span style='color:red;'>{total_loss_vs_target_parts:,.0f} parts</span></h3>", unsafe_allow_html=True) 
+                            st.caption(f"Total Time Lost vs Target: {format_seconds_to_dhm(total_loss_vs_target_sec)}")
+                        else:
+                            # Default view (vs Optimal)
+                            st.markdown(f"**Total Capacity Loss (True)**")
+                            st.markdown(f"<h3><span style='color:red;'>{total_true_net_loss_parts:,.0f} parts</span></h3>", unsafe_allow_html=True) 
+                            st.caption(f"Total Time Lost: {format_seconds_to_dhm(total_true_net_loss_sec)}")
                             
                 # --- v6.84: Waterfall Chart Layout ---
                 st.subheader(f"Capacity Loss Breakdown (vs {benchmark_title})")
@@ -1412,7 +1433,7 @@ if uploaded_file is not None:
                             fig_ct.add_shape(
                                 type='line',
                                 x0=df_day_shots['SHOT TIME'].min(), x1=df_day_shots['SHOT TIME'].max(),
-                                y0=reference_ct_for_day, y1=reference_ct_for_day,
+                                y0=reference_ct_for_day, y1=reference_i_for_day,
                                 line=dict(color='green', dash='dash'), name=f'{reference_ct_label} ({reference_ct_for_day:.2f}s)'
                             )
 
