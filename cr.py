@@ -7,8 +7,8 @@ from datetime import datetime # v7.21: Import datetime for formatting
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.24: Split downtime colors to grey-scale
-__version__ = "7.24 (Split downtime colors to grey-scale)"
+# v7.25: Fixed Shot Type logic bug & table color consistency
+__version__ = "7.25 (Fixed Shot Type logic bug)"
 # ==================================================================
 
 # ==================================================================
@@ -281,31 +281,31 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     df_rr.update(df_production[['parts_gain', 'parts_loss', 'time_gain_sec', 'time_loss_sec']])
 
     # 12. Add Shot Type and date
+    
+    # --- v7.25: BUG FIX ---
+    # Replaced entire Shot Type logic with the superior logic from run_rate_app.
+    # This correctly flags stops first, preventing them from being mis-labeled as 'Fast' or 'Slow'.
     conditions = [
-        (df_production['Actual CT'] > df_production['reference_ct']),
-        (df_production['Actual CT'] < df_production['reference_ct']),
-        (df_production['Actual CT'] == df_production['reference_ct'])
+        (df_rr['stop_flag'] == 1) & (is_hard_stop_code),
+        (df_rr['stop_flag'] == 1) & (~is_hard_stop_code),
+        (df_rr['stop_flag'] == 0) & (df_rr["Actual CT"] > df_rr['mode_upper_limit']), # Slow
+        (df_rr['stop_flag'] == 0) & (df_rr["Actual CT"] < df_rr['mode_lower_limit']), # Fast
+        (df_rr['stop_flag'] == 0) # On Target
     ]
-    # --- v7.20: Standardize colors ---
-    choices = ['Slow', 'Fast', 'On Target']
-    df_production['Shot Type'] = np.select(conditions, choices, default='N/A')
-    
-    # --- v7.24: Update df_rr with the new split Shot Types ---
-    df_rr['Shot Type'] = df_production['Shot Type'] 
+    choices = [
+        'RR Downtime (Hard Stop)', 
+        'RR Downtime (Gap/Abnormal)', 
+        'Slow', 
+        'Fast', 
+        'On Target'
+    ]
+    df_rr['Shot Type'] = np.select(conditions, choices, default='N/A')
     df_rr.loc[is_run_break, 'Shot Type'] = 'Run Break (Excluded)'
+    # --- End v7.25 Fix ---
     
-    # Find all remaining stops (stop_flag=1 but Shot Type is still NaN)
-    is_remaining_stop = (df_rr['stop_flag'] == 1) & (df_rr['Shot Type'].isna())
-    
-    # Of these remaining stops, label the hard stops
-    df_rr.loc[is_remaining_stop & is_hard_stop_code, 'Shot Type'] = 'RR Downtime (Hard Stop)'
-    
-    # Label all *other* remaining stops as the general downtime
-    df_rr.loc[is_remaining_stop & ~is_hard_stop_code, 'Shot Type'] = 'RR Downtime (Gap/Abnormal)'
-    
-    # Fill any other NaNs (shouldn't be any, but just in case)
-    df_rr['Shot Type'].fillna('N/A', inplace=True)
-    # --- End v7.24 ---
+    df_rr['date'] = df_rr['SHOT TIME'].dt.date
+    df_production['date'] = df_production['SHOT TIME'].dt.date # df_production is still used for daily calcs
+    df_downtime['date'] = df_downtime['SHOT TIME'].dt.date   # df_downtime is still used for daily calcs
     
     df_rr['date'] = df_rr['SHOT TIME'].dt.date
     df_production['date'] = df_production['SHOT TIME'].dt.date
@@ -1325,7 +1325,11 @@ if uploaded_file is not None:
                             return ['color: green'] * len(col)
                         if col.name == 'Total Net Loss':
                             # Style based on the raw numeric value from the underlying dataframe
-                            return ['color: green' if v < 0 else 'color: red' for v in display_df_optimal['Total Capacity Loss (parts)']]
+                            # --- v7.25: Fix styling for multi-index vs single-index ---
+                            raw_values = display_df_optimal['Total Capacity Loss (parts)']
+                            if isinstance(raw_values.index, pd.MultiIndex):
+                                raw_values = raw_values.reset_index(drop=True)
+                            return ['color: green' if v < 0 else 'color: red' for v in raw_values]
                         return [''] * len(col)
 
                     st.dataframe(
@@ -1443,7 +1447,7 @@ if uploaded_file is not None:
                             
                             fig_ct = go.Figure()
                             
-                            # --- v7.24: Revert to grey-scale for downtime ---
+                            # --- v7.25: Revert to grey-scale for downtime, align with new logic ---
                             color_map = {
                                 'Slow': '#ff6961',                 # Red
                                 'Fast': '#ffb347',                 # Orange
