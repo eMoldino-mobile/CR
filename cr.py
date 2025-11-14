@@ -2,12 +2,13 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+from datetime import datetime # v7.21: Import datetime for formatting
 
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.20: Fix NameError in shot chart, standardize colors
-__version__ = "7.20 (Fix NameError & Color Consistency)"
+# v7.21: Fix NameError, standardize colors, add comprehensive 'by Run' table
+__version__ = "7.21 (Fix NameError, Colors, & 'by Run' Table)"
 # ==================================================================
 
 # ==================================================================
@@ -41,7 +42,6 @@ ALL_RESULT_COLUMNS = [
     'Capacity Loss (vs Target) (parts)', 'Capacity Loss (vs Target) (sec)',
     'Total Shots (all)', 'Production Shots', 'Downtime Shots'
 ]
-
 # ==================================================================
 #                           DATA CALCULATION
 # ==================================================================
@@ -473,6 +473,10 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
             results['Mode CT'] = df_run_prod_for_mode['Actual CT'].mode().iloc[0] if not df_run_prod_for_mode['Actual CT'].mode().empty else 0.0
         else:
             results['Mode CT'] = 0.0
+
+        # --- v7.21: Add Avg Actual CT and Std/Approved CT for table ---
+        results['Avg Actual CT'] = run_prod['Actual CT'].mean() if not run_prod.empty else 0.0
+        results['Std/Approved CT'] = avg_approved_ct
 
         # 3. Calculate Segments
         results['Optimal Output (parts)'] = (results['Filtered Run Time (sec)'] / avg_reference_ct) * max_cavities
@@ -1126,6 +1130,14 @@ if uploaded_file is not None:
                     agg_df['Filtered Run Time (d/h/m)'] = agg_df['Filtered Run Time (sec)'].apply(format_seconds_to_dhm)
                     agg_df['Actual Cycle Time Total (d/h/m)'] = agg_df['Actual Cycle Time Total (sec)'].apply(format_seconds_to_dhm)
                     
+                    # --- v7.21: Add formatted columns for the 'by Run' table ---
+                    if 'Start Time' in agg_df.columns:
+                        agg_df['Start Time_str'] = pd.to_datetime(agg_df['Start Time']).dt.strftime('%Y-%m-%d %H:%M')
+                    if 'Avg Actual CT' in agg_df.columns:
+                        agg_df['Avg Actual CT_str'] = agg_df['Avg Actual CT'].map('{:.2f}s'.format)
+                    if 'Std/Approved CT' in agg_df.columns:
+                        agg_df['Std/Approved CT_str'] = agg_df['Std/Approved CT'].map('{:.2f}s'.format)
+
                     return agg_df, chart_title
                 # --- End v6.64 Helper ---
                 
@@ -1231,23 +1243,36 @@ if uploaded_file is not None:
                     display_df_totals = display_df
                     
                     st.header(f"Production Totals Report ({data_frequency})")
-                    # --- v6.89: Reset index for Run ID table ---
+                    # --- v7.21: Rebuild 'by Run' table to match validation screenshot ---
                     if data_frequency == 'by Run':
                         report_table_1_df = display_df_totals.reset_index().rename(columns={'run_id': 'Run ID'})
+                        
+                        # --- v7.21: Add Total Downtime column for this table ---
+                        report_table_1_df['Total Downtime (sec)'] = report_table_1_df['Filtered Run Time (sec)'] - report_table_1_df['Actual Cycle Time Total (sec)']
+                        report_table_1_df['Total Downtime (d/h/m)'] = report_table_1_df['Total Downtime (sec)'].apply(format_seconds_to_dhm)
+                        
                         report_table_1 = pd.DataFrame(index=report_table_1_df.index)
                         report_table_1['Run ID'] = report_table_1_df['Run ID']
-                        # --- v7.11: Add Mode CT to 'by Run' table ---
+                        report_table_1['Start Time'] = report_table_1_df['Start Time_str']
+                        report_table_1['Overall Run Time'] = report_table_1_df.apply(lambda r: f"{r['Filtered Run Time (d/h/m)']}", axis=1)
+                        report_table_1['Actual Production Time'] = report_table_1_df.apply(lambda r: f"{r['Actual Cycle Time Total (d/h/m)']}", axis=1)
+                        report_table_1['Total Downtime'] = report_table_1_df.apply(lambda r: f"{r['Total Downtime (d/h/m)']}", axis=1)
+                        report_table_1['Total Shots'] = report_table_1_df['Total Shots (all)'].map('{:,.0f}'.format)
+                        report_table_1['Production Shots'] = report_table_1_df['Production Shots'].map('{:,.0f}'.format)
+                        report_table_1['Downtime Shots'] = report_table_1_df['Downtime Shots'].map('{:,.0f}'.format)
+                        report_table_1['Avg Actual CT'] = report_table_1_df['Avg Actual CT_str']
                         report_table_1['Mode CT'] = report_table_1_df['Mode CT'].map('{:.2f}s'.format)
-                    else:
+                        report_table_1['Std/Approved CT'] = report_table_1_df['Std/Approved CT_str']
+                    
+                    else: # Daily, Weekly, Monthly
                         report_table_1 = pd.DataFrame(index=display_df_totals.index)
                         report_table_1_df = display_df_totals # Use the original df for applying data
                         
-
-                    report_table_1['Total Shots (all)'] = report_table_1_df['Total Shots (all)'].map('{:,.0f}'.format)
-                    report_table_1['Production Shots'] = report_table_1_df.apply(lambda r: f"{r['Production Shots']:,.0f} ({r['Production Shots (%)']:.1%})", axis=1)
-                    report_table_1['Downtime Shots'] = report_table_1_df['Downtime Shots'].map('{:,.0f}'.format)
-                    report_table_1[run_time_label] = report_table_1_df.apply(lambda r: f"{r['Filtered Run Time (d/h/m)']} ({r['Filtered Run Time (sec)']:,.0f}s)", axis=1)
-                    report_table_1['Actual Production Time'] = report_table_1_df.apply(lambda r: f"{r['Actual Cycle Time Total (d/h/m)']} ({r['Actual Cycle Time Total (time %)']:.1%})", axis=1)
+                        report_table_1['Total Shots (all)'] = report_table_1_df['Total Shots (all)'].map('{:,.0f}'.format)
+                        report_table_1['Production Shots'] = report_table_1_df.apply(lambda r: f"{r['Production Shots']:,.0f} ({r['Production Shots (%)']:.1%})", axis=1)
+                        report_table_1['Downtime Shots'] = report_table_1_df['Downtime Shots'].map('{:,.0f}'.format)
+                        report_table_1[run_time_label] = report_table_1_df.apply(lambda r: f"{r['Filtered Run Time (d/h/m)']} ({r['Filtered Run Time (sec)']:,.0f}s)", axis=1)
+                        report_table_1['Actual Production Time'] = report_table_1_df.apply(lambda r: f"{r['Actual Cycle Time Total (d/h/m)']} ({r['Actual Cycle Time Total (time %)']:.1%})", axis=1)
 
                     st.dataframe(report_table_1, use_container_width=True)
 
