@@ -1397,25 +1397,27 @@ if uploaded_file is not None:
                         df_day_shots = all_shots_df[all_shots_df['date'] == selected_date]
                         chart_title = f"All Shots for {selected_date}"
                         
-                        st.subheader("Chart Controls")
-                        # --- v6.27: Filter out huge run breaks from the slider max calculation ---
-                        non_break_df = df_day_shots[df_day_shots['Shot Type'] != 'Run Break (Excluded)']
-                        max_ct_for_day = 100 # Default
-                        if not non_break_df.empty:
-                            max_ct_for_day = non_break_df['Actual CT'].max()
+                        # --- v7.29: REMOVE Chart Controls subheader and slider ---
+                        # st.subheader("Chart Controls")
+                        # # --- v6.27: Filter out huge run breaks from the slider max calculation ---
+                        # non_break_df = df_day_shots[df_day_shots['Shot Type'] != 'Run Break (Excluded)']
+                        # max_ct_for_day = 100 # Default
+                        # if not non_break_df.empty:
+                        #     max_ct_for_day = non_break_df['Actual CT'].max()
 
-                        slider_max = int(np.ceil(max_ct_for_day / 10.0)) * 10
-                        slider_max = max(slider_max, 50)
-                        slider_max = min(slider_max, 1000)
+                        # slider_max = int(np.ceil(max_ct_for_day / 10.0)) * 10
+                        # slider_max = max(slider_max, 50)
+                        # slider_max = min(slider_max, 1000)
 
-                        y_axis_max = st.slider(
-                            "Zoom Y-Axis (sec)",
-                            min_value=10,
-                            max_value=1000, # Max to see all outliers
-                            value=min(slider_max, 50), # Default to a "zoomed in" view
-                            step=10,
-                            help="Adjust the max Y-axis to zoom in on the cluster. (Set to 1000 to see all outliers)."
-                        )
+                        # y_axis_max = st.slider(
+                        #     "Zoom Y-Axis (sec)",
+                        #     min_value=10,
+                        #     max_value=1000, # Max to see all outliers
+                        #     value=min(slider_max, 50), # Default to a "zoomed in" view
+                        #     step=10,
+                        #     help="Adjust the max Y-axis to zoom in on the cluster. (Set to 1000 to see all outliers)."
+                        # )
+                        # --- End v7.29 REMOVE ---
 
                         # --- v7.02: Check for all required columns ---
                         required_shot_cols = ['reference_ct', 'Mode CT Lower', 'Mode CT Upper', 'run_id', 'mode_ct', 'rr_time_diff', 'adj_ct_sec']
@@ -1507,7 +1509,8 @@ if uploaded_file is not None:
                                     )
                                     fig_ct.add_annotation(
                                         x=start_time,
-                                        y=y_axis_max * 0.95, # Position annotation near the top
+                                        # --- v7.29: Use autorange, so set y to top edge ---
+                                        yref="paper", y=1.0, # y=y_axis_max * 0.95,
                                         text=f"Run {run_id_val} Start",
                                         showarrow=False,
                                         yshift=10,
@@ -1518,8 +1521,9 @@ if uploaded_file is not None:
                                 xaxis_title='Time of Day',
                                 yaxis_title='Actual Cycle Time (sec)',
                                 hovermode="closest",
-                                # --- v6.31: Fix typo y_aws_max -> y_axis_max ---
-                                yaxis_range=[0, y_axis_max], # Apply the zoom
+                                # --- v7.29: Remove fixed y-axis range to enable autorange ---
+                                # yaxis_range=[0, y_axis_max], # Apply the zoom
+                                # --- End v7.29 ---
                                 # --- v6.25: REMOVED barmode='overlay' ---
                             )
                             st.plotly_chart(fig_ct, use_container_width=True)
