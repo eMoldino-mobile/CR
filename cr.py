@@ -7,8 +7,8 @@ from datetime import datetime # v7.21: Import datetime for formatting
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.25: Fixed Shot Type logic bug & table color consistency
-__version__ = "7.25 (Fixed Shot Type logic bug)"
+# v7.26: Fixed NameError on selected_date
+__version__ = "7.26 (Fixed NameError on selected_date)"
 # ==================================================================
 
 # ==================================================================
@@ -1404,7 +1404,8 @@ if uploaded_file is not None:
                         )
 
                         # --- v7.04: Filter to selected date ---
-                        df_day_shots = all_shots_df[all_shots_df['date'] == selected.date]
+                        # --- v7.26: BUG FIX (NameError: selected.date -> selected_date) ---
+                        df_day_shots = all_shots_df[all_shots_df['date'] == selected_date]
                         chart_title = f"All Shots for {selected_date}"
                         
                         st.subheader("Chart Controls")
