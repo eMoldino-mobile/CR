@@ -7,8 +7,8 @@ from datetime import datetime # v7.21: Import datetime for formatting
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.24: Split downtime colors to grey-scale
-__version__ = "7.24 (Split downtime colors to grey-scale)"
+# v7.22: Remove confusing table cols, align colors with run_rate_app
+__version__ = "7.22 (Align colors & table with RR app)"
 # ==================================================================
 
 # ==================================================================
@@ -42,7 +42,6 @@ ALL_RESULT_COLUMNS = [
     'Capacity Loss (vs Target) (parts)', 'Capacity Loss (vs Target) (sec)',
     'Total Shots (all)', 'Production Shots', 'Downtime Shots'
 ]
-
 # ==================================================================
 #                           DATA CALCULATION
 # ==================================================================
@@ -290,22 +289,10 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     choices = ['Slow', 'Fast', 'On Target']
     df_production['Shot Type'] = np.select(conditions, choices, default='N/A')
     
-    # --- v7.24: Update df_rr with the new split Shot Types ---
+    # Update df_rr with the new 'Shot Type'
     df_rr['Shot Type'] = df_production['Shot Type'] 
     df_rr.loc[is_run_break, 'Shot Type'] = 'Run Break (Excluded)'
-    
-    # Find all remaining stops (stop_flag=1 but Shot Type is still NaN)
-    is_remaining_stop = (df_rr['stop_flag'] == 1) & (df_rr['Shot Type'].isna())
-    
-    # Of these remaining stops, label the hard stops
-    df_rr.loc[is_remaining_stop & is_hard_stop_code, 'Shot Type'] = 'RR Downtime (Hard Stop)'
-    
-    # Label all *other* remaining stops as the general downtime
-    df_rr.loc[is_remaining_stop & ~is_hard_stop_code, 'Shot Type'] = 'RR Downtime (Gap/Abnormal)'
-    
-    # Fill any other NaNs (shouldn't be any, but just in case)
-    df_rr['Shot Type'].fillna('N/A', inplace=True)
-    # --- End v7.24 ---
+    df_rr['Shot Type'].fillna('RR Downtime (Stop)', inplace=True)
     
     df_rr['date'] = df_rr['SHOT TIME'].dt.date
     df_production['date'] = df_production['SHOT TIME'].dt.date
@@ -501,6 +488,7 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
         # Force Actual Prod Time to be Run Time - Downtime to match RR app
         results['Actual Cycle Time Total (sec)'] = results['Filtered Run Time (sec)'] - results['Capacity Loss (downtime) (sec)']
         # --- END v7.16 ---
+
 
         # --- v6.95: Fix KeyError ---
         results['Capacity Gain (fast cycle time) (sec)'] = run_prod['time_gain_sec'].sum()
@@ -1181,7 +1169,8 @@ if uploaded_file is not None:
                     st.header(f"{data_frequency} Performance Breakdown (vs {benchmark_title})")
                     fig_ts = go.Figure()
 
-                    # --- v7.23: Align colors with user request ---
+                    # --- v7.20: Standardize colors ---
+                    # --- v7.22: Align colors with run_rate_app ---
                     fig_ts.add_trace(go.Bar(
                         x=chart_df['X-Axis'],
                         y=chart_df['Actual Output (parts)'],
@@ -1198,7 +1187,7 @@ if uploaded_file is not None:
                         x=chart_df['X-Axis'],
                         y=chart_df['Net Cycle Time Loss (positive)'],
                         name='Capacity Loss (cycle time)',
-                        marker_color='#ffb347', # Pastel Orange
+                        marker_color='#ffb347', # Pastel Orange (Matches run_rate_app)
                         customdata=np.stack((
                             chart_df['Net Cycle Time Loss (parts)'],
                             chart_df['Capacity Loss (slow cycle time) (parts)'],
@@ -1216,7 +1205,7 @@ if uploaded_file is not None:
                         x=chart_df['X-Axis'],
                         y=chart_df['Capacity Loss (downtime) (parts)'],
                         name='Run Rate Downtime (Stops)',
-                        marker_color='#ff6961', # Pastel Red
+                        marker_color='#ff6961', # Pastel Red (Matches run_rate_app)
                         customdata=chart_df['Capacity Loss (downtime) (parts %)'],
                         hovertemplate='Run Rate Downtime (Stops): %{y:,.0f} (%{customdata:.1%})<extra></extra>'
                     ))
@@ -1314,25 +1303,7 @@ if uploaded_file is not None:
                     report_table_optimal['Loss (Slow Cycles)'] = report_table_optimal_df.apply(lambda r: f"{r['Capacity Loss (slow cycle time) (parts)']:,.2f} ({r['Capacity Loss (slow cycle time) (parts %)']:.1%})", axis=1)
                     report_table_optimal['Gain (Fast Cycles)'] = report_table_optimal_df.apply(lambda r: f"{r['Capacity Gain (fast cycle time) (parts)']:,.2f} ({r['Capacity Gain (fast cycle time) (parts %)']:.1%})", axis=1)
                     report_table_optimal['Total Net Loss'] = report_table_optimal_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
-                    
-                    # --- v7.23: Add color styling to Loss/Gain table ---
-                    def style_loss_gain_table(col):
-                        if col.name == 'Loss (RR Downtime)':
-                            return ['color: red'] * len(col)
-                        if col.name == 'Loss (Slow Cycles)':
-                            return ['color: red'] * len(col)
-                        if col.name == 'Gain (Fast Cycles)':
-                            return ['color: green'] * len(col)
-                        if col.name == 'Total Net Loss':
-                            # Style based on the raw numeric value from the underlying dataframe
-                            return ['color: green' if v < 0 else 'color: red' for v in display_df_optimal['Total Capacity Loss (parts)']]
-                        return [''] * len(col)
-
-                    st.dataframe(
-                        report_table_optimal.style.apply(style_loss_gain_table, axis=0),
-                        use_container_width=True
-                    )
-                    # --- End v7.23 ---
+                    st.dataframe(report_table_optimal, use_container_width=True)
                     
                     
                     if benchmark_view == "Target Output": 
@@ -1442,15 +1413,13 @@ if uploaded_file is not None:
                             reference_ct_label = "Approved CT"
                             
                             fig_ct = go.Figure()
-                            
-                            # --- v7.24: Revert to grey-scale for downtime ---
+                            # --- v7.22: Align colors with run_rate_app ---
                             color_map = {
-                                'Slow': '#ff6961',                 # Red
-                                'Fast': '#ffb347',                 # Orange
-                                'On Target': '#77dd77',            # Green
-                                'RR Downtime (Gap/Abnormal)': '#d3d3d3',  # Light Grey
-                                'RR Downtime (Hard Stop)': '#808080',   # Dark Grey
-                                'Run Break (Excluded)': '#a9a9a9'  # A different grey for breaks
+                                'Slow': '#ffb347',                 # Pastel Orange
+                                'Fast': '#ffb347',                 # Pastel Orange
+                                'On Target': '#77dd77',            # Pastel Green
+                                'RR Downtime (Stop)': '#ff6961',   # Pastel Red
+                                'Run Break (Excluded)': '#d3d3d3'  # Light grey
                             }
 
 
