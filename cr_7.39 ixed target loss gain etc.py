@@ -2,14 +2,13 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from datetime import datetime, timedelta # v7.40: Import timedelta
-import io # v7.40: Import io for text parsing
+from datetime import datetime # v7.21: Import datetime for formatting
 
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.40: Added Demand Forecast Tab
-__version__ = "v7.40 (Added Demand Forecast Tab)"
+# v7.39: Fixed aggregation bug for 'Capacity Loss (vs Target)'
+__version__ = "7.39 (Fix Target Loss Aggregation)"
 # ==================================================================
 
 # ==================================================================
@@ -543,7 +542,7 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
 
 @st.cache_data
 # --- v7.38: Renamed function to bust cache ---
-def run_capacity_calculation_cached(raw_data_df, toggle, cavities, target_output_perc_slider, mode_tol, rr_gap, run_interval, _cache_version=None):
+def run_capacity_calculation_cached(raw_data_df, toggle, cavities, target_perc_slider, mode_tol, rr_gap, run_interval, _cache_version=None):
     """Cached wrapper for the main calculation function."""
     return calculate_capacity_risk(
         raw_data_df,
@@ -734,16 +733,16 @@ if uploaded_file is not None:
             else:
                 # --- End v6.64 ---
 
-                # --- v7.40: Create Tabs ---
-                tab1, tab2 = st.tabs(["Capacity Risk Report", "Demand Forecast & Risk"])
-
-                with tab1:
-                    # --- v7.29: REFACTOR ---
-                    # Calculate all dataframes ONCE at the top.
-                    daily_summary_df = results_df.copy()
-                    run_summary_df = calculate_run_summaries(all_shots_df, target_output_perc)
-                    
-                    # --- 1. All-Time Summary Dashboard Calculations ---
+                # --- v7.29: REFACTOR ---
+                # Calculate all dataframes ONCE at the top.
+                daily_summary_df = results_df.copy()
+                run_summary_df = calculate_run_summaries(all_shots_df, target_output_perc)
+                
+                # --- 1. All-Time Summary Dashboard Calculations ---
+                st.header("All-Time Summary")
+                
+                # 1. Get the 'by Run' summary dataframe
+                run_summary_df_for_total = run_summary_df.copy() # Use the one we just calculated
                 
                 if run_summary_df_for_total.empty:
                     st.error("Failed to calculate 'by Run' summary for All-Time totals.")
@@ -1557,14 +1556,14 @@ if uploaded_file is not None:
                             st.plotly_chart(fig_ct, use_container_width=True)
 
                             # --- v7.30: Handle "All Dates" in table title ---
-                        selected_date_str = "All Dates" if isinstance(selected_date, str) else selected_date.strftime('%Y-%m-%d')
-                        st.subheader(f"Data for all {len(df_day_shots)} shots ({selected_date_str})")
-                        
-                        # --- v7.35: Increased shot limit from 1000 to 10000 ---
-                        if len(df_day_shots) > 10000:
-                            st.info(f"Displaying first 10,000 shots of {len(df_day_shots)} total.")
-                            df_to_display = df_day_shots.head(10000)
-                        else:
+                            selected_date_str = "All Dates" if isinstance(selected_date, str) else selected_date.strftime('%Y-%m-%d')
+                            st.subheader(f"Data for all {len(df_day_shots)} shots ({selected_date_str})")
+                            
+                            # --- v7.35: Increased shot limit from 1000 to 10000 ---
+                            if len(df_day_shots) > 10000:
+                                st.info(f"Displaying first 10,000 shots of {len(df_day_shots)} total.")
+                                df_to_display = df_day_shots.head(10000)
+                            else:
                                 df_to_display = df_day_shots
                                 
                             # --- v7.11: Add new columns to table ---
@@ -1589,177 +1588,6 @@ if uploaded_file is not None:
                                 }),
                                 use_container_width=True
                             )
-
-                # --- v7.40: NEW DEMAND FORECAST TAB ---
-                with tab2:
-                    st.header("Demand Forecast & Capacity Risk")
-                    st.info("""
-                    This tool forecasts your ability to meet future demand based on your *current* production rate.
-                    
-                    1.  **Select an "Analysis Period"** to calculate your current run rate (e.g., "last 7 days").
-                    2.  **Enter your starting inventory** and paste your future demand plan.
-                    3.  **Run the forecast** to identify your capacity risk.
-                    """)
-
-                    # --- Use the already-calculated dataframes from tab 1 ---
-                    if 'daily_summary_df' not in locals():
-                        daily_summary_df = results_df.copy()
-                    if 'all_shots_df' not in locals():
-                        st.error("Shot data not loaded. Please ensure main report runs.")
-                        st.stop()
-                        
-                    min_data_date = all_shots_df['SHOT TIME'].dt.date.min()
-                    max_data_date = all_shots_df['SHOT TIME'].dt.date.max()
-
-                    st.subheader("1. Calculate Current Run Rate")
-                    
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        analysis_start = st.date_input(
-                            "Analysis Start Date", 
-                            value=max_data_date - timedelta(days=6), # Default to last 7 days
-                            min_value=min_data_date, 
-                            max_value=max_data_date,
-                            key="forecast_start"
-                        )
-                    with c2:
-                        analysis_end = st.date_input(
-                            "Analysis End Date", 
-                            value=max_data_date, 
-                            min_value=min_data_date, 
-                            max_value=max_data_date,
-                            key="forecast_end"
-                        )
-                    
-                    if analysis_start > analysis_end:
-                        st.error("Analysis Start Date must be before End Date.")
-                    else:
-                        analysis_df = daily_summary_df.loc[analysis_start:analysis_end]
-                        
-                        total_parts = analysis_df['Actual Output (parts)'].sum()
-                        total_sec = analysis_df['Filtered Run Time (sec)'].sum()
-                        
-                        parts_per_day = (total_parts / total_sec) * 86400 if total_sec > 0 else 0
-                        
-                        st.metric(
-                            f"Calculated Run Rate (from {analysis_start} to {analysis_end})", 
-                            f"{parts_per_day:,.0f} Parts / Day"
-                        )
-                        st.caption(f"Based on {total_parts:,.0f} parts produced in {format_seconds_to_dhm(total_sec)} of run time.")
-
-                        st.subheader("2. Input Future Demand Plan")
-                        
-                        c1, c2 = st.columns([1, 2])
-                        with c1:
-                            start_inventory = st.number_input("Current Inventory (Starting Stock)", value=0, min_value=0, step=100)
-                        
-                        with c2:
-                            demand_sample = f"{(datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')},500\n{(datetime.now() + timedelta(days=2)).strftime('%Y-%m-%d')},500\n{(datetime.now() + timedelta(days=3)).strftime('%Y-%m-%d')},550"
-                            demand_input = st.text_area(
-                                "Paste Demand Data (Date,Demand)", 
-                                value=demand_sample, 
-                                height=150,
-                                help="Paste CSV data with two columns: `Date` and `Demand`. e.g., '2025-11-16,500'"
-                            )
-                        
-                        st.subheader("3. Run Forecast & Identify Risk")
-                        
-                        if st.button("Run Forecast"):
-                            if parts_per_day == 0:
-                                st.error("Cannot forecast with a zero production rate. Select a different analysis period.")
-                            elif not demand_input:
-                                st.error("Please paste demand data to run the forecast.")
-                            else:
-                                try:
-                                    demand_data = io.StringIO(demand_input)
-                                    df_demand = pd.read_csv(demand_data, header=None, names=['Date', 'Demand'])
-                                    df_demand['Date'] = pd.to_datetime(df_demand['Date'])
-                                    df_demand['Demand'] = pd.to_numeric(df_demand['Demand'])
-                                    
-                                    # Create a full date range from the demand data
-                                    forecast_start_date = df_demand['Date'].min()
-                                    forecast_end_date = df_demand['Date'].max()
-                                    all_forecast_dates = pd.date_range(start=forecast_start_date, end=forecast_end_date, freq='D')
-                                    
-                                    forecast_df = pd.DataFrame(all_forecast_dates, columns=['Date'])
-                                    
-                                    # Merge demand data, filling non-demand days with 0
-                                    forecast_df = pd.merge(forecast_df, df_demand, on='Date', how='left').fillna(0)
-                                    
-                                    forecast_df['Projected Production'] = parts_per_day
-                                    forecast_df['Cumulative Demand'] = forecast_df['Demand'].cumsum()
-                                    forecast_df['Cumulative Production'] = forecast_df['Projected Production'].cumsum()
-                                    forecast_df['Projected Inventory'] = start_inventory + forecast_df['Cumulative Production'] - forecast_df['Cumulative Demand']
-                                    
-                                    # --- Calculate KPIs ---
-                                    end_inventory = forecast_df['Projected Inventory'].iloc[-1]
-                                    min_inventory = forecast_df['Projected Inventory'].min()
-                                    shortfall_date = None
-                                    if min_inventory < 0:
-                                        shortfall_date = forecast_df[forecast_df['Projected Inventory'] < 0]['Date'].min()
-
-                                    c1, c2, c3 = st.columns(3)
-                                    with c1:
-                                        st.metric(
-                                            "Projected End Inventory", 
-                                            f"{end_inventory:,.0f} parts",
-                                            delta=f"{end_inventory - start_inventory:,.0f}",
-                                            delta_color="normal"
-                                        )
-                                    with c2:
-                                        st.metric(
-                                            "Projected Max Shortfall",
-                                            f"{min_inventory:,.0f} parts" if min_inventory < 0 else "No Shortfall",
-                                            delta_color="inverse"
-                                        )
-                                    with c3:
-                                        if shortfall_date:
-                                            st.metric("Projected Shortfall Date", shortfall_date.strftime('%Y-%m-%d'))
-                                        else:
-                                            st.metric("Projected Shortfall Date", "None")
-                                    
-                                    # --- Plot Chart ---
-                                    fig_forecast = go.Figure()
-
-                                    # Add Cumulative Demand
-                                    fig_forecast.add_trace(go.Scatter(
-                                        x=forecast_df['Date'],
-                                        y=forecast_df['Cumulative Demand'],
-                                        name='Cumulative Demand',
-                                        mode='lines',
-                                        line=dict(color='red', width=2, dash='dot')
-                                    ))
-                                    
-                                    # Add Cumulative Production (with starting inventory)
-                                    fig_forecast.add_trace(go.Scatter(
-                                        x=forecast_df['Date'],
-                                        y=forecast_df['Cumulative Production'] + start_inventory,
-                                        name='Projected Cumulative Production (incl. stock)',
-                                        mode='lines',
-                                        line=dict(color='blue', width=2)
-                                    ))
-                                    
-                                    fig_forecast.update_layout(
-                                        title="Projected Production vs. Demand",
-                                        xaxis_title="Date",
-                                        yaxis_title="Cumulative Parts",
-                                        hovermode="x unified"
-                                    )
-                                    st.plotly_chart(fig_forecast, use_container_width=True)
-                                    
-                                    # --- Show Data Table ---
-                                    with st.expander("View Forecast Data Table"):
-                                        st.dataframe(forecast_df.style.format({
-                                            'Demand': '{:,.0f}',
-                                            'Projected Production': '{:,.0f}',
-                                            'Cumulative Demand': '{:,.0f}',
-                                            'Cumulative Production': '{:,.0f}',
-                                            'Projected Inventory': '{:,.0f}'
-                                        }), use_container_width=True)
-
-                                except Exception as e:
-                                    st.error(f"Error parsing demand data: {e}")
-                                    st.info("Please ensure your data is in the format 'YYYY-MM-DD,500' with one entry per line.")
 
 else:
     st.info("👈 Please upload a data file to begin.")
