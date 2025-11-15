@@ -7,8 +7,8 @@ from datetime import datetime # v7.21: Import datetime for formatting
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.34: Clarified 'Target Report' table as per user feedback
-__version__ = "7.34 (Simplified Target Report)"
+# v7.35: Added true loss columns to Target Report per user request
+__version__ = "7.35 (Expanded Target Report)"
 # ==================================================================
 
 # ==================================================================
@@ -1299,10 +1299,10 @@ if uploaded_file is not None:
                     
                     
                     if benchmark_view == "Target Output": 
-                        # --- TABLE 2: vs Target (Simplified) ---
+                        # --- TABLE 2: vs Target (Expanded) ---
                         st.header(f"Target Report ({target_output_perc:.0f}%) ({data_frequency})")
-                        # --- v7.34: Updated info text ---
-                        st.info("This table shows your actual output versus your target. To see *why* there is a gap, refer to the 'Capacity Loss & Gain Report (vs Optimal)' table above.")
+                        # --- v7.35: Updated info text ---
+                        st.info("This table shows your performance against target, alongside the *true* loss drivers (which are calculated vs. Optimal).")
                         
                         # --- v6.64: Use same processed df ---
                         display_df_target = display_df
@@ -1326,7 +1326,11 @@ if uploaded_file is not None:
                         report_table_target['Net Gap to Target (parts)'] = report_table_target_df['Gap to Target (parts)'].apply(lambda x: "{:+,.2f}".format(x) if pd.notna(x) else "N/A")
                         report_table_target['Net Gap % (vs Target)'] = report_table_target_df.apply(lambda r: r['Gap to Target (parts)'] / r['Target Output (parts)'] if r['Target Output (parts)'] > 0 else 0, axis=1).apply(lambda x: "{:+.1%}".format(x) if pd.notna(x) else "N/A")
                         
-                        # --- v7.33: REMOVED all confusing "Allocation" and "(Ref)" columns ---
+                        # --- v7.35: Add the true loss columns for context ---
+                        report_table_target['Loss (RR Downtime)'] = report_table_target_df.apply(lambda r: f"{r['Capacity Loss (downtime) (parts)']:,.2f} ({r['Capacity Loss (downtime) (parts %)']:.1%})", axis=1)
+                        report_table_target['Loss (Slow Cycles)'] = report_table_target_df.apply(lambda r: f"{r['Capacity Loss (slow cycle time) (parts)']:,.2f} ({r['Capacity Loss (slow cycle time) (parts %)']:.1%})", axis=1)
+                        report_table_target['Gain (Fast Cycles)'] = report_table_target_df.apply(lambda r: f"{r['Capacity Gain (fast cycle time) (parts)']:,.2f} ({r['Capacity Gain (fast cycle time) (parts %)']:.1%})", axis=1)
+                        report_table_target['Total Net Loss (vs Optimal)'] = report_table_target_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
                         
                         # --- v7.34: Update styling function ---
                         def style_target_table(col):
@@ -1341,6 +1345,16 @@ if uploaded_file is not None:
                                 return ['color: green' if v >= 0 else 'color: red' for v in raw_gap_values]
                             if col_name == 'Net Gap % (vs Target)':
                                 return ['color: green' if v >= 0 else 'color: red' for v in raw_gap_values]
+                                
+                            # --- v7.35: Style the new loss/gain columns ---
+                            if col_name == 'Loss (RR Downtime)':
+                                return ['color: red'] * len(col)
+                            if col_name == 'Loss (Slow Cycles)':
+                                return ['color: red'] * len(col)
+                            if col_name == 'Gain (Fast Cycles)':
+                                return ['color: green'] * len(col)
+                            if col_name == 'Total Net Loss (vs Optimal)':
+                                return ['color: green' if v < 0 else 'color: red' for v in display_df_target['Total Capacity Loss (parts)']]
                                 
                             return [''] * len(col)
 
@@ -1516,9 +1530,10 @@ if uploaded_file is not None:
                             selected_date_str = "All Dates" if isinstance(selected_date, str) else selected_date.strftime('%Y-%m-%d')
                             st.subheader(f"Data for all {len(df_day_shots)} shots ({selected_date_str})")
                             
-                            if len(df_day_shots) > 1000:
-                                st.info(f"Displaying first 1,000 shots of {len(df_day_shots)} total.")
-                                df_to_display = df_day_shots.head(1000)
+                            # --- v7.35: Increased shot limit from 1000 to 10000 ---
+                            if len(df_day_shots) > 10000:
+                                st.info(f"Displaying first 10,000 shots of {len(df_day_shots)} total.")
+                                df_to_display = df_day_shots.head(10000)
                             else:
                                 df_to_display = df_day_shots
                                 
