@@ -7,8 +7,8 @@ from datetime import datetime # v7.21: Import datetime for formatting
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.29: Refactored data flow to fix table inconsistency
-__version__ = "7.29 (Refactored data flow to fix table inconsistency)"
+# v7.32: Fixed "unreasonable" Gap Allocation logic with new math
+__version__ = "7.32 (Fixed Gap Allocation logic - new math)"
 # ==================================================================
 
 # ==================================================================
@@ -42,6 +42,7 @@ ALL_RESULT_COLUMNS = [
     'Capacity Loss (vs Target) (parts)', 'Capacity Loss (vs Target) (sec)',
     'Total Shots (all)', 'Production Shots', 'Downtime Shots'
 ]
+
 # ==================================================================
 #                           DATA CALCULATION
 # ==================================================================
@@ -732,14 +733,16 @@ if uploaded_file is not None:
             else:
                 # --- End v6.64 ---
 
+                # --- v7.29: REFACTOR ---
+                # Calculate all dataframes ONCE at the top.
+                daily_summary_df = results_df.copy()
+                run_summary_df = calculate_run_summaries(all_shots_df, target_output_perc)
+                
                 # --- 1. All-Time Summary Dashboard Calculations ---
                 st.header("All-Time Summary")
-                # --- v7.18: FIX for All-Time Summary ---
-                # Calculate All-Time totals by summing the 'by Run' data,
-                # which correctly handles run time logic.
                 
                 # 1. Get the 'by Run' summary dataframe
-                run_summary_df_for_total = calculate_run_summaries(all_shots_df, target_output_perc)
+                run_summary_df_for_total = run_summary_df.copy() # Use the one we just calculated
                 
                 if run_summary_df_for_total.empty:
                     st.error("Failed to calculate 'by Run' summary for All-Time totals.")
@@ -998,8 +1001,8 @@ if uploaded_file is not None:
                 with st.expander("View Daily Summary Data"):
 
                     # --- v6.44: Use primary results_df ---
-                    daily_summary_df = results_df.copy()
-
+                    # daily_summary_df = results_df.copy() # v7.29: This is now defined at the top
+                    
                     # Calculate all % and formatted columns needed for the table
                     daily_summary_df['Actual Cycle Time Total (time %)'] = np.where( daily_summary_df['Filtered Run Time (sec)'] > 0, daily_summary_df['Actual Cycle Time Total (sec)'] / daily_summary_df['Filtered Run Time (sec)'], 0 )
                     # --- v6.56: Actual Output % is always vs 100% Optimal ---
@@ -1062,33 +1065,29 @@ if uploaded_file is not None:
 
                 # --- 3. AGGREGATED REPORT (Chart & Table) ---
                 
-                # --- v6.64: Helper function for processing dataframes ---
-                def process_aggregated_dataframe(daily_df, all_shots_df, target_perc):
-                    if data_frequency == 'by Run':
-                        # --- v6.89: Use new 'by Run' aggregation ---
-                        agg_df = calculate_run_summaries(all_shots_df, target_perc)
-                        chart_title_prefix = "Run-by-Run"
-                    elif data_frequency == 'Weekly':
-                        agg_df = daily_df.resample('W').sum().replace([np.inf, -np.inf], np.nan).fillna(0)
-                        chart_title_prefix = "Weekly"
-                    elif data_frequency == 'Monthly':
-                        agg_df = daily_df.resample('ME').sum().replace([np.inf, -np.inf], np.nan).fillna(0)
-                        chart_title_prefix = "Monthly"
-                    else: # Daily
-                        agg_df = daily_df.copy()
-                        chart_title_prefix = "Daily"
-                        
-                    # --- v6.98: Fix KeyError by checking for empty agg_df ---
-                    if agg_df.empty:
-                        st.warning(f"No data to display for the '{data_frequency}' frequency.")
-                        return pd.DataFrame(), "No Data"
-
+                # --- v7.29: REMOVED process_aggregated_dataframe helper function ---
+                
+                # --- v7.29: Create the display_df based on the radio button ---
+                if data_frequency == 'by Run':
+                    agg_df = run_summary_df.copy() # Use the one we calculated
+                    chart_title_prefix = "Run-by-Run"
+                elif data_frequency == 'Weekly':
+                    agg_df = daily_summary_df.resample('W').sum().replace([np.inf, -np.inf], np.nan).fillna(0)
+                    chart_title_prefix = "Weekly"
+                elif data_frequency == 'Monthly':
+                    agg_df = daily_summary_df.resample('ME').sum().replace([np.inf, -np.inf], np.nan).fillna(0)
+                    chart_title_prefix = "Monthly"
+                else: # Daily
+                    agg_df = daily_summary_df.copy()
+                    chart_title_prefix = "Daily"
+                
+                if agg_df.empty:
+                    st.warning(f"No data to display for the '{data_frequency}' frequency.")
+                else:
                     # --- Calculate Percentage Columns AFTER aggregation ---
-                    # --- v6.64: All calcs are vs Optimal ---
                     perc_base_parts = agg_df['Optimal Output (parts)']
                     chart_title = f"{chart_title_prefix} Capacity Report (vs Optimal)"
                     optimal_100_base = agg_df['Optimal Output (parts)']
-
 
                     agg_df['Actual Output (%)'] = np.where( optimal_100_base > 0, agg_df['Actual Output (parts)'] / optimal_100_base, 0)
                     agg_df['Production Shots (%)'] = np.where( agg_df['Total Shots (all)'] > 0, agg_df['Production Shots'] / agg_df['Total Shots (all)'], 0)
@@ -1106,19 +1105,33 @@ if uploaded_file is not None:
                     agg_df['(Ref) Net Loss (RR)'] = agg_df['Capacity Loss (downtime) (parts)']
                     agg_df['(Ref) Net Loss (Cycle)'] = agg_df['Total Capacity Loss (cycle time) (parts)']
                     
-                    # --- v6.67: Use absolute values for ratio base ---
-                    total_ref_loss_abs = agg_df['(Ref) Net Loss (RR)'].abs() + agg_df['(Ref) Net Loss (Cycle)'].abs()
+                    # --- v7.32: New "Sound" Allocation Logic ---
+                    # Use the *actual* values (not absolute) to build the ratio
+                    total_ref_loss = agg_df['(Ref) Net Loss (RR)'] + agg_df['(Ref) Net Loss (Cycle)']
                     
+                    # Prevent division by zero if total_ref_loss is 0
+                    # (e.g., if a Downtime Loss of 100 is perfectly offset by a Cycle Gain of -100)
+                    # In that case, we can just use the original v7.30 logic as a fallback.
+                    
+                    # Fallback logic (v7.30)
+                    loss_from_downtime_fb = np.maximum(0, agg_df['(Ref) Net Loss (RR)'])
+                    loss_from_cycletime_fb = np.maximum(0, agg_df['(Ref) Net Loss (Cycle)'])
+                    total_positive_loss_fb = loss_from_downtime_fb + loss_from_cycletime_fb
+
+                    # Primary logic (v7.32)
                     agg_df['loss_downtime_ratio'] = np.where(
-                        total_ref_loss_abs > 0,
-                        agg_df['(Ref) Net Loss (RR)'].abs() / total_ref_loss_abs,
-                        0
+                        total_ref_loss != 0,
+                        agg_df['(Ref) Net Loss (RR)'] / total_ref_loss,
+                        # Fallback case:
+                        np.where(total_positive_loss_fb > 0, loss_from_downtime_fb / total_positive_loss_fb, 0)
                     )
                     agg_df['loss_cycletime_ratio'] = np.where(
-                        total_ref_loss_abs > 0,
-                        agg_df['(Ref) Net Loss (Cycle)'].abs() / total_ref_loss_abs,
-                        0
+                        total_ref_loss != 0,
+                        agg_df['(Ref) Net Loss (Cycle)'] / total_ref_loss,
+                        # Fallback case:
+                        np.where(total_positive_loss_fb > 0, loss_from_cycletime_fb / total_positive_loss_fb, 0)
                     )
+                    # --- End v7.32 Fix ---
                     
                     # --- v6.67: Allocate the 'Gap to Target' (positive or negative) ---
                     agg_df['Allocated Impact (RR Downtime)'] = agg_df['Gap to Target (parts)'] * agg_df['loss_downtime_ratio']
@@ -1137,15 +1150,18 @@ if uploaded_file is not None:
                     #     agg_df['Avg Actual CT_str'] = agg_df['Avg Actual CT'].map('{:.2f}s'.format)
                     # if 'Std/Approved CT' in agg_df.columns:
                     #     agg_df['Std/Approved CT_str'] = agg_df['Std/Approved CT'].map('{:.2f}s'.format)
+                    
+                    # --- v7.29: Set display_df to the fully processed agg_df ---
+                    display_df = agg_df
+                # --- End v7.29 Refactor ---
 
-                    return agg_df, chart_title
-                # --- End v6.64 Helper ---
-                
                 # --- v6.64: Process the main dataframe for the chart ---
-                display_df, chart_title = process_aggregated_dataframe(results_df, all_shots_df, target_output_perc)
+                # display_df, chart_title = process_aggregated_dataframe(results_df, all_shots_df, target_output_perc)
                 
                 # --- v6.98: Check if processing failed ---
-                if not display_df.empty:
+                if display_df.empty:
+                    st.warning("No data to display for the selected frequency.")
+                else:
                     if data_frequency == 'Weekly':
                         xaxis_title = "Week"
                     elif data_frequency == 'Monthly':
@@ -1257,7 +1273,7 @@ if uploaded_file is not None:
                         report_table_1['Run ID'] = report_table_1_df['Run ID']
                         report_table_1['Start Time'] = report_table_1_df['Start Time_str']
                         report_table_1['Overall Run Time'] = report_table_1_df.apply(lambda r: f"{r['Filtered Run Time (d/h/m)']}", axis=1)
-                        report_table_1['Actual Production Time'] = report_table_1_df.apply(lambda r: f"{r['Actual Cycle Time Total (d/to_dhm)']}", axis=1)
+                        report_table_1['Actual Production Time'] = report_table_1_df.apply(lambda r: f"{r['Actual Cycle Time Total (d/WHAT?! 166 days...)']}", axis=1)
                         report_table_1['Total Downtime'] = report_table_1_df.apply(lambda r: f"{r['Total Downtime (d/h/m)']}", axis=1)
                         report_table_1['Total Shots'] = report_table_1_df['Total Shots (all)'].map('{:,.0f}'.format)
                         report_table_1['Production Shots'] = report_table_1_df['Production Shots'].map('{:,.0f}'.format)
@@ -1313,6 +1329,7 @@ if uploaded_file is not None:
                             return ['color: green'] * len(col)
                         if col.name == 'Total Net Loss':
                             # Style based on the raw numeric value from the underlying dataframe
+                            # --- v7.32: Fix color logic (use raw value) ---
                             return ['color: green' if v < 0 else 'color: red' for v in display_df_optimal['Total Capacity Loss (parts)']]
                         return [''] * len(col)
 
@@ -1361,12 +1378,33 @@ if uploaded_file is not None:
                         report_table_target['(Ref) Net Loss (RR)'] = report_table_target_df['(Ref) Net Loss (RR)'].apply(lambda x: "{:,.2f}".format(x))
                         report_table_target['(Ref) Net Loss (Cycle)'] = report_table_target_df['(Ref) Net Loss (Cycle)'].apply(lambda x: "{:,.2f}".format(x))
 
+                        # --- v7.32: Fix color styling to be consistent (Red/Green text) ---
+                        def style_gap_allocation_table(col):
+                            # Style based on the raw numeric value from the underlying dataframe
+                            if col.name == 'Gap to Target (parts)':
+                                return ['color: green' if v > 0 else 'color: red' for v in display_df_target['Gap to Target (parts)']]
+                            if col.name == 'Gap % (vs Target)':
+                                return ['color: green' if v > 0 else 'color: red' for v in display_df_target['Gap to Target (parts)']]
+                            if col.name == 'Allocated Impact (RR Downtime)':
+                                # Note: Allocation color follows the Gap to Target, not its own sign
+                                return ['color: green' if v > 0 else 'color: red' for v in display_df_target['Gap to Target (parts)']]
+                            if col.name == 'Allocated Impact (Net Cycle)':
+                                # Note: Allocation color follows the Gap to Target, not its own sign
+                                return ['color: green' if v > 0 else 'color: red' for v in display_df_target['Gap to Target (parts)']]
+                            
+                            # --- v7.32: Color the (Ref) columns based on their *own* value ---
+                            if col.name == '(Ref) Net Loss (RR)':
+                                return ['color: green' if v < 0 else 'color: red' for v in display_df_target['(Ref) Net Loss (RR)']]
+                            if col.name == '(Ref) Net Loss (Cycle)':
+                                return ['color: green' if v < 0 else 'color: red' for v in display_df_target['(Ref) Net Loss (Cycle)']]
+                                
+                            return [''] * len(col)
                         
-                        st.dataframe(report_table_target.style.applymap(
-                            lambda x: 'color: green' if str(x).startswith('+') else 'color: red' if str(x).startswith('-') else None,
-                            # --- v6.67: Add new columns to style ---
-                            subset=['Gap to Target (parts)', 'Gap % (vs Target)', 'Allocated Impact (RR Downtime)', 'Allocated Impact (Net Cycle)']
-                        ), use_container_width=True)
+                        st.dataframe(
+                            report_table_target.style.apply(style_gap_allocation_table, axis=0),
+                            use_container_width=True
+                        )
+                        # --- End v7.32 ---
                     # --- End v6.64 ---
 
 
@@ -1401,27 +1439,28 @@ if uploaded_file is not None:
                             df_day_shots = all_shots_df[all_shots_df['date'] == selected_date]
                             chart_title = f"All Shots for {selected_date}"
                         
-                        # --- v7.29: REMOVE Chart Controls subheader and slider ---
-                        # st.subheader("Chart Controls")
-                        # # --- v6.27: Filter out huge run breaks from the slider max calculation ---
-                        # non_break_df = df_day_shots[df_day_shots['Shot Type'] != 'Run Break (Excluded)']
-                        # max_ct_for_day = 100 # Default
-                        # if not non_break_df.empty:
-                        #     max_ct_for_day = non_break_df['Actual CT'].max()
+                        # --- v7.29: Re-introduce Chart Controls + Slider ---
+                        st.subheader("Chart Controls")
+                        # --- v6.27: Filter out huge run breaks from the slider max calculation ---
+                        non_break_df = df_day_shots[df_day_shots['Shot Type'] != 'Run Break (Excluded)']
+                        max_ct_for_day = 100 # Default
+                        if not non_break_df.empty:
+                            # --- v7.29: Get 99th percentile to avoid 999.9 skewing the max ---
+                            max_ct_for_day = non_break_df['Actual CT'].quantile(0.99)
 
-                        # slider_max = int(np.ceil(max_ct_for_day / 10.0)) * 10
-                        # slider_max = max(slider_max, 50)
-                        # slider_max = min(slider_max, 1000)
+                        slider_max = int(np.ceil(max_ct_for_day / 10.0)) * 10
+                        slider_max = max(slider_max, 200) # Ensure slider max is at least 200
+                        slider_max = min(slider_max, 1000) # Cap slider at 1000
 
-                        # y_axis_max = st.slider(
-                        #     "Zoom Y-Axis (sec)",
-                        #     min_value=10,
-                        #     max_value=1000, # Max to see all outliers
-                        #     value=min(slider_max, 50), # Default to a "zoomed in" view
-                        #     step=10,
-                        #     help="Adjust the max Y-axis to zoom in on the cluster. (Set to 1000 to see all outliers)."
-                        # )
-                        # --- End v7.29 REMOVE ---
+                        y_axis_max = st.slider(
+                            "Zoom Y-Axis (sec)",
+                            min_value=10,
+                            max_value=1000, # Max to see all outliers
+                            value=200, # Default to 200 as requested
+                            step=10,
+                            help="Adjust the max Y-axis to zoom in on the cluster. (Set to 1000 to see all outliers)."
+                        )
+                        # --- End v7.29 Re-introduce ---
 
                         # --- v7.02: Check for all required columns ---
                         required_shot_cols = ['reference_ct', 'Mode CT Lower', 'Mode CT Upper', 'run_id', 'mode_ct', 'rr_time_diff', 'adj_ct_sec']
@@ -1513,8 +1552,8 @@ if uploaded_file is not None:
                                     )
                                     fig_ct.add_annotation(
                                         x=start_time,
-                                        # --- v7.29: Use autorange, so set y to top edge ---
-                                        yref="paper", y=1.0, # y=y_axis_max * 0.95,
+                                        # --- v7.29: Set y relative to slider ---
+                                        y=y_axis_max * 0.95,
                                         text=f"Run {run_id_val} Start",
                                         showarrow=False,
                                         yshift=10,
@@ -1525,8 +1564,8 @@ if uploaded_file is not None:
                                 xaxis_title='Time of Day',
                                 yaxis_title='Actual Cycle Time (sec)',
                                 hovermode="closest",
-                                # --- v7.29: Remove fixed y-axis range to enable autorange ---
-                                # yaxis_range=[0, y_axis_max], # Apply the zoom
+                                # --- v7.29: Re-apply fixed y-axis range ---
+                                yaxis_range=[0, y_axis_max], # Apply the zoom
                                 # --- End v7.29 ---
                                 # --- v6.25: REMOVED barmode='overlay' ---
                             )
