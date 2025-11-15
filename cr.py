@@ -2,13 +2,15 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from datetime import datetime # v7.21: Import datetime for formatting
+from datetime import datetime, timedelta # v7.40: Import timedelta
+import io # v7.40: Import io for text parsing
+from dateutil.relativedelta import relativedelta # v7.42: Import for monthly forecast
 
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.39: Fixed aggregation bug for 'Capacity Loss (vs Target)'
-__version__ = "7.39 (Fix Target Loss Aggregation)"
+# v7.42: Added 12-Month Strategic Forecast Model
+__version__ = "v7.42 (12-Month Strategic Forecast)"
 # ==================================================================
 
 # ==================================================================
@@ -42,6 +44,7 @@ ALL_RESULT_COLUMNS = [
     'Capacity Loss (vs Target) (parts)', 'Capacity Loss (vs Target) (sec)',
     'Total Shots (all)', 'Production Shots', 'Downtime Shots'
 ]
+
 # ==================================================================
 #                           DATA CALCULATION
 # ==================================================================
@@ -389,7 +392,11 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         results['Target Output (parts)'] = optimal_100_parts * target_perc_ratio
         
         results['Gap to Target (parts)'] = results['Actual Output (parts)'] - results['Target Output (parts)']
+        
+        # --- v7.39: This is the daily loss, which gets summed.
+        # This value is RE-CALCULATED after aggregation in the main app.
         results['Capacity Loss (vs Target) (parts)'] = np.maximum(0, results['Target Output (parts)'] - results['Actual Output (parts)'])
+        
         results['Capacity Loss (vs Target) (sec)'] = (results['Capacity Loss (vs Target) (parts)'] * avg_reference_ct) / max_cavities
 
 
@@ -514,7 +521,11 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
         results['Target Output (parts)'] = optimal_100_parts * target_perc_ratio
         
         results['Gap to Target (parts)'] = results['Actual Output (parts)'] - results['Target Output (parts)']
+        
+        # --- v7.39: This is the run-level loss, which gets summed.
+        # This value is RE-CALCULATED after aggregation in the main app.
         results['Capacity Loss (vs Target) (parts)'] = np.maximum(0, results['Target Output (parts)'] - results['Actual Output (parts)'])
+        
         results['Capacity Loss (vs Target) (sec)'] = (results['Capacity Loss (vs Target) (parts)'] * avg_reference_ct) / max_cavities
 
         # 7. Shot Counts
@@ -542,109 +553,361 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
 
 @st.cache_data
 # --- v7.38: Renamed function to bust cache ---
-def run_capacity_calculation_cached(raw_data_df, toggle, cavities, target_perc_slider, mode_tol, rr_gap, run_interval, _cache_version=None):
+def run_capacity_calculation_cached(raw_data_df, toggle, cavities, target_output_perc_slider, mode_tol, rr_gap, run_interval, _cache_version=None):
     """Cached wrapper for the main calculation function."""
     return calculate_capacity_risk(
         raw_data_df,
         toggle,
         cavities,
-        target_perc_slider,
+        target_output_perc_slider,
         mode_tol,      
         rr_gap,        
         run_interval    
     )
 
 # ==================================================================
-#                       STREAMLIT APP LAYOUT
+#                       NEW TAB 2 FUNCTION (v7.42)
 # ==================================================================
 
-# --- Page Config ---
-st.set_page_config(
-    page_title=f"Capacity Risk Calculator (v{__version__})",
-    layout="wide"
-)
-
-st.title("Capacity Risk Report")
-st.markdown(f"**App Version:** `{__version__}` (RR-Downtime + CR-Inefficiency)")
-
-# --- Sidebar for Inputs ---
-st.sidebar.header("Configuration")
-
-uploaded_file = st.sidebar.file_uploader("Upload Raw Data File (CSV or Excel)", type=["csv", "xlsx", "xls"])
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("Run Rate Logic (for Downtime)")
-st.sidebar.info("These settings define 'Downtime'.")
-
-# --- v6.57: Restored Mode CT Tolerance slider ---
-mode_ct_tolerance = st.sidebar.slider(
-    "Mode CT Tolerance (%)", 0.01, 0.50, 0.25, 0.01,  
-    help="Tolerance band (±) around the **Actual Mode CT**. Shots outside this band are flagged as 'Abnormal Cycle' (Downtime)."
-)
-
-# --- v6.61: Removed Approved CT Tolerance slider ---
-
-rr_downtime_gap = st.sidebar.slider(
-    "RR Downtime Gap (sec)", 0.0, 10.0, 2.0, 0.5, 
-    help="Minimum idle time between shots to be considered a stop."
-)
-
-# --- v6.27: Add Run Interval Threshold ---
-run_interval_hours = st.sidebar.slider(
-    "Run Interval Threshold (hours)", 1.0, 24.0, 8.0, 0.5,
-    help="Gaps between shots *longer* than this will be excluded from all calculations (e.g., weekends)."
-)
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("CR Logic (for Inefficiency)")
-st.sidebar.info("These settings define 'Inefficiency' during Uptime.")
-
-data_frequency = st.sidebar.radio(
-    "Select Graph Frequency",
-    ['Daily', 'Weekly', 'Monthly', 'by Run'], # <-- v6.89: Added 'by Run'
-    index=0,
-    horizontal=True
-)
-
-toggle_filter = st.sidebar.toggle(
-    "Remove Maintenance/Warehouse Shots",
-    value=False, # Default OFF
-    help="If ON, all calculations will exclude shots where 'Plant Area' is 'Maintenance' or 'Warehouse'."
-)
-
-default_cavities = st.sidebar.number_input(
-    "Default Working Cavities",
-    min_value=1,
-    value=2,
-    help="This value will be used if the 'Working Cavities' column is not found in the file."
-)
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("Target & View")
-
-benchmark_view = st.sidebar.radio(
-    "Select Report Benchmark",
-    ['Optimal Output', 'Target Output'],
-    index=0, # Default to Optimal
-    horizontal=False,
-    help="Select the benchmark to compare against (e.g., 'Total Capacity Loss' vs 'Optimal' or 'Target')."
-)
-
-if benchmark_view == "Target Output":
-    target_output_perc = st.sidebar.slider(
-        "Target Output % (of Optimal)",
-        min_value=0.0, max_value=100.0,
-        value=90.0, # Default 90%
-        step=1.0,
-        format="%.0f%%",
-        help="Sets the 'Target Output (parts)' goal as a percentage of 'Optimal Output (parts)'."
-    )
-else:
-    # --- v6.64: Set to 100.0 for the function ---
-    target_output_perc = 100.0 
+def render_demand_planning_tab(daily_summary_df, all_shots_df, all_time_summary_df):
+    st.header("Capacity & Demand Planning")
     
-st.sidebar.caption(f"App Version: **{__version__}**")
+    # --- 1. Calculate Historical Baselines ---
+    total_parts_hist = all_time_summary_df['Actual Output (parts)'].sum()
+    total_prod_sec_hist = all_time_summary_df['Actual Cycle Time Total (sec)'].sum()
+    total_run_time_sec_hist = all_time_summary_df['Filtered Run Time (sec)'].sum()
 
+    default_parts_per_hour = (total_parts_hist / (total_prod_sec_hist / 3600)) if total_prod_sec_hist > 0 else 0
+    default_stability = (total_prod_sec_hist / total_run_time_sec_hist) * 100 if total_run_time_sec_hist > 0 else 0
+
+    st.info(f"""
+    This tool forecasts your ability to meet future demand. It's pre-filled with your historical averages:
+    - **Baseline Stability:** `{default_stability:.1f}%` (Your historical uptime)
+    - **Baseline Production Rate:** `{default_parts_per_hour:,.0f} parts / hour` (Your historical rate *during* uptime)
+    """)
+    
+    # --- 2. 12-Month Strategic Model ---
+    st.subheader("1. 12-Month Strategic Forecast")
+    
+    with st.container(border=True):
+        st.markdown("##### Model Inputs")
+        
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            working_hours_per_month = st.number_input(
+                "Total Working Hours / Month",
+                min_value=1, max_value=744, value=352, # 744=24*31
+                help="Your total available operating hours per month (e.g., 22 days * 16 hours = 352)"
+            )
+        with c2:
+            baseline_stability = st.slider(
+                "Projected Stability %",
+                min_value=0.0, max_value=100.0, value=default_stability, step=0.5, format="%.1f%%",
+                help="Your expected uptime (Stability Index). Defaulted from your historical average."
+            )
+        with c3:
+            baseline_parts_per_hour = st.slider(
+                "Projected Production Rate (Parts/Uptime Hour)",
+                min_value=0.0, 
+                max_value=default_parts_per_hour * 2 if default_parts_per_hour > 0 else 1000.0, 
+                value=default_parts_per_hour, 
+                step=max(1.0, default_parts_per_hour * 0.01), # 1% step
+                format="%.0f parts/hr",
+                help="Your expected production rate during uptime. Defaulted from your historical average."
+            )
+            
+        # Calculated Monthly Capacity
+        projected_uptime_hours = working_hours_per_month * (baseline_stability / 100.0)
+        projected_monthly_capacity = projected_uptime_hours * baseline_parts_per_hour
+        
+        st.metric(
+            "Calculated Monthly Capacity (based on inputs)",
+            f"{projected_monthly_capacity:,.0f} parts / month"
+        )
+        st.caption(f"{working_hours_per_month:,.0f} available hours * {baseline_stability:.1f}% stability * {baseline_parts_per_hour:,.0f} parts/hr = {projected_monthly_capacity:,.0f} parts/month")
+        
+        st.markdown("##### Demand Inputs")
+        
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            start_inventory_monthly = st.number_input("Current Inventory (Starting Stock)", value=0, min_value=0, step=1000, key="monthly_stock")
+        
+        with c2:
+            demand_sample_monthly = "50000\n52000\n48000\n55000\n50000\n51000\n53000\n58000\n60000\n55000\n52000\n50000"
+            demand_input_monthly = st.text_area(
+                "Paste 12-Month Demand (one number per line)",
+                value=demand_sample_monthly,
+                height=250,
+                help="Paste exactly 12 numbers, each representing one month of demand, separated by new lines."
+            )
+
+        if st.button("Run 12-Month Forecast"):
+            try:
+                demand_list = [float(d.strip().replace(',', '')) for d in demand_input_monthly.strip().split('\n') if d.strip()]
+                if len(demand_list) != 12:
+                    st.error(f"Error: You must provide exactly 12 numbers for the 12-month forecast. You provided {len(demand_list)}.")
+                else:
+                    forecast_data = []
+                    current_inventory = start_inventory_monthly
+                    
+                    for i, demand in enumerate(demand_list):
+                        month_name = (datetime.now() + relativedelta(months=i)).strftime('%Y-%m')
+                        monthly_net = projected_monthly_capacity - demand
+                        ending_inventory = current_inventory + monthly_net
+                        
+                        forecast_data.append({
+                            "Month": month_name,
+                            "Demand": demand,
+                            "Calculated Capacity": projected_monthly_capacity,
+                            "Monthly Net": monthly_net,
+                            "Projected End Inventory": ending_inventory
+                        })
+                        
+                        current_inventory = ending_inventory # Set for next loop
+                    
+                    df_forecast_monthly = pd.DataFrame(forecast_data)
+                    
+                    # --- KPIs for Monthly Forecast ---
+                    end_inventory_monthly = df_forecast_monthly['Projected End Inventory'].iloc[-1]
+                    min_inventory_monthly = df_forecast_monthly['Projected End Inventory'].min()
+                    shortfall_month = None
+                    if min_inventory_monthly < 0:
+                        shortfall_month = df_forecast_monthly[df_forecast_monthly['Projected End Inventory'] < 0]['Month'].iloc[0]
+
+                    st.markdown("##### 12-Month Forecast Results")
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Projected Year-End Inventory", f"{end_inventory_monthly:,.0f} parts")
+                    c2.metric("Projected Max Shortfall", f"{min_inventory_monthly:,.0f} parts" if min_inventory_monthly < 0 else "No Shortfall", delta_color="inverse")
+                    c3.metric("Projected Shortfall Month", shortfall_month if shortfall_month else "None")
+
+                    # --- Monthly Chart ---
+                    fig_monthly = go.Figure()
+
+                    # Add Demand bars
+                    fig_monthly.add_trace(go.Bar(
+                        x=df_forecast_monthly['Month'],
+                        y=df_forecast_monthly['Demand'],
+                        name='Monthly Demand',
+                        marker_color='red'
+                    ))
+                    
+                    # Add Capacity line
+                    fig_monthly.add_trace(go.Scatter(
+                        x=df_forecast_monthly['Month'],
+                        y=df_forecast_monthly['Calculated Capacity'],
+                        name='Monthly Capacity',
+                        mode='lines',
+                        line=dict(color='blue', dash='dot')
+                    ))
+                    
+                    # Add Inventory line on secondary axis
+                    fig_monthly.add_trace(go.Scatter(
+                        x=df_forecast_monthly['Month'],
+                        y=df_forecast_monthly['Projected End Inventory'],
+                        name='Projected End Inventory',
+                        mode='lines+markers',
+                        line=dict(color='green'),
+                        yaxis="y2"
+                    ))
+
+                    fig_monthly.update_layout(
+                        title="12-Month Strategic Forecast",
+                        xaxis_title="Month",
+                        yaxis_title="Parts (Demand vs. Capacity)",
+                        yaxis2=dict(
+                            title="Parts (Projected Inventory)",
+                            overlaying="y",
+                            side="right"
+                        ),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                    )
+                    st.plotly_chart(fig_monthly, use_container_width=True)
+                    
+                    # --- Data Table ---
+                    st.dataframe(df_forecast_monthly.style.format({
+                        'Demand': '{:,.0f}',
+                        'Calculated Capacity': '{:,.0f}',
+                        'Monthly Net': '{:,.0f}',
+                        'Projected End Inventory': '{:,.0f}'
+                    }).applymap(
+                        lambda v: 'color: red;' if v < 0 else None,
+                        subset=['Monthly Net', 'Projected End Inventory']
+                    ), use_container_width=True)
+
+            except Exception as e:
+                st.error(f"Error parsing demand data: {e}. Please ensure you have 12 numbers, one per line.")
+
+    # --- 3. Short-Term Daily Model (Original) ---
+    st.subheader("2. Short-Term Daily Forecast")
+    
+    with st.expander("Expand for short-term daily planning"):
+        # --- Use the already-calculated dataframes from tab 1 ---
+        if 'daily_summary_df' not in locals():
+            daily_summary_df = results_df.copy()
+        if 'all_shots_df' not in locals():
+            st.error("Shot data not loaded. Please ensure main report runs.")
+            st.stop()
+            
+        min_data_date = all_shots_df['SHOT TIME'].dt.date.min()
+        max_data_date = all_shots_df['SHOT TIME'].dt.date.max()
+
+        st.markdown("##### Calculate Current Run Rate")
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            # --- v7.41: FIX for date_input crash ---
+            # Ensure default value is never less than min_value
+            default_start_date = max(min_data_date, max_data_date - timedelta(days=6))
+            
+            analysis_start = st.date_input(
+                "Analysis Start Date", 
+                value=default_start_date, # Use safe default
+                min_value=min_data_date, 
+                max_value=max_data_date,
+                key="forecast_start"
+            )
+        with c2:
+            analysis_end = st.date_input(
+                "Analysis End Date", 
+                value=max_data_date, 
+                min_value=min_data_date, 
+                max_value=max_data_date,
+                key="forecast_end"
+            )
+        
+        if analysis_start > analysis_end:
+            st.error("Analysis Start Date must be before End Date.")
+        else:
+            analysis_df = daily_summary_df.loc[analysis_start:analysis_end]
+            
+            total_parts = analysis_df['Actual Output (parts)'].sum()
+            total_sec = analysis_df['Filtered Run Time (sec)'].sum()
+            
+            parts_per_day = (total_parts / total_sec) * 86400 if total_sec > 0 else 0
+            
+            st.metric(
+                f"Calculated Run Rate (from {analysis_start} to {analysis_end})", 
+                f"{parts_per_day:,.0f} Parts / Day"
+            )
+            st.caption(f"Based on {total_parts:,.0f} parts produced in {format_seconds_to_dhm(total_sec)} of run time.")
+
+            st.markdown("##### Input Future Demand Plan")
+            
+            c1, c2 = st.columns([1, 2])
+            with c1:
+                start_inventory = st.number_input("Current Inventory (Starting Stock)", value=0, min_value=0, step=100, key="daily_stock")
+            
+            with c2:
+                demand_sample = f"{(datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')},500\n{(datetime.now() + timedelta(days=2)).strftime('%Y-%m-%d')},500\n{(datetime.now() + timedelta(days=3)).strftime('%Y-%m-%d')},550"
+                demand_input = st.text_area(
+                    "Paste Demand Data (Date,Demand)", 
+                    value=demand_sample, 
+                    height=150,
+                    help="Paste CSV data with two columns: `Date` and `Demand`. e.g., '2025-11-16,500'",
+                    key="daily_demand"
+                )
+            
+            if st.button("Run Daily Forecast"):
+                if parts_per_day == 0:
+                    st.error("Cannot forecast with a zero production rate. Select a different analysis period.")
+                elif not demand_input:
+                    st.error("Please paste demand data to run the forecast.")
+                else:
+                    try:
+                        demand_data = io.StringIO(demand_input)
+                        df_demand = pd.read_csv(demand_data, header=None, names=['Date', 'Demand'])
+                        df_demand['Date'] = pd.to_datetime(df_demand['Date'])
+                        df_demand['Demand'] = pd.to_numeric(df_demand['Demand'])
+                        
+                        # Create a full date range from the demand data
+                        forecast_start_date = df_demand['Date'].min()
+                        forecast_end_date = df_demand['Date'].max()
+                        all_forecast_dates = pd.date_range(start=forecast_start_date, end=forecast_end_date, freq='D')
+                        
+                        forecast_df = pd.DataFrame(all_forecast_dates, columns=['Date'])
+                        
+                        # Merge demand data, filling non-demand days with 0
+                        forecast_df = pd.merge(forecast_df, df_demand, on='Date', how='left').fillna(0)
+                        
+                        forecast_df['Projected Production'] = parts_per_day
+                        forecast_df['Cumulative Demand'] = forecast_df['Demand'].cumsum()
+                        forecast_df['Cumulative Production'] = forecast_df['Projected Production'].cumsum()
+                        forecast_df['Projected Inventory'] = start_inventory + forecast_df['Cumulative Production'] - forecast_df['Cumulative Demand']
+                        
+                        # --- Calculate KPIs ---
+                        end_inventory = forecast_df['Projected Inventory'].iloc[-1]
+                        min_inventory = forecast_df['Projected Inventory'].min()
+                        shortfall_date = None
+                        if min_inventory < 0:
+                            shortfall_date = forecast_df[forecast_df['Projected Inventory'] < 0]['Date'].min()
+
+                        c1, c2, c3 = st.columns(3)
+                        with c1:
+                            st.metric(
+                                "Projected End Inventory", 
+                                f"{end_inventory:,.0f} parts",
+                                delta=f"{end_inventory - start_inventory:,.0f}",
+                                delta_color="normal"
+                            )
+                        with c2:
+                            st.metric(
+                                "Projected Max Shortfall",
+                                f"{min_inventory:,.0f} parts" if min_inventory < 0 else "No Shortfall",
+                                delta_color="inverse"
+                            )
+                        with c3:
+                            if shortfall_date:
+                                st.metric("Projected Shortfall Date", shortfall_date.strftime('%Y-%m-%d'))
+                            else:
+                                st.metric("Projected Shortfall Date", "None")
+                        
+                        # --- Plot Chart ---
+                        fig_forecast = go.Figure()
+
+                        # Add Cumulative Demand
+                        fig_forecast.add_trace(go.Scatter(
+                            x=forecast_df['Date'],
+                            y=forecast_df['Cumulative Demand'],
+                            name='Cumulative Demand',
+                            mode='lines',
+                            line=dict(color='red', width=2, dash='dot')
+                        ))
+                        
+                        # Add Cumulative Production (with starting inventory)
+                        fig_forecast.add_trace(go.Scatter(
+                            x=forecast_df['Date'],
+                            y=forecast_df['Cumulative Production'] + start_inventory,
+                            name='Projected Cumulative Production (incl. stock)',
+                            mode='lines',
+                            line=dict(color='blue', width=2)
+                        ))
+                        
+                        fig_forecast.update_layout(
+                            title="Projected Production vs. Demand",
+                            xaxis_title="Date",
+                            yaxis_title="Cumulative Parts",
+                            hovermode="x unified"
+                        )
+                        st.plotly_chart(fig_forecast, use_container_width=True)
+                        
+                        # --- Show Data Table ---
+                        with st.expander("View Forecast Data Table"):
+                            st.dataframe(forecast_df.style.format({
+                                'Demand': '{:,.0f}',
+                                'Projected Production': '{:,.0f}',
+                                'Cumulative Demand': '{:,.0f}',
+                                'Cumulative Production': '{:,.0f}',
+                                'Projected Inventory': '{:,.0f}'
+                            }), use_container_width=True)
+
+                    except Exception as e:
+                        st.error(f"Error parsing demand data: {e}")
+                        st.info("Please ensure your data is in the format 'YYYY-MM-DD,500' with one entry per line.")
+
+
+# ==================================================================
+#                       MAIN APP LOGIC (v7.42)
+# ==================================================================
 
 # --- Main Page Display ---
 if uploaded_file is not None:
@@ -662,8 +925,8 @@ if uploaded_file is not None:
             # --- v6.64: Single Calculation Logic ---
             
             # 1. Always calculate vs. Optimal (100%)
-            cache_key = f"{__version__}_{uploaded_file.name}_{target_output_perc}_{mode_ct_tolerance}_{rr_downtime_gap}_{run_interval_hours}" # line 665
-            # --- v7.38: Call the new renamed function ---
+            cache_key = f"{__version__}_{uploaded_file.name}_{target_output_perc}_{mode_ct_tolerance}_{rr_downtime_gap}_{run_interval_hours}"
+            # --- v7.38: Renamed function to bust cache ---
             results_df, all_shots_df = run_capacity_calculation_cached(
                 df_raw,
                 toggle_filter,
@@ -732,18 +995,16 @@ if uploaded_file is not None:
                 st.error("No valid data found in file. Cannot proceed.")
             else:
                 # --- End v6.64 ---
-
-                # --- v7.29: REFACTOR ---
-                # Calculate all dataframes ONCE at the top.
+                
+                # --- v7.42: CRITICAL REFACTOR ---
+                # Move all calculations *outside* the tabs so both tabs can access the data
+                
+                # 1. Calculate all dataframes ONCE at the top.
                 daily_summary_df = results_df.copy()
                 run_summary_df = calculate_run_summaries(all_shots_df, target_output_perc)
+                run_summary_df_for_total = run_summary_df.copy()
                 
-                # --- 1. All-Time Summary Dashboard Calculations ---
-                st.header("All-Time Summary")
-                
-                # 1. Get the 'by Run' summary dataframe
-                run_summary_df_for_total = run_summary_df.copy() # Use the one we just calculated
-                
+                # 2. Get All-Time totals (for both tabs)
                 if run_summary_df_for_total.empty:
                     st.error("Failed to calculate 'by Run' summary for All-Time totals.")
                     # Set defaults to avoid crashing dashboard
@@ -753,7 +1014,7 @@ if uploaded_file is not None:
                     run_time_sec_total, run_time_dhm_total = 0, "0m"
                     total_actual_ct_sec, total_actual_ct_dhm = 0, "0m"
                 else:
-                    # 2. Sum the 'by Run' totals to get the All-Time totals
+                    # Sum the 'by Run' totals to get the All-Time totals
                     total_produced = run_summary_df_for_total['Actual Output (parts)'].sum()
                     total_downtime_loss_parts = run_summary_df_for_total['Capacity Loss (downtime) (parts)'].sum()
                     total_slow_loss_parts = run_summary_df_for_total['Capacity Loss (slow cycle time) (parts)'].sum()
@@ -768,826 +1029,855 @@ if uploaded_file is not None:
                     total_fast_gain_sec = run_summary_df_for_total['Capacity Gain (fast cycle time) (sec)'].sum()
                     total_net_cycle_loss_sec = total_slow_loss_sec - total_fast_gain_sec
                     
-                    # These are the key metrics that are now correct:
                     run_time_sec_total = run_summary_df_for_total['Filtered Run Time (sec)'].sum()
                     run_time_dhm_total = format_seconds_to_dhm(run_time_sec_total)
                     
                     total_actual_ct_sec = run_summary_df_for_total['Actual Cycle Time Total (sec)'].sum()
                     total_actual_ct_dhm = format_seconds_to_dhm(total_actual_ct_sec)
-                # --- End v7.18 Fix ---
                 
-                run_time_label = "Overall Run Time" if not toggle_filter else "Filtered Run Time"
-                actual_output_perc_val = (total_produced / total_optimal_100) if total_optimal_100 > 0 else 0
+                # --- v7.40: Create Tabs ---
+                tab1, tab2 = st.tabs(["Capacity Risk Report", "Capacity & Demand Planning"])
 
-                total_calculated_net_loss_parts = total_downtime_loss_parts + total_net_cycle_loss_parts
-                total_calculated_net_loss_sec = total_downtime_loss_sec + total_net_cycle_loss_sec
-                
-                # --- v6.56: Calculate True Loss (based on current benchmark) ---
-                total_true_net_loss_parts = total_optimal_100 - total_produced
-                # --- v6.80: Fix time discrepancy ---
-                total_true_net_loss_sec = total_calculated_net_loss_sec
-
-                
-                # --- NEW LAYOUT (Replaces old 4-column layout) ---
-                
-                # --- v6.64: Title is always vs Optimal, since that's the calc ---
-                benchmark_title = "Optimal Output"
-
-                # --- Box 1: Overall Summary ---
-                st.subheader(f"Overall Summary")
-                with st.container(border=True):
-                    c1, c2, c3, c4 = st.columns(4)
+                with tab1:
+                    # --- v7.29: REFACTOR (data already calculated) ---
                     
-                    with c1:
-                        st.metric(run_time_label, run_time_dhm_total)
+                    # --- 1. All-Time Summary Dashboard Calculations ---
+                    st.header("All-Time Summary")
                     
-                    # --- v7.19: Make Box 2 dynamic ---
-                    with c2:
-                        if benchmark_view == "Target Output":
-                            st.metric(f"Target Output ({target_output_perc:.0f}%)", f"{total_target:,.0f}")
-                            st.caption(f"Optimal (100%): {total_optimal_100:,.0f}")
-                        else:
-                            st.metric("Optimal Output (100%)", f"{total_optimal_100:,.0f}")
+                    # 1. Get the 'by Run' summary dataframe
+                    # run_summary_df_for_total = run_summary_df.copy() # (Moved up)
                     
-                    # --- v7.19: Make Box 3 dynamic ---
-                    with c3:
-                        st.metric(f"Actual Output ({actual_output_perc_val:.1%})", f"{total_produced:,.0f} parts")
-                        st.caption(f"Actual Production Time: {total_actual_ct_dhm}")
-                        
-                        if benchmark_view == "Target Output":
-                            gap_to_target = total_produced - total_target
-                            gap_perc = (gap_to_target / total_target) if total_target > 0 else 0
-                            gap_color = "green" if gap_to_target > 0 else "red"
-                            st.caption(f"Gap to Target: <span style='color:{gap_color};'>{gap_to_target:+,.0f} ({gap_perc:+.1%})</span>", unsafe_allow_html=True)
-                    
-                    # --- v7.19: Make Box 4 dynamic ---
-                    with c4:
-                        if benchmark_view == "Target Output":
-                            # Calculate Loss vs Target totals
-                            total_loss_vs_target_parts = run_summary_df_for_total['Capacity Loss (vs Target) (parts)'].sum()
-                            total_loss_vs_target_sec = run_summary_df_for_total['Capacity Loss (vs Target) (sec)'].sum()
-                            
-                            st.markdown(f"**Capacity Loss (vs Target)**")
-                            st.markdown(f"<h3><span style='color:red;'>{total_loss_vs_target_parts:,.0f} parts</span></h3>", unsafe_allow_html=True) 
-                            st.caption(f"Total Time Lost vs Target: {format_seconds_to_dhm(total_loss_vs_target_sec)}")
-                        else:
-                            # Default view (vs Optimal)
-                            st.markdown(f"**Total Capacity Loss (True)**")
-                            st.markdown(f"<h3><span style='color:red;'>{total_true_net_loss_parts:,.0f} parts</span></h3>", unsafe_allow_html=True) 
-                            st.caption(f"Total Time Lost: {format_seconds_to_dhm(total_true_net_loss_sec)}")
-                            
-                # --- v6.84: Waterfall Chart Layout ---
-                st.subheader(f"Capacity Loss Breakdown (vs {benchmark_title})")
-                st.info(f"These values are calculated based on the *time-based* logic (Downtime + Slow/Fast Cycles) using **{benchmark_title}** as the benchmark.")
-                
-                c1, c2 = st.columns([1, 1])
-
-                with c1:
-                    st.markdown("<h6 style='text-align: center;'>Overall Performance Breakdown</h6>", unsafe_allow_html=True)
-                    
-                    # --- Waterfall Chart ---
-                    # --- v6.85: Dynamic Benchmark Label ---
-                    waterfall_x = [f"<b>Optimal Output (100%)</b>", "Loss (RR Downtime)"]
-                    waterfall_y = [total_optimal_100, -total_downtime_loss_parts]
-                    waterfall_measure = ["absolute", "relative"]
-                    waterfall_text = [f"{total_optimal_100:,.0f}", f"{-total_downtime_loss_parts:,.0f}"]
-
-                    if total_net_cycle_loss_parts >= 0:
-                        # It's a net loss
-                        waterfall_x.append("Net Loss (Cycle Time)")
-                        waterfall_y.append(-total_net_cycle_loss_parts)
-                        waterfall_measure.append("relative")
-                        waterfall_text.append(f"{-total_net_cycle_loss_parts:,.0f}")
+                    if run_summary_df_for_total.empty:
+                        st.error("Failed to calculate 'by Run' summary for All-Time totals.")
+                        # Set defaults to avoid crashing dashboard
+                        total_produced, total_downtime_loss_parts, total_slow_loss_parts, total_fast_gain_parts, total_net_cycle_loss_parts = 0,0,0,0,0
+                        total_optimal_100, total_target = 0,0
+                        total_downtime_loss_sec, total_slow_loss_sec, total_fast_gain_sec, total_net_cycle_loss_sec = 0,0,0,0
+                        run_time_sec_total, run_time_dhm_total = 0, "0m"
+                        total_actual_ct_sec, total_actual_ct_dhm = 0, "0m"
                     else:
-                        # It's a net gain
-                        waterfall_x.append("Net Gain (Cycle Time)")
-                        waterfall_y.append(abs(total_net_cycle_loss_parts)) # Add it back
-                        waterfall_measure.append("relative")
-                        waterfall_text.append(f"{abs(total_net_cycle_loss_parts):+,.0f}")
+                        # 2. Sum the 'by Run' totals to get the All-Time totals
+                        # (All totals already calculated)
+                        pass
                     
-                    # Add the final total
-                    waterfall_x.append("<b>Actual Output</b>")
-                    waterfall_y.append(total_produced)
-                    waterfall_measure.append("total")
-                    waterfall_text.append(f"{total_produced:,.0f}")
-                    
-                    fig_waterfall = go.Figure(go.Waterfall(
-                        name = "Breakdown",
-                        orientation = "v",
-                        measure = waterfall_measure,
-                        x = waterfall_x,
-                        y = waterfall_y,
-                        text = waterfall_text,
-                        textposition = "outside",
-                        connector = {"line":{"color":"rgb(63, 63, 63)"}},
-                        increasing = {"marker":{"color":"#2ca02c"}}, # Green for gains
-                        decreasing = {"marker":{"color":"#ff6961"}},  # Red for losses
-                        totals = {"marker":{"color":"#1f77b4"}} # Blue for totals (Benchmark & Actual)
-                    ))
-                    
-                    fig_waterfall.update_layout(
-                        showlegend=False,
-                        margin=dict(t=0, b=0, l=0, r=0), # --- v6.84: Removed title, set margin-top to 0 ---
-                        height=400,
-                        yaxis_title='Parts'
-                    )
-                    
-                    # --- v6.85: Add Target Line ---
-                    if benchmark_view == "Target Output":
-                        fig_waterfall.add_shape(
-                            type='line',
-                            x0=-0.5, x1=len(waterfall_x)-0.5, # Span all columns
-                            y0=total_target, y1=total_target,
-                            line=dict(color='deepskyblue', dash='dash', width=2)
-                        )
-                        fig_waterfall.add_annotation(
-                            x=0, y=total_target,
-                            text=f"Target: {total_target:,.0f}",
-                            showarrow=True, arrowhead=1, ax=-40, ay=-20
-                        )
-                        
-                        # Optimal line is now the main benchmark, so it's already there.
-                        # We'll just add the annotation
-                        fig_waterfall.add_annotation(
-                            x=len(waterfall_x)-0.5, y=total_optimal_100,
-                            text=f"Optimal (100%): {total_optimal_100:,.0f}",
-                            showarrow=True, arrowhead=1, ax=40, ay=-20
-                        )
-                    
-                    st.plotly_chart(fig_waterfall, use_container_width=True, config={'displayModeBar': False})
-                    
+                    run_time_label = "Overall Run Time" if not toggle_filter else "Filtered Run Time"
+                    actual_output_perc_val = (total_produced / total_optimal_100) if total_optimal_100 > 0 else 0
 
-                with c2:
-                    # --- v6.79: New compact table layout with color ---
+                    total_calculated_net_loss_parts = total_downtime_loss_parts + total_net_cycle_loss_parts
+                    total_calculated_net_loss_sec = total_downtime_loss_sec + total_net_cycle_loss_sec
                     
-                    # --- Helper function for color ---
-                    def get_color_css(val):
-                        if val > 0: return "color: red;"
-                        if val < 0: return "color: green;"
-                        return "color: black;"
+                    # --- v6.56: Calculate True Loss (based on current benchmark) ---
+                    total_true_net_loss_parts = total_optimal_100 - total_produced
+                    # --- v6.80: Fix time discrepancy ---
+                    total_true_net_loss_sec = total_calculated_net_loss_sec
 
-                    # --- Color-code Total Net Loss ---
-                    net_loss_val = total_calculated_net_loss_parts
-                    net_loss_color = get_color_css(net_loss_val)
+                    
+                    # --- NEW LAYOUT (Replaces old 4-column layout) ---
+                    
+                    # --- v6.64: Title is always vs Optimal, since that's the calc ---
+                    benchmark_title = "Optimal Output"
+
+                    # --- Box 1: Overall Summary ---
+                    st.subheader(f"Overall Summary")
                     with st.container(border=True):
-                        # --- v6.80: Rename to "Total Net Impact" ---
-                        st.markdown(f"**Total Net Impact**")
-                        st.markdown(f"<h3><span style='{net_loss_color}'>{net_loss_val:,.0f} parts</span></h3>", unsafe_allow_html=True)
-                        st.caption(f"Net Time Lost: {format_seconds_to_dhm(total_calculated_net_loss_sec)}")
+                        c1, c2, c3, c4 = st.columns(4)
+                        
+                        with c1:
+                            st.metric(run_time_label, run_time_dhm_total)
+                        
+                        # --- v7.19: Make Box 2 dynamic ---
+                        with c2:
+                            if benchmark_view == "Target Output":
+                                st.metric(f"Target Output ({target_output_perc:.0f}%)", f"{total_target:,.0f}")
+                                st.caption(f"Optimal (100%): {total_optimal_100:,.0f}")
+                            else:
+                                st.metric("Optimal Output (100%)", f"{total_optimal_100:,.0f}")
+                        
+                        # --- v7.19: Make Box 3 dynamic ---
+                        with c3:
+                            st.metric(f"Actual Output ({actual_output_perc_val:.1%})", f"{total_produced:,.0f} parts")
+                            st.caption(f"Actual Production Time: {total_actual_ct_dhm}")
+                            
+                            if benchmark_view == "Target Output":
+                                gap_to_target = total_produced - total_target
+                                gap_perc = (gap_to_target / total_target) if total_target > 0 else 0
+                                gap_color = "green" if gap_to_target > 0 else "red"
+                                st.caption(f"Gap to Target: <span style='color:{gap_color};'>{gap_to_target:+,.0f} ({gap_perc:+.1%})</span>", unsafe_allow_html=True)
+                        
+                        # --- v7.19: Make Box 4 dynamic ---
+                        with c4:
+                            if benchmark_view == "Target Output":
+                                # --- v7.39: Calculate total loss vs target *correctly* ---
+                                total_loss_vs_target_parts = np.maximum(0, total_target - total_produced)
+                                total_loss_vs_target_sec = run_summary_df_for_total['Capacity Loss (vs Target) (sec)'].sum() # This sum is ok
+                                
+                                st.markdown(f"**Capacity Loss (vs Target)**")
+                                st.markdown(f"<h3><span style='color:red;'>{total_loss_vs_target_parts:,.0f} parts</span></h3>", unsafe_allow_html=True) 
+                                st.caption(f"Total Time Lost vs Target: {format_seconds_to_dhm(total_loss_vs_target_sec)}")
+                            else:
+                                # Default view (vs Optimal)
+                                st.markdown(f"**Total Capacity Loss (True)**")
+                                st.markdown(f"<h3><span style='color:red;'>{total_true_net_loss_parts:,.0f} parts</span></h3>", unsafe_allow_html=True) 
+                                st.caption(f"Total Time Lost: {format_seconds_to_dhm(total_true_net_loss_sec)}")
+                                
+                    # --- v6.84: Waterfall Chart Layout ---
+                    st.subheader(f"Capacity Loss Breakdown (vs {benchmark_title})")
+                    st.info(f"These values are calculated based on the *time-based* logic (Downtime + Slow/Fast Cycles) using **{benchmark_title}** as the benchmark.")
                     
-                    # --- Create Data for the table ---
-                    table_data = {
-                        "Metric": [
-                            "Loss (RR Downtime)", 
-                            "Net Loss (Cycle Time)", 
-                            # --- v6.80: Fix &nbsp; formatting ---
-                            "\u00A0\u00A0\u00A0 └ Loss (Slow Cycles)", 
-                            "\u00A0\u00A0\u00A0 └ Gain (Fast Cycles)"
-                        ],
-                        "Parts": [
-                            total_downtime_loss_parts,
-                            total_net_cycle_loss_parts,
-                            total_slow_loss_parts,
-                            total_fast_gain_parts
-                        ],
-                        "Time": [
-                            format_seconds_to_dhm(total_downtime_loss_sec),
-                            format_seconds_to_dhm(total_net_cycle_loss_sec),
-                            format_seconds_to_dhm(total_slow_loss_sec),
-                            format_seconds_to_dhm(total_fast_gain_sec)
-                        ]
-                    }
-                    df_table = pd.DataFrame(table_data)
+                    c1, c2 = st.columns([1, 1])
 
-                    # --- Function to apply color styling to the "Parts" column ---
-                    def style_parts_col(val, row_index):
-                        # Get the correct color based on the metric
-                        if row_index == 0: # Loss (RR Downtime)
-                            color_style = get_color_css(val)
-                        elif row_index == 1: # Net Loss (Cycle Time)
-                            color_style = get_color_css(val)
-                        elif row_index == 2: # Loss (Slow Cycles)
-                            color_style = get_color_css(val)
-                        elif row_index == 3: # Gain (Fast Cycles)
-                            color_style = get_color_css(val * -1) # Invert gain for color
+                    with c1:
+                        st.markdown("<h6 style='text-align: center;'>Overall Performance Breakdown</h6>", unsafe_allow_html=True)
+                        
+                        # --- Waterfall Chart ---
+                        # --- v6.85: Dynamic Benchmark Label ---
+                        waterfall_x = [f"<b>Optimal Output (100%)</b>", "Loss (RR Downtime)"]
+                        waterfall_y = [total_optimal_100, -total_downtime_loss_parts]
+                        waterfall_measure = ["absolute", "relative"]
+                        waterfall_text = [f"{total_optimal_100:,.0f}", f"{-total_downtime_loss_parts:,.0f}"]
+
+                        if total_net_cycle_loss_parts >= 0:
+                            # It's a net loss
+                            waterfall_x.append("Net Loss (Cycle Time)")
+                            waterfall_y.append(-total_net_cycle_loss_parts)
+                            waterfall_measure.append("relative")
+                            waterfall_text.append(f"{-total_net_cycle_loss_parts:,.0f}")
                         else:
-                            color_style = "color: black;"
+                            # It's a net gain
+                            waterfall_x.append("Net Gain (Cycle Time)")
+                            waterfall_y.append(abs(total_net_cycle_loss_parts)) # Add it back
+                            waterfall_measure.append("relative")
+                            waterfall_text.append(f"{abs(total_net_cycle_loss_parts):+,.0f}")
                         
-                        return color_style
-
-                    # --- Apply styling to the DataFrame ---
-                    styled_df = df_table.style.apply(
-                        lambda row: [style_parts_col(row['Parts'], row.name) if col == 'Parts' else '' for col in row.index],
-                        axis=1
-                    ).format(
-                        {"Parts": "{:,.0f}"} # Apply comma formatting
-                    ).set_properties(
-                        **{'text-align': 'left'}, subset=['Metric', 'Time']
-                    ).set_properties(
-                        **{'text-align': 'right'}, subset=['Parts']
-                    ).hide(axis='index') # Hide the 0,1,2,3 index
-                    
-                    # --- Display the styled table ---
-                    st.dataframe(
-                        styled_df,
-                        use_container_width=True
-                    )
-
-                # --- End v6.79 Layout ---
-
-
-                # --- Collapsible Daily Summary Table ---
-                with st.expander("View Daily Summary Data"):
-
-                    # --- v6.44: Use primary results_df ---
-                    # daily_summary_df = results_df.copy() # v7.29: This is now defined at the top
-                    
-                    # Calculate all % and formatted columns needed for the table
-                    daily_summary_df['Actual Cycle Time Total (time %)'] = np.where( daily_summary_df['Filtered Run Time (sec)'] > 0, daily_summary_df['Actual Cycle Time Total (sec)'] / daily_summary_df['Filtered Run Time (sec)'], 0 )
-                    # --- v6.56: Actual Output % is always vs 100% Optimal ---
-                    daily_summary_df['Actual Output (parts %)'] = np.where( results_df['Optimal Output (parts)'] > 0, daily_summary_df['Actual Output (parts)'] / results_df['Optimal Output (parts)'], 0 )
-                    
-                    # --- v6.64: Perc base is always Optimal ---
-                    perc_base_parts = daily_summary_df['Optimal Output (parts)']
-                    perc_base_sec = daily_summary_df['Filtered Run Time (sec)']
-
-                    
-                    daily_summary_df['Total Capacity Loss (time %)'] = np.where( perc_base_sec > 0, daily_summary_df['Total Capacity Loss (sec)'] / perc_base_sec, 0 )
-                    daily_summary_df['Total Capacity Loss (parts %)'] = np.where( perc_base_parts > 0, daily_summary_df['Total Capacity Loss (parts)'] / perc_base_parts, 0 )
-                    
-                    daily_summary_df['Total Capacity Loss (d/h/m)'] = daily_summary_df['Total Capacity Loss (sec)'].apply(format_seconds_to_dhm)
-
-                    daily_summary_df['Capacity Loss (vs Target) (parts %)'] = np.where( daily_summary_df['Target Output (parts)'] > 0, daily_summary_df['Capacity Loss (vs Target) (parts)'] / daily_summary_df['Target Output (parts)'], 0 )
-                    # --- v6.53: Bug Fix ---
-                    daily_summary_df['Capacity Loss (vs Target) (time %)'] = np.where( daily_summary_df['Filtered Run Time (sec)'] > 0, daily_summary_df['Capacity Loss (vs Target) (sec)'] / daily_summary_df['Filtered Run Time (sec)'], 0 )
-                    daily_summary_df['Capacity Loss (vs Target) (d/h/m)'] = daily_summary_df['Capacity Loss (vs Target) (sec)'].apply(format_seconds_to_dhm)
-
-                    daily_summary_df['Filtered Run Time (d/h/m)'] = daily_summary_df['Filtered Run Time (sec)'].apply(format_seconds_to_dhm)
-                    daily_summary_df['Actual Cycle Time Total (d/h/m)'] = daily_summary_df['Actual Cycle Time Total (sec)'].apply(format_seconds_to_dhm)
-
-                    daily_kpi_table = pd.DataFrame(index=daily_summary_df.index)
-                    daily_kpi_table[run_time_label] = daily_summary_df.apply(lambda r: f"{r['Filtered Run Time (d/h/m)']} ({r['Filtered Run Time (sec)']:,.0f}s)", axis=1)
-                    daily_kpi_table['Actual Production Time'] = daily_summary_df.apply(lambda r: f"{r['Actual Cycle Time Total (d/h/m)']} ({r['Actual Cycle Time Total (time %)']:.1%})", axis=1)
-                    
-                    daily_kpi_table['Actual Output (parts)'] = daily_summary_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (parts %)']:.1%})", axis=1)
-
-                    # --- v6.1.1: Conditional Styling ---
-                    # --- v6.3.2: Fixed IndentationError ---
-                    if benchmark_view == "Optimal Output":
-                        daily_kpi_table['Total Capacity Loss (Time)'] = daily_summary_df.apply(lambda r: f"{r['Total Capacity Loss (d/h/m)']} ({r['Total Capacity Loss (time %)']:.1%})", axis=1)
-                        daily_kpi_table['Total Capacity Loss (parts)'] = daily_summary_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
+                        # Add the final total
+                        waterfall_x.append("<b>Actual Output</b>")
+                        waterfall_y.append(total_produced)
+                        waterfall_measure.append("total")
+                        waterfall_text.append(f"{total_produced:,.0f}")
                         
-                        st.dataframe(daily_kpi_table, use_container_width=True)
-
-                    else: # Target Output
-                        # --- v6.3.2: FIX for ValueError ---
-                        # Force the column to numeric to handle any non-numeric values (like inf) before formatting
-                        daily_summary_df['Gap to Target (parts)'] = pd.to_numeric(daily_summary_df['Gap to Target (parts)'], errors='coerce').fillna(0)
-                        
-                        # --- v6.22 FIX: Corrected format string (space removed) ---
-                        daily_kpi_table['Gap to Target (parts)'] = daily_summary_df['Gap to Target (parts)'].apply(lambda x: "{:+,.2f}".format(x) if pd.notna(x) else "N/A")
-                        
-                        # --- v6.64: Restored this column ---
-                        daily_kpi_table['Capacity Loss (vs Target) (Time)'] = daily_summary_df.apply(lambda r: f"{r['Capacity Loss (vs Target) (d/h/m)']} ({r['Capacity Loss (vs Target) (time %)']:.1%})", axis=1)
-
-
-                        st.dataframe(daily_kpi_table.style.applymap(
-                            lambda x: 'color: green' if str(x).startswith('+') else 'color: red' if str(x).startswith('-') else None,
-                            subset=['Gap to Target (parts)']
-                        ), use_container_width=True)
-
-                st.divider()
-
-                # --- 2. WATERFALL CHART (REMOVED) ---
-                # ... (Waterfall code remains commented out) ...
-                # st.divider() # <-- Also commenting out this divider
-
-                # --- 3. AGGREGATED REPORT (Chart & Table) ---
-                
-                # --- v7.29: REMOVED process_aggregated_dataframe helper function ---
-                
-                # --- v7.29: Create the display_df based on the radio button ---
-                if data_frequency == 'by Run':
-                    agg_df = run_summary_df.copy() # Use the one we calculated
-                    chart_title_prefix = "Run-by-Run"
-                elif data_frequency == 'Weekly':
-                    agg_df = daily_summary_df.resample('W').sum().replace([np.inf, -np.inf], np.nan).fillna(0)
-                    chart_title_prefix = "Weekly"
-                elif data_frequency == 'Monthly':
-                    agg_df = daily_summary_df.resample('ME').sum().replace([np.inf, -np.inf], np.nan).fillna(0)
-                    chart_title_prefix = "Monthly"
-                else: # Daily
-                    agg_df = daily_summary_df.copy()
-                    chart_title_prefix = "Daily"
-                
-                # --- v7.29: This is the single, consistent dataframe for the tables ---
-                display_df = agg_df
-                
-                if display_df.empty:
-                    st.warning(f"No data to display for the '{data_frequency}' frequency.")
-                else:
-                    # --- v7.39: FIX ---
-                    # Re-calculate 'Capacity Loss (vs Target)' AFTER aggregation
-                    # This fixes the discrepancy bug.
-                    display_df['Capacity Loss (vs Target) (parts)'] = np.maximum(0, -display_df['Gap to Target (parts)'])
-                    
-                    # --- Calculate Percentage Columns AFTER aggregation ---
-                    perc_base_parts = display_df['Optimal Output (parts)']
-                    chart_title = f"{chart_title_prefix} Capacity Report (vs Optimal)"
-                    optimal_100_base = display_df['Optimal Output (parts)']
-
-                    display_df['Actual Output (%)'] = np.where( optimal_100_base > 0, display_df['Actual Output (parts)'] / optimal_100_base, 0)
-                    # --- v7.34: Add Actual % (vs Target) ---
-                    display_df['Actual % (vs Target)'] = np.where( display_df['Target Output (parts)'] > 0, display_df['Actual Output (parts)'] / display_df['Target Output (parts)'], 0)
-                    
-                    display_df['Production Shots (%)'] = np.where( display_df['Total Shots (all)'] > 0, display_df['Production Shots'] / display_df['Total Shots (all)'], 0)
-                    display_df['Actual Cycle Time Total (time %)'] = np.where( display_df['Filtered Run Time (sec)'] > 0, display_df['Actual Cycle Time Total (sec)'] / display_df['Filtered Run Time (sec)'], 0)
-                    
-                    display_df['Capacity Loss (downtime) (parts %)'] = np.where( perc_base_parts > 0, display_df['Capacity Loss (downtime) (parts)'] / perc_base_parts, 0)
-                    display_df['Capacity Loss (slow cycle time) (parts %)'] = np.where( perc_base_parts > 0, display_df['Capacity Loss (slow cycle time) (parts)'] / perc_base_parts, 0)
-                    display_df['Capacity Gain (fast cycle time) (parts %)'] = np.where( perc_base_parts > 0, display_df['Capacity Gain (fast cycle time) (parts)'] / perc_base_parts, 0)
-                    display_df['Total Capacity Loss (parts %)'] = np.where( perc_base_parts > 0, display_df['Total Capacity Loss (parts)'] / perc_base_parts, 0)
-
-                    display_df['Capacity Loss (vs Target) (parts %)'] = np.where( display_df['Target Output (parts)'] > 0, display_df['Capacity Loss (vs Target) (parts)'] / display_df['Target Output (parts)'], 0)
-                    display_df['Total Capacity Loss (cycle time) (parts)'] = display_df['Capacity Loss (slow cycle time) (parts)'] - display_df['Capacity Gain (fast cycle time) (parts)']
-                    
-                    # --- v7.37: NEW Allocation Logic including Gains ---
-                    # 1. Find the *net impact* of each category (from Optimal report)
-                    net_downtime_loss = display_df['Capacity Loss (downtime) (parts)']
-                    net_slow_loss = display_df['Capacity Loss (slow cycle time) (parts)']
-                    net_fast_gain = display_df['Capacity Gain (fast cycle time) (parts)'] # This is a positive number
-                    
-                    # 2. Calculate the *Total Net Loss (vs Optimal)*
-                    #    This is the denominator for our ratio.
-                    total_net_loss_vs_optimal = net_downtime_loss + net_slow_loss - net_fast_gain
-                    
-                    # 3. Find the *ratio* of each category's impact
-                    #    (Handle division by zero if total_net_loss_vs_optimal is 0)
-                    ratio_downtime = np.where(total_net_loss_vs_optimal != 0, net_downtime_loss / total_net_loss_vs_optimal, 0)
-                    ratio_slow = np.where(total_net_loss_vs_optimal != 0, net_slow_loss / total_net_loss_vs_optimal, 0)
-                    ratio_fast = np.where(total_net_loss_vs_optimal != 0, -net_fast_gain / total_net_loss_vs_optimal, 0) # Note the negative sign
-
-                    # 4. Find the *actual amount* we missed the target by (as a positive number)
-                    #    This is 'Capacity Loss (vs Target) (parts)', which is already max(0, Target - Actual)
-                    gap_as_loss = display_df['Capacity Loss (vs Target) (parts)']
-                    
-                    # 5. Allocate the *missed amount* based on the *impact ratios*
-                    display_df['Allocated Loss (RR Downtime)'] = gap_as_loss * ratio_downtime
-                    display_df['Allocated Loss (Slow Cycles)'] = gap_as_loss * ratio_slow
-                    display_df['Allocated Gain (Fast Cycles)'] = gap_as_loss * ratio_fast # This will be negative (a gain)
-                    # --- End v7.37 Logic ---
-                    
-                    display_df['Filtered Run Time (d/h/m)'] = display_df['Filtered Run Time (sec)'].apply(format_seconds_to_dhm)
-                    display_df['Actual Cycle Time Total (d/h/m)'] = display_df['Actual Cycle Time Total (sec)'].apply(format_seconds_to_dhm)
-                    
-                    # --- v7.21: Add formatted columns for the 'by Run' table ---
-                    if 'Start Time' in display_df.columns:
-                        display_df['Start Time_str'] = pd.to_datetime(display_df['Start Time']).dt.strftime('%Y-%m-%d %H:%M')
-                    
-                    # --- End v7.29 REFACTOR ---
-                        
-                    if data_frequency == 'Weekly':
-                        xaxis_title = "Week"
-                    elif data_frequency == 'Monthly':
-                        xaxis_title = "Month"
-                    elif data_frequency == 'by Run':
-                        xaxis_title = "Run ID" # <-- v6.89: New X-axis title
-                    else: # Daily
-                        xaxis_title = "Date"
-                    
-                    # --- v6.89: Handle different indexes ---
-                    if data_frequency == 'by Run':
-                        chart_df = display_df.reset_index().rename(columns={'run_id': 'X-Axis'})
-                        chart_df['X-Axis'] = 'Run ' + chart_df['X-Axis'].astype(str) # Label as "Run 1", "Run 2"
-                    else:
-                        chart_df = display_df.reset_index().rename(columns={'Date': 'X-Axis'})
-                    
-
-                    # --- NEW: Unified Performance Breakdown Chart (Time Series) ---
-                    st.header(f"{data_frequency} Performance Breakdown (vs {benchmark_title})")
-                    fig_ts = go.Figure()
-                    
-                    # --- v7.28: Consistent Colors ---
-                    fig_ts.add_trace(go.Bar(
-                        x=chart_df['X-Axis'],
-                        y=chart_df['Actual Output (parts)'],
-                        name='Actual Output',
-                        marker_color='#3498DB', # Blue
-                        customdata=chart_df['Actual Output (%)'],
-                        hovertemplate='Actual Output: %{y:,.0f} (%{customdata:.1%})<extra></extra>'
-                    ))
-                    
-                    chart_df['Net Cycle Time Loss (parts)'] = chart_df['Total Capacity Loss (cycle time) (parts)']
-                    chart_df['Net Cycle Time Loss (positive)'] = np.maximum(0, chart_df['Net Cycle Time Loss (parts)'])
-
-                    fig_ts.add_trace(go.Bar(
-                        x=chart_df['X-Axis'],
-                        y=chart_df['Net Cycle Time Loss (positive)'],
-                        name='Capacity Loss (cycle time)',
-                        marker_color='#ffb347', # Orange
-                        customdata=np.stack((
-                            chart_df['Net Cycle Time Loss (parts)'],
-                            chart_df['Capacity Loss (slow cycle time) (parts)'],
-                            chart_df['Capacity Gain (fast cycle time) (parts)']
-                        ), axis=-1),
-                        # --- v6.86: Fix Tooltip ---
-                        hovertemplate=
-                            '<b>Net Cycle Time Loss: %{customdata[0]:,.0f}</b><br>' +
-                            'Slow Cycle Loss: %{customdata[1]:,.0f}<br>' +
-                            'Fast Cycle Gain: -%{customdata[2]:,.0f}<br>' + 
-                            '<extra></extra>'
-                    ))
-                    
-                    fig_ts.add_trace(go.Bar(
-                        x=chart_df['X-Axis'],
-                        y=chart_df['Capacity Loss (downtime) (parts)'],
-                        name='Run Rate Downtime (Stops)',
-                        marker_color='#808080', # Grey
-                        customdata=chart_df['Capacity Loss (downtime) (parts %)'],
-                        hovertemplate='Run Rate Downtime (Stops): %{y:,.0f} (%{customdata:.1%})<extra></extra>'
-                    ))
-                    
-                    fig_ts.update_layout(barmode='stack')
-
-                    if benchmark_view == "Target Output":
-                        fig_ts.add_trace(go.Scatter(
-                            x=chart_df['X-Axis'],
-                            y=chart_df['Target Output (parts)'],
-                            name=f'Target Output ({target_output_perc:.0f}%)',
-                            mode='lines',
-                            line=dict(color='deepskyblue', dash='dash'),
-                            hovertemplate=f'<b>Target Output ({target_output_perc:.0f}%)</b>: %{{y:,.0f}}<extra></extra>'
+                        fig_waterfall = go.Figure(go.Waterfall(
+                            name = "Breakdown",
+                            orientation = "v",
+                            measure = waterfall_measure,
+                            x = waterfall_x,
+                            y = waterfall_y,
+                            text = waterfall_text,
+                            textposition = "outside",
+                            connector = {"line":{"color":"rgb(63, 63, 63)"}},
+                            increasing = {"marker":{"color":"#2ca02c"}}, # Green for gains
+                            decreasing = {"marker":{"color":"#ff6961"}},  # Red for losses
+                            totals = {"marker":{"color":"#1f77b4"}} # Blue for totals (Benchmark & Actual)
                         ))
                         
-                    fig_ts.add_trace(go.Scatter(
-                        x=chart_df['X-Axis'],
-                        y=chart_df['Optimal Output (parts)'],
-                        name='Optimal Output (100%)',
-                        mode='lines',
-                        line=dict(color='darkblue', dash='dot'),
-                        hovertemplate='Optimal Output (100%): %{y:,.0f}<extra></extra>'
-                    ))
+                        fig_waterfall.update_layout(
+                            showlegend=False,
+                            margin=dict(t=0, b=0, l=0, r=0), # --- v6.84: Removed title, set margin-top to 0 ---
+                            height=400,
+                            yaxis_title='Parts'
+                        )
+                        
+                        # --- v6.85: Add Target Line ---
+                        if benchmark_view == "Target Output":
+                            fig_waterfall.add_shape(
+                                type='line',
+                                x0=-0.5, x1=len(waterfall_x)-0.5, # Span all columns
+                                y0=total_target, y1=total_target,
+                                line=dict(color='deepskyblue', dash='dash', width=2)
+                            )
+                            fig_waterfall.add_annotation(
+                                x=0, y=total_target,
+                                text=f"Target: {total_target:,.0f}",
+                                showarrow=True, arrowhead=1, ax=-40, ay=-20
+                            )
+                            
+                            # Optimal line is now the main benchmark, so it's already there.
+                            # We'll just add the annotation
+                            fig_waterfall.add_annotation(
+                                x=len(waterfall_x)-0.5, y=total_optimal_100,
+                                text=f"Optimal (100%): {total_optimal_100:,.0f}",
+                                showarrow=True, arrowhead=1, ax=40, ay=-20
+                            )
+                        
+                        st.plotly_chart(fig_waterfall, use_container_width=True, config={'displayModeBar': False})
+                        
 
-                    fig_ts.update_layout(
-                        title=chart_title,
-                        xaxis_title=xaxis_title,
-                        yaxis_title='Parts (Output & Loss)',
-                        legend_title='Metric',
-                        hovermode="x unified"
-                    )
-                    st.plotly_chart(fig_ts, use_container_width=True)
+                    with c2:
+                        # --- v6.79: New compact table layout with color ---
+                        
+                        # --- Helper function for color ---
+                        def get_color_css(val):
+                            if val > 0: return "color: red;"
+                            if val < 0: return "color: green;"
+                            return "color: black;"
 
-                    # --- Full Data Table (Open by Default) ---
+                        # --- Color-code Total Net Loss ---
+                        net_loss_val = total_calculated_net_loss_parts
+                        net_loss_color = get_color_css(net_loss_val)
+                        with st.container(border=True):
+                            # --- v6.80: Rename to "Total Net Impact" ---
+                            st.markdown(f"**Total Net Impact**")
+                            st.markdown(f"<h3><span style='{net_loss_color}'>{net_loss_val:,.0f} parts</span></h3>", unsafe_allow_html=True)
+                            st.caption(f"Net Time Lost: {format_seconds_to_dhm(total_calculated_net_loss_sec)}")
+                        
+                        # --- Create Data for the table ---
+                        table_data = {
+                            "Metric": [
+                                "Loss (RR Downtime)", 
+                                "Net Loss (Cycle Time)", 
+                                # --- v6.80: Fix &nbsp; formatting ---
+                                "\u00A0\u00A0\u00A0 └ Loss (Slow Cycles)", 
+                                "\u00A0\u00A0\u00A0 └ Gain (Fast Cycles)"
+                            ],
+                            "Parts": [
+                                total_downtime_loss_parts,
+                                total_net_cycle_loss_parts,
+                                total_slow_loss_parts,
+                                total_fast_gain_parts
+                            ],
+                            "Time": [
+                                format_seconds_to_dhm(total_downtime_loss_sec),
+                                format_seconds_to_dhm(total_net_cycle_loss_sec),
+                                format_seconds_to_dhm(total_slow_loss_sec),
+                                format_seconds_to_dhm(total_fast_gain_sec)
+                            ]
+                        }
+                        df_table = pd.DataFrame(table_data)
+
+                        # --- Function to apply color styling to the "Parts" column ---
+                        def style_parts_col(val, row_index):
+                            # Get the correct color based on the metric
+                            if row_index == 0: # Loss (RR Downtime)
+                                color_style = get_color_css(val)
+                            elif row_index == 1: # Net Loss (Cycle Time)
+                                color_style = get_color_css(val)
+                            elif row_index == 2: # Loss (Slow Cycles)
+                                color_style = get_color_css(val)
+                            elif row_index == 3: # Gain (Fast Cycles)
+                                color_style = get_color_css(val * -1) # Invert gain for color
+                            else:
+                                color_style = "color: black;"
+                            
+                            return color_style
+
+                        # --- Apply styling to the DataFrame ---
+                        styled_df = df_table.style.apply(
+                            lambda row: [style_parts_col(row['Parts'], row.name) if col == 'Parts' else '' for col in row.index],
+                            axis=1
+                        ).format(
+                            {"Parts": "{:,.0f}"} # Apply comma formatting
+                        ).set_properties(
+                            **{'text-align': 'left'}, subset=['Metric', 'Time']
+                        ).set_properties(
+                            **{'text-align': 'right'}, subset=['Parts']
+                        ).hide(axis='index') # Hide the 0,1,2,3 index
+                        
+                        # --- Display the styled table ---
+                        st.dataframe(
+                            styled_df,
+                            use_container_width=True
+                        )
+
+                    # --- End v6.79 Layout ---
+
+
+                    # --- Collapsible Daily Summary Table ---
+                    with st.expander("View Daily Summary Data"):
+
+                        # --- v6.44: Use primary results_df ---
+                        # daily_summary_df = results_df.copy() # v7.29: This is now defined at the top
+                        
+                        # Calculate all % and formatted columns needed for the table
+                        daily_summary_df['Actual Cycle Time Total (time %)'] = np.where( daily_summary_df['Filtered Run Time (sec)'] > 0, daily_summary_df['Actual Cycle Time Total (sec)'] / daily_summary_df['Filtered Run Time (sec)'], 0 )
+                        # --- v6.56: Actual Output % is always vs 100% Optimal ---
+                        daily_summary_df['Actual Output (parts %)'] = np.where( results_df['Optimal Output (parts)'] > 0, daily_summary_df['Actual Output (parts)'] / results_df['Optimal Output (parts)'], 0 )
+                        
+                        # --- v6.64: Perc base is always Optimal ---
+                        perc_base_parts = daily_summary_df['Optimal Output (parts)']
+                        perc_base_sec = daily_summary_df['Filtered Run Time (sec)']
+
+                        
+                        daily_summary_df['Total Capacity Loss (time %)'] = np.where( perc_base_sec > 0, daily_summary_df['Total Capacity Loss (sec)'] / perc_base_sec, 0 )
+                        daily_summary_df['Total Capacity Loss (parts %)'] = np.where( perc_base_parts > 0, daily_summary_df['Total Capacity Loss (parts)'] / perc_base_parts, 0 )
+                        
+                        daily_summary_df['Total Capacity Loss (d/h/m)'] = daily_summary_df['Total Capacity Loss (sec)'].apply(format_seconds_to_dhm)
+
+                        daily_summary_df['Capacity Loss (vs Target) (parts %)'] = np.where( daily_summary_df['Target Output (parts)'] > 0, daily_summary_df['Capacity Loss (vs Target) (parts)'] / daily_summary_df['Target Output (parts)'], 0 )
+                        # --- v6.53: Bug Fix ---
+                        daily_summary_df['Capacity Loss (vs Target) (time %)'] = np.where( daily_summary_df['Filtered Run Time (sec)'] > 0, daily_summary_df['Capacity Loss (vs Target) (sec)'] / daily_summary_df['Filtered Run Time (sec)'], 0 )
+                        daily_summary_df['Capacity Loss (vs Target) (d/h/m)'] = daily_summary_df['Capacity Loss (vs Target) (sec)'].apply(format_seconds_to_dhm)
+
+                        daily_summary_df['Filtered Run Time (d/h/m)'] = daily_summary_df['Filtered Run Time (sec)'].apply(format_seconds_to_dhm)
+                        daily_summary_df['Actual Cycle Time Total (d/h/m)'] = daily_summary_df['Actual Cycle Time Total (sec)'].apply(format_seconds_to_dhm)
+
+                        daily_kpi_table = pd.DataFrame(index=daily_summary_df.index)
+                        daily_kpi_table[run_time_label] = daily_summary_df.apply(lambda r: f"{r['Filtered Run Time (d/h/m)']} ({r['Filtered Run Time (sec)']:,.0f}s)", axis=1)
+                        daily_kpi_table['Actual Production Time'] = daily_summary_df.apply(lambda r: f"{r['Actual Cycle Time Total (d/h/m)']} ({r['Actual Cycle Time Total (time %)']:.1%})", axis=1)
+                        
+                        daily_kpi_table['Actual Output (parts)'] = daily_summary_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (parts %)']:.1%})", axis=1)
+
+                        # --- v6.1.1: Conditional Styling ---
+                        # --- v6.3.2: Fixed IndentationError ---
+                        if benchmark_view == "Optimal Output":
+                            daily_kpi_table['Total Capacity Loss (Time)'] = daily_summary_df.apply(lambda r: f"{r['Total Capacity Loss (d/h/m)']} ({r['Total Capacity Loss (time %)']:.1%})", axis=1)
+                            daily_kpi_table['Total Capacity Loss (parts)'] = daily_summary_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
+                            
+                            st.dataframe(daily_kpi_table, use_container_width=True)
+
+                        else: # Target Output
+                            # --- v6.3.2: FIX for ValueError ---
+                            # Force the column to numeric to handle any non-numeric values (like inf) before formatting
+                            daily_summary_df['Gap to Target (parts)'] = pd.to_numeric(daily_summary_df['Gap to Target (parts)'], errors='coerce').fillna(0)
+                            
+                            # --- v6.22 FIX: Corrected format string (space removed) ---
+                            daily_kpi_table['Gap to Target (parts)'] = daily_summary_df['Gap to Target (parts)'].apply(lambda x: "{:+,.2f}".format(x) if pd.notna(x) else "N/A")
+                            
+                            # --- v6.64: Restored this column ---
+                            daily_kpi_table['Capacity Loss (vs Target) (Time)'] = daily_summary_df.apply(lambda r: f"{r['Capacity Loss (vs Target) (d/h/m)']} ({r['Capacity Loss (vs Target) (time %)']:.1%})", axis=1)
+
+
+                            st.dataframe(daily_kpi_table.style.applymap(
+                                lambda x: 'color: green' if str(x).startswith('+') else 'color: red' if str(x).startswith('-') else None,
+                                subset=['Gap to Target (parts)']
+                            ), use_container_width=True)
+
+                    st.divider()
+
+                    # --- 2. WATERFALL CHART (REMOVED) ---
+                    # ... (Waterfall code remains commented out) ...
+                    # st.divider() # <-- Also commenting out this divider
+
+                    # --- 3. AGGREGATED REPORT (Chart & Table) ---
                     
-                    # --- v6.89: Use the already processed display_df ---
-                    display_df_totals = display_df
+                    # --- v7.29: REMOVED process_aggregated_dataframe helper function ---
                     
-                    st.header(f"Production Totals Report ({data_frequency})")
-                    # --- v7.21: Rebuild 'by Run' table to match validation screenshot ---
+                    # --- v7.29: Create the display_df based on the radio button ---
                     if data_frequency == 'by Run':
-                        report_table_1_df = display_df_totals.reset_index().rename(columns={'run_id': 'Run ID'})
-                        
-                        # --- v7.21: Add Total Downtime column for this table ---
-                        report_table_1_df['Total Downtime (sec)'] = report_table_1_df['Filtered Run Time (sec)'] - report_table_1_df['Actual Cycle Time Total (sec)']
-                        report_table_1_df['Total Downtime (d/h/m)'] = report_table_1_df['Total Downtime (sec)'].apply(format_seconds_to_dhm)
-                        
-                        report_table_1 = pd.DataFrame(index=report_table_1_df.index)
-                        report_table_1['Run ID'] = report_table_1_df['Run ID']
-                        report_table_1['Start Time'] = report_table_1_df['Start Time_str']
-                        
-                        # --- v7.33: Fixed KeyError ---
-                        report_table_1['Overall Run Time'] = report_table_1_df.apply(lambda r: f"{r['Filtered Run Time (d/h/m)']}", axis=1)
-                        report_table_1['Actual Production Time'] = report_table_1_df.apply(lambda r: f"{r['Actual Cycle Time Total (d/h/m)']}", axis=1)
-                        # --- End v7.33 ---
-                        
-                        report_table_1['Total Downtime'] = report_table_1_df.apply(lambda r: f"{r['Total Downtime (d/h/m)']}", axis=1)
-                        report_table_1['Total Shots'] = report_table_1_df['Total Shots (all)'].map('{:,.0f}'.format)
-                        report_table_1['Production Shots'] = report_table_1_df['Production Shots'].map('{:,.0f}'.format)
-                        report_table_1['Downtime Shots'] = report_table_1_df['Downtime Shots'].map('{:,.0f}'.format)
-                        # --- v7.22: Remove confusing columns ---
-                        report_table_1['Mode CT'] = report_table_1_df['Mode CT'].map('{:.2f}s'.format)
+                        agg_df = run_summary_df.copy() # Use the one we calculated
+                        chart_title_prefix = "Run-by-Run"
+                    elif data_frequency == 'Weekly':
+                        agg_df = daily_summary_df.resample('W').sum().replace([np.inf, -np.inf], np.nan).fillna(0)
+                        chart_title_prefix = "Weekly"
+                    elif data_frequency == 'Monthly':
+                        agg_df = daily_summary_df.resample('ME').sum().replace([np.inf, -np.inf], np.nan).fillna(0)
+                        chart_title_prefix = "Monthly"
+                    else: # Daily
+                        agg_df = daily_summary_df.copy()
+                        chart_title_prefix = "Daily"
                     
-                    else: # Daily, Weekly, Monthly
-                        report_table_1 = pd.DataFrame(index=display_df_totals.index)
-                        report_table_1_df = display_df_totals # Use the original df for applying data
-                        
-                        report_table_1['Total Shots (all)'] = report_table_1_df['Total Shots (all)'].map('{:,.0f}'.format)
-                        report_table_1['Production Shots'] = report_table_1_df.apply(lambda r: f"{r['Production Shots']:,.0f} ({r['Production Shots (%)']:.1%})", axis=1)
-                        report_table_1['Downtime Shots'] = report_table_1_df['Downtime Shots'].map('{:,.0f}'.format)
-                        report_table_1[run_time_label] = report_table_1_df.apply(lambda r: f"{r['Filtered Run Time (d/h/m)']} ({r['Filtered Run Time (sec)']:,.0f}s)", axis=1)
-                        report_table_1['Actual Production Time'] = report_table_1_df.apply(lambda r: f"{r['Actual Cycle Time Total (d/h/m)']} ({r['Actual Cycle Time Total (time %)']:.1%})", axis=1)
-
-                    st.dataframe(report_table_1, use_container_width=True)
-
-                    # --- v6.64: Conditional Tables ---
+                    # --- v7.29: This is the single, consistent dataframe for the tables ---
+                    display_df = agg_df
                     
-                    # --- TABLE 1: vs Optimal ---
-                    st.header(f"Capacity Loss & Gain Report (vs Optimal) ({data_frequency})")
-                    
-                    # --- v6.89: Use the already processed display_df ---
-                    display_df_optimal = display_df
-
-                    # --- v6.89: Reset index for Run ID table ---
-                    if data_frequency == 'by Run':
-                        report_table_optimal_df = display_df_optimal.reset_index().rename(columns={'run_id': 'Run ID'})
-                        report_table_optimal = pd.DataFrame(index=report_table_optimal_df.index)
-                        report_table_optimal['Run ID'] = report_table_optimal_df['Run ID']
+                    if display_df.empty:
+                        st.warning(f"No data to display for the '{data_frequency}' frequency.")
                     else:
-                        report_table_optimal = pd.DataFrame(index=display_df_optimal.index)
-                        report_table_optimal_df = display_df_optimal
-
-                    report_table_optimal['Optimal Output (parts)'] = report_table_optimal_df['Optimal Output (parts)'].map('{:,.2f}'.format)
-                    report_table_optimal['Actual Output (parts)'] = report_table_optimal_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
-                    report_table_optimal['Loss (RR Downtime)'] = report_table_optimal_df.apply(lambda r: f"{r['Capacity Loss (downtime) (parts)']:,.2f} ({r['Capacity Loss (downtime) (parts %)']:.1%})", axis=1)
-                    report_table_optimal['Loss (Slow Cycles)'] = report_table_optimal_df.apply(lambda r: f"{r['Capacity Loss (slow cycle time) (parts)']:,.2f} ({r['Capacity Loss (slow cycle time) (parts %)']:.1%})", axis=1)
-                    report_table_optimal['Gain (Fast Cycles)'] = report_table_optimal_df.apply(lambda r: f"{r['Capacity Gain (fast cycle time) (parts)']:,.2f} ({r['Capacity Gain (fast cycle time) (parts %)']:.1%})", axis=1)
-                    report_table_optimal['Total Net Loss'] = report_table_optimal_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
-                    
-                    # --- v7.25: Add consistent color styling ---
-                    def style_loss_gain_table(col):
-                        col_name = col.name
-                        if col_name == 'Loss (RR Downtime)':
-                            return ['color: red'] * len(col)
-                        if col_name == 'Loss (Slow Cycles)':
-                            return ['color: red'] * len(col)
-                        if col_name == 'Gain (Fast Cycles)':
-                            return ['color: green'] * len(col)
-                        if col_name == 'Total Net Loss':
-                            # Style based on the raw numeric value from the underlying dataframe
-                            return ['color: green' if v < 0 else 'color: red' for v in display_df_optimal['Total Capacity Loss (parts)']]
-                        return [''] * len(col)
-
-                    st.dataframe(
-                        report_table_optimal.style.apply(style_loss_gain_table, axis=0),
-                        use_container_width=True
-                    )
-                    # --- End v7.25 ---
-                    
-                    
-                    if benchmark_view == "Target Output": 
-                        # --- TABLE 2: vs Target (Expanded) ---
-                        st.header(f"Target Report ({target_output_perc:.0f}%) ({data_frequency})")
-                        # --- v7.37: Updated info text ---
-                        st.info("This table allocates your `Capacity Loss (vs Target)` based on the proportional impact of all your *true* losses and gains (Downtime, Slow Cycles, and Fast Cycles).")
+                        # --- v7.39: FIX ---
+                        # Re-calculate 'Capacity Loss (vs Target)' AFTER aggregation
+                        # This fixes the discrepancy bug.
+                        display_df['Capacity Loss (vs Target) (parts)'] = np.maximum(0, -display_df['Gap to Target (parts)'])
                         
-                        # --- v6.64: Use same processed df ---
-                        display_df_target = display_df
+                        # --- Calculate Percentage Columns AFTER aggregation ---
+                        perc_base_parts = display_df['Optimal Output (parts)']
+                        chart_title = f"{chart_title_prefix} Capacity Report (vs Optimal)"
+                        optimal_100_base = display_df['Optimal Output (parts)']
+
+                        display_df['Actual Output (%)'] = np.where( optimal_100_base > 0, display_df['Actual Output (parts)'] / optimal_100_base, 0)
+                        display_df['Production Shots (%)'] = np.where( display_df['Total Shots (all)'] > 0, display_df['Production Shots'] / display_df['Total Shots (all)'], 0)
+                        display_df['Actual Cycle Time Total (time %)'] = np.where( display_df['Filtered Run Time (sec)'] > 0, display_df['Actual Cycle Time Total (sec)'] / display_df['Filtered Run Time (sec)'], 0)
                         
+                        display_df['Capacity Loss (downtime) (parts %)'] = np.where( perc_base_parts > 0, display_df['Capacity Loss (downtime) (parts)'] / perc_base_parts, 0)
+                        display_df['Capacity Loss (slow cycle time) (parts %)'] = np.where( perc_base_parts > 0, display_df['Capacity Loss (slow cycle time) (parts)'] / perc_base_parts, 0)
+                        display_df['Capacity Gain (fast cycle time) (parts %)'] = np.where( perc_base_parts > 0, display_df['Capacity Gain (fast cycle time) (parts)'] / perc_base_parts, 0)
+                        display_df['Total Capacity Loss (parts %)'] = np.where( perc_base_parts > 0, display_df['Total Capacity Loss (parts)'] / perc_base_parts, 0)
+
+                        display_df['Capacity Loss (vs Target) (parts %)'] = np.where( display_df['Target Output (parts)'] > 0, display_df['Capacity Loss (vs Target) (parts)'] / display_df['Target Output (parts)'], 0)
+                        display_df['Total Capacity Loss (cycle time) (parts)'] = display_df['Capacity Loss (slow cycle time) (parts)'] - display_df['Capacity Gain (fast cycle time) (parts)']
+                        
+                        # --- v7.37: New "Balanced" Allocation Logic ---
+                        display_df['(Ref) Net Loss (RR)'] = display_df['Capacity Loss (downtime) (parts)']
+                        display_df['(Ref) Net Loss (Slow)'] = display_df['Capacity Loss (slow cycle time) (parts)']
+                        display_df['(Ref) Net Gain (Fast)'] = display_df['Capacity Gain (fast cycle time) (parts)']
+                        
+                        # Total Net Loss (vs Optimal) is the denominator
+                        display_df['(Ref) Total Net Loss'] = display_df['(Ref) Net Loss (RR)'] + display_df['(Ref) Net Loss (Slow)'] - display_df['(Ref) Net Gain (Fast)']
+
+                        # Calculate Ratios
+                        display_df['loss_downtime_ratio'] = np.where(
+                            display_df['(Ref) Total Net Loss'] != 0,
+                            display_df['(Ref) Net Loss (RR)'] / display_df['(Ref) Total Net Loss'],
+                            0
+                        )
+                        display_df['loss_slow_ratio'] = np.where(
+                            display_df['(Ref) Total Net Loss'] != 0,
+                            display_df['(Ref) Net Loss (Slow)'] / display_df['(Ref) Total Net Loss'],
+                            0
+                        )
+                        display_df['gain_fast_ratio'] = np.where(
+                            display_df['(Ref) Total Net Loss'] != 0,
+                            # Note: a GAIN is a NEGATIVE loss, so we use -gain
+                            -display_df['(Ref) Net Gain (Fast)'] / display_df['(Ref) Total Net Loss'],
+                            0
+                        )
+                        
+                        # Allocate the 'Capacity Loss (vs Target)'
+                        display_df['Allocated Loss (RR Downtime)'] = display_df['Capacity Loss (vs Target) (parts)'] * display_df['loss_downtime_ratio']
+                        display_df['Allocated Loss (Slow Cycles)'] = display_df['Capacity Loss (vs Target) (parts)'] * display_df['loss_slow_ratio']
+                        display_df['Allocated Gain (Fast Cycles)'] = display_df['Capacity Loss (vs Target) (parts)'] * display_df['gain_fast_ratio'] # This will be negative
+                        
+                        display_df['Filtered Run Time (d/h/m)'] = display_df['Filtered Run Time (sec)'].apply(format_seconds_to_dhm)
+                        display_df['Actual Cycle Time Total (d/h/m)'] = display_df['Actual Cycle Time Total (sec)'].apply(format_seconds_to_dhm)
+                        
+                        # --- v7.21: Add formatted columns for the 'by Run' table ---
+                        if 'Start Time' in display_df.columns:
+                            display_df['Start Time_str'] = pd.to_datetime(display_df['Start Time']).dt.strftime('%Y-%m-%d %H:%M')
+                        
+                        # --- End v7.29 REFACTOR ---
+                            
+                        if data_frequency == 'Weekly':
+                            xaxis_title = "Week"
+                        elif data_frequency == 'Monthly':
+                            xaxis_title = "Month"
+                        elif data_frequency == 'by Run':
+                            xaxis_title = "Run ID" # <-- v6.89: New X-axis title
+                        else: # Daily
+                            xaxis_title = "Date"
+                        
+                        # --- v6.89: Handle different indexes ---
+                        if data_frequency == 'by Run':
+                            chart_df = display_df.reset_index().rename(columns={'run_id': 'X-Axis'})
+                            chart_df['X-Axis'] = 'Run ' + chart_df['X-Axis'].astype(str) # Label as "Run 1", "Run 2"
+                        else:
+                            chart_df = display_df.reset_index().rename(columns={'Date': 'X-Axis'})
+                        
+
+                        # --- NEW: Unified Performance Breakdown Chart (Time Series) ---
+                        st.header(f"{data_frequency} Performance Breakdown (vs {benchmark_title})")
+                        fig_ts = go.Figure()
+                        
+                        # --- v7.28: Consistent Colors ---
+                        fig_ts.add_trace(go.Bar(
+                            x=chart_df['X-Axis'],
+                            y=chart_df['Actual Output (parts)'],
+                            name='Actual Output',
+                            marker_color='#3498DB', # Blue
+                            customdata=chart_df['Actual Output (%)'],
+                            hovertemplate='Actual Output: %{y:,.0f} (%{customdata:.1%})<extra></extra>'
+                        ))
+                        
+                        chart_df['Net Cycle Time Loss (parts)'] = chart_df['Total Capacity Loss (cycle time) (parts)']
+                        chart_df['Net Cycle Time Loss (positive)'] = np.maximum(0, chart_df['Net Cycle Time Loss (parts)'])
+
+                        fig_ts.add_trace(go.Bar(
+                            x=chart_df['X-Axis'],
+                            y=chart_df['Net Cycle Time Loss (positive)'],
+                            name='Capacity Loss (cycle time)',
+                            marker_color='#ffb347', # Orange
+                            customdata=np.stack((
+                                chart_df['Net Cycle Time Loss (parts)'],
+                                chart_df['Capacity Loss (slow cycle time) (parts)'],
+                                chart_df['Capacity Gain (fast cycle time) (parts)']
+                            ), axis=-1),
+                            # --- v6.86: Fix Tooltip ---
+                            hovertemplate=
+                                '<b>Net Cycle Time Loss: %{customdata[0]:,.0f}</b><br>' +
+                                'Slow Cycle Loss: %{customdata[1]:,.0f}<br>' +
+                                'Fast Cycle Gain: -%{customdata[2]:,.0f}<br>' + 
+                                '<extra></extra>'
+                        ))
+                        
+                        fig_ts.add_trace(go.Bar(
+                            x=chart_df['X-Axis'],
+                            y=chart_df['Capacity Loss (downtime) (parts)'],
+                            name='Run Rate Downtime (Stops)',
+                            marker_color='#808080', # Grey
+                            customdata=chart_df['Capacity Loss (downtime) (parts %)'],
+                            hovertemplate='Run Rate Downtime (Stops): %{y:,.0f} (%{customdata:.1%})<extra></extra>'
+                        ))
+                        
+                        fig_ts.update_layout(barmode='stack')
+
+                        if benchmark_view == "Target Output":
+                            fig_ts.add_trace(go.Scatter(
+                                x=chart_df['X-Axis'],
+                                y=chart_df['Target Output (parts)'],
+                                name=f'Target Output ({target_output_perc:.0f}%)',
+                                mode='lines',
+                                line=dict(color='deepskyblue', dash='dash'),
+                                hovertemplate=f'<b>Target Output ({target_output_perc:.0f}%)</b>: %{{y:,.0f}}<extra></extra>'
+                            ))
+                            
+                        fig_ts.add_trace(go.Scatter(
+                            x=chart_df['X-Axis'],
+                            y=chart_df['Optimal Output (parts)'],
+                            name='Optimal Output (100%)',
+                            mode='lines',
+                            line=dict(color='darkblue', dash='dot'),
+                            hovertemplate='Optimal Output (100%): %{y:,.0f}<extra></extra>'
+                        ))
+
+                        fig_ts.update_layout(
+                            title=chart_title,
+                            xaxis_title=xaxis_title,
+                            yaxis_title='Parts (Output & Loss)',
+                            legend_title='Metric',
+                            hovermode="x unified"
+                        )
+                        st.plotly_chart(fig_ts, use_container_width=True)
+
+                        # --- Full Data Table (Open by Default) ---
+                        
+                        # --- v6.89: Use the already processed display_df ---
+                        display_df_totals = display_df
+                        
+                        st.header(f"Production Totals Report ({data_frequency})")
+                        # --- v7.21: Rebuild 'by Run' table to match validation screenshot ---
+                        if data_frequency == 'by Run':
+                            report_table_1_df = display_df_totals.reset_index().rename(columns={'run_id': 'Run ID'})
+                            
+                            # --- v7.21: Add Total Downtime column for this table ---
+                            report_table_1_df['Total Downtime (sec)'] = report_table_1_df['Filtered Run Time (sec)'] - report_table_1_df['Actual Cycle Time Total (sec)']
+                            report_table_1_df['Total Downtime (d/h/m)'] = report_table_1_df['Total Downtime (sec)'].apply(format_seconds_to_dhm)
+                            
+                            report_table_1 = pd.DataFrame(index=report_table_1_df.index)
+                            report_table_1['Run ID'] = report_table_1_df['Run ID']
+                            report_table_1['Start Time'] = report_table_1_df['Start Time_str']
+                            
+                            # --- v7.33: Fixed KeyError ---
+                            report_table_1['Overall Run Time'] = report_table_1_df.apply(lambda r: f"{r['Filtered Run Time (d/h/m)']}", axis=1)
+                            report_table_1['Actual Production Time'] = report_table_1_df.apply(lambda r: f"{r['Actual Cycle Time Total (d/h/m)']}", axis=1)
+                            # --- End v7.33 ---
+                            
+                            report_table_1['Total Downtime'] = report_table_1_df.apply(lambda r: f"{r['Total Downtime (d/h/m)']}", axis=1)
+                            report_table_1['Total Shots'] = report_table_1_df['Total Shots (all)'].map('{:,.0f}'.format)
+                            report_table_1['Production Shots'] = report_table_1_df['Production Shots'].map('{:,.0f}'.format)
+                            report_table_1['Downtime Shots'] = report_table_1_df['Downtime Shots'].map('{:,.0f}'.format)
+                            # --- v7.22: Remove confusing columns ---
+                            report_table_1['Mode CT'] = report_table_1_df['Mode CT'].map('{:.2f}s'.format)
+                        
+                        else: # Daily, Weekly, Monthly
+                            report_table_1 = pd.DataFrame(index=display_df_totals.index)
+                            report_table_1_df = display_df_totals # Use the original df for applying data
+                            
+                            report_table_1['Total Shots (all)'] = report_table_1_df['Total Shots (all)'].map('{:,.0f}'.format)
+                            report_table_1['Production Shots'] = report_table_1_df.apply(lambda r: f"{r['Production Shots']:,.0f} ({r['Production Shots (%)']:.1%})", axis=1)
+                            report_table_1['Downtime Shots'] = report_table_1_df['Downtime Shots'].map('{:,.0f}'.format)
+                            report_table_1[run_time_label] = report_table_1_df.apply(lambda r: f"{r['Filtered Run Time (d/h/m)']} ({r['Filtered Run Time (sec)']:,.0f}s)", axis=1)
+                            report_table_1['Actual Production Time'] = report_table_1_df.apply(lambda r: f"{r['Actual Cycle Time Total (d/h/m)']} ({r['Actual Cycle Time Total (time %)']:.1%})", axis=1)
+
+                        st.dataframe(report_table_1, use_container_width=True)
+
+                        # --- v6.64: Conditional Tables ---
+                        
+                        # --- TABLE 1: vs Optimal ---
+                        st.header(f"Capacity Loss & Gain Report (vs Optimal) ({data_frequency})")
+                        
+                        # --- v6.89: Use the already processed display_df ---
+                        display_df_optimal = display_df
+
                         # --- v6.89: Reset index for Run ID table ---
                         if data_frequency == 'by Run':
-                            report_table_target_df = display_df_target.reset_index().rename(columns={'run_id': 'Run ID'})
-                            report_table_target = pd.DataFrame(index=report_table_target_df.index)
-                            report_table_target['Run ID'] = report_table_target_df['Run ID']
+                            report_table_optimal_df = display_df_optimal.reset_index().rename(columns={'run_id': 'Run ID'})
+                            report_table_optimal = pd.DataFrame(index=report_table_optimal_df.index)
+                            report_table_optimal['Run ID'] = report_table_optimal_df['Run ID']
                         else:
-                            report_table_target = pd.DataFrame(index=display_df_target.index)
-                            report_table_target_df = display_df_target
+                            report_table_optimal = pd.DataFrame(index=display_df_optimal.index)
+                            report_table_optimal_df = display_df_optimal
 
-                        report_table_target['Target Output (parts)'] = report_table_target_df.apply(lambda r: f"{r['Target Output (parts)']:,.2f}", axis=1)
-                        # --- v7.34: Changed Actual Output (parts) to remove (vs Optimal %) ---
-                        report_table_target['Actual Output (parts)'] = report_table_target_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f}", axis=1)
-                        # --- v7.34: Add 'Actual % (vs Target)' column ---
-                        report_table_target['Actual % (vs Target)'] = report_table_target_df['Actual % (vs Target)'].apply(lambda x: "{:.1%}".format(x) if pd.notna(x) else "N/A")
+                        report_table_optimal['Optimal Output (parts)'] = report_table_optimal_df['Optimal Output (parts)'].map('{:,.2f}'.format)
+                        report_table_optimal['Actual Output (parts)'] = report_table_optimal_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
+                        report_table_optimal['Loss (RR Downtime)'] = report_table_optimal_df.apply(lambda r: f"{r['Capacity Loss (downtime) (parts)']:,.2f} ({r['Capacity Loss (downtime) (parts %)']:.1%})", axis=1)
+                        report_table_optimal['Loss (Slow Cycles)'] = report_table_optimal_df.apply(lambda r: f"{r['Capacity Loss (slow cycle time) (parts)']:,.2f} ({r['Capacity Loss (slow cycle time) (parts %)']:.1%})", axis=1)
+                        report_table_optimal['Gain (Fast Cycles)'] = report_table_optimal_df.apply(lambda r: f"{r['Capacity Gain (fast cycle time) (parts)']:,.2f} ({r['Capacity Gain (fast cycle time) (parts %)']:.1%})", axis=1)
+                        report_table_optimal['Total Net Loss'] = report_table_optimal_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
                         
-                        # --- v7.34: Renamed 'Gap to Target' to 'Net Gap' ---
-                        report_table_target['Net Gap to Target (parts)'] = report_table_target_df['Gap to Target (parts)'].apply(lambda x: "{:+,.2f}".format(x) if pd.notna(x) else "N/A")
-                        
-                        # --- v7.36: Renamed and simplified Gap columns ---
-                        report_table_target['Capacity Loss (vs Target)'] = report_table_target_df['Capacity Loss (vs Target) (parts)'].apply(lambda x: "{:,.2f}".format(x) if pd.notna(x) else "N/A")
-                        
-                        # --- v7.37: Add the NEW allocated columns ---
-                        report_table_target['Allocated Loss (RR Downtime)'] = report_table_target_df['Allocated Loss (RR Downtime)'].apply(lambda x: "{:,.2f}".format(x) if pd.notna(x) else "N/A")
-                        report_table_target['Allocated Loss (Slow Cycles)'] = report_table_target_df['Allocated Loss (Slow Cycles)'].apply(lambda x: "{:,.2f}".format(x) if pd.notna(x) else "N/A")
-                        
-                        # --- v7.37: 'Allocated Gain' is now also an allocated column, formatted as a gain ---
-                        report_table_target['Allocated Gain (Fast Cycles)'] = report_table_target_df['Allocated Gain (Fast Cycles)'].apply(lambda x: "{:,.2f}".format(x) if pd.notna(x) else "N/A")
-                        
-                        
-                        # --- v7.37: Update styling function ---
-                        def style_target_table(col):
-                            # Style based on the raw numeric value from the underlying dataframe
+                        # --- v7.25: Add consistent color styling ---
+                        def style_loss_gain_table(col):
                             col_name = col.name
-                            raw_gap_values = display_df_target['Gap to Target (parts)']
-                            
-                            if col_name == 'Actual % (vs Target)':
-                                # Color based on gap (green if >= 0)
-                                return ['color: green' if v >= 0 else 'color: red' for v in raw_gap_values]
-                            if col_name == 'Net Gap to Target (parts)':
-                                return ['color: green' if v >= 0 else 'color: red' for v in raw_gap_values]
-                            
-                            # --- v7.37: Style the new loss/gain columns ---
-                            if col_name == 'Capacity Loss (vs Target)':
-                                return ['color: red' if v > 0 else 'color: black' for v in display_df_target['Capacity Loss (vs Target) (parts)']]
-                            if col_name == 'Allocated Loss (RR Downtime)':
+                            if col_name == 'Loss (RR Downtime)':
                                 return ['color: red'] * len(col)
-                            if col_name == 'Allocated Loss (Slow Cycles)':
+                            if col_name == 'Loss (Slow Cycles)':
                                 return ['color: red'] * len(col)
-                            # --- v7.37: Style 'Allocated Gain' as green ---
-                            if col_name == 'Allocated Gain (Fast Cycles)':
+                            if col_name == 'Gain (Fast Cycles)':
                                 return ['color: green'] * len(col)
-                                
+                            if col_name == 'Total Net Loss':
+                                # Style based on the raw numeric value from the underlying dataframe
+                                return ['color: green' if v < 0 else 'color: red' for v in display_df_optimal['Total Capacity Loss (parts)']]
                             return [''] * len(col)
 
                         st.dataframe(
-                            report_table_target.style.apply(style_target_table, axis=0),
+                            report_table_optimal.style.apply(style_loss_gain_table, axis=0),
                             use_container_width=True
                         )
-                    # --- End v6.64 ---
-
-
-                # --- 4. SHOT-BY-SHOT ANALYSIS ---
-                st.divider()
-                st.header("Shot-by-Shot Analysis (All Shots)")
-                
-                # --- v6.64: Benchmark is always Optimal ---
-                st.info(f"This chart shows all shots. 'Production' shots are color-coded based on the **Optimal Output (Approved CT)** benchmark. 'RR Downtime (Stop)' shots are grey.")
-
-                if all_shots_df.empty:
-                    st.warning("No shots were found in the file to analyze.")
-                else:
-                    # --- v7.30: Add "All Dates" option ---
-                    available_dates_list = sorted(all_shots_df['date'].unique(), reverse=True)
-                    available_dates = ["All Dates"] + available_dates_list
-                    
-                    if not available_dates_list:
-                        st.warning("No valid dates found in shot data.")
-                    else:
-                        selected_date = st.selectbox(
-                            "Select a Date to Analyze",
-                            options=available_dates,
-                            format_func=lambda d: "All Dates" if isinstance(d, str) else d.strftime('%Y-%m-%d') # Format for display
-                        )
+                        # --- End v7.25 ---
                         
-                        # --- v7.30: Filter to selected date or all dates ---
-                        if selected_date == "All Dates":
-                            df_day_shots = all_shots_df.copy()
-                            chart_title = "All Shots for Full Period"
-                        else:
-                            df_day_shots = all_shots_df[all_shots_df['date'] == selected_date]
-                            chart_title = f"All Shots for {selected_date}"
                         
-                        st.subheader("Chart Controls")
-                        # --- v6.27: Filter out huge run breaks from the slider max calculation ---
-                        non_break_df = df_day_shots[df_day_shots['Shot Type'] != 'Run Break (Excluded)']
-                        max_ct_for_day = 100 # Default
-                        if not non_break_df.empty:
-                            # --- v7.30: Use 99th percentile to avoid 999.9 skewing the max ---
-                            max_ct_for_day = non_break_df['Actual CT'].quantile(0.99)
+                        if benchmark_view == "Target Output": 
+                            # --- TABLE 2: vs Target (Allocation) ---
+                            st.header(f"Target Report (90%) ({data_frequency})")
+                            st.info("This table allocates your Capacity Loss (vs Target) based on the proportional impact of all your true losses and gains (Downtime, Slow Cycles, and Fast Cycles).")
 
-                        slider_max = int(np.ceil(max_ct_for_day / 10.0)) * 10
-                        slider_max = max(slider_max, 50)
-                        slider_max = min(slider_max, 1000)
-
-                        # --- v7.30: Re-introduce slider with default 200 ---
-                        y_axis_max = st.slider(
-                            "Zoom Y-Axis (sec)",
-                            min_value=10,
-                            max_value=1000, # Max to see all outliers
-                            value=min(max(slider_max, 50), 200), # Default to 200 (or less if max is lower, but min 50)
-                            step=10,
-                            help="Adjust the max Y-axis to zoom in on the cluster. (Set to 1000 to see all outliers)."
-                        )
-                        # --- End v7.30 ---
-
-                        # --- v7.02: Check for all required columns ---
-                        required_shot_cols = ['reference_ct', 'Mode CT Lower', 'Mode CT Upper', 'run_id', 'mode_ct', 'rr_time_diff', 'adj_ct_sec']
-                        missing_shot_cols = [col for col in required_shot_cols if col not in df_day_shots.columns]
-                        
-                        if missing_shot_cols:
-                            st.error(f"Error: Shot data is missing required columns. {', '.join(missing_shot_cols)}")
-                        elif df_day_shots.empty:
-                            st.warning(f"No shots found for {selected_date}.")
-                        else:
-                            # --- v6.64: Use Reference CT (which is Approved CT) ---
-                            reference_ct_for_day = df_day_shots['reference_ct'].iloc[0] 
-                            reference_ct_label = "Approved CT"
                             
-                            fig_ct = go.Figure()
-                            # --- v7.28: Set 'On Target' to Blue ---
-                            color_map = {
-                                'Slow': '#ff6961',                 # Red
-                                'Fast': '#ffb347',                 # Orange
-                                'On Target': '#3498DB',            # Blue
-                                'RR Downtime (Stop)': '#808080',   # Dark Grey
-                                'Run Break (Excluded)': '#d3d3d3'  # Light Grey
-                            }
-
-
-                            for shot_type, color in color_map.items():
-                                df_subset = df_day_shots[df_day_shots['Shot Type'] == shot_type]
-                                if not df_subset.empty:
-                                    fig_ct.add_bar(
-                                        x=df_subset['SHOT TIME'], y=df_subset['Actual CT'],
-                                        name=shot_type, marker_color=color,
-                                        # --- v6.89: Add run_id to hover text (now 1-based) ---
-                                        customdata=df_subset['run_id'],
-                                        hovertemplate='<b>%{x|%H:%M:%S}</b><br>Run ID: %{customdata}<br>Shot Type: %{fullData.name}<br>Actual CT: %{y:.2f}s<extra></extra>'
-                                    )
+                            # --- v6.64: Use same processed df ---
+                            display_df_target = display_df
                             
-                            # --- v6.96: Add dynamic, per-run Mode CT bands ---
-                            for run_id, df_run in df_day_shots.groupby('run_id'):
-                                if not df_run.empty:
-                                    mode_ct_lower_for_run = df_run['Mode CT Lower'].iloc[0]
-                                    mode_ct_upper_for_run = df_run['Mode CT Upper'].iloc[0]
-                                    run_start_time = df_run['SHOT TIME'].min()
-                                    run_end_time = df_run['SHOT TIME'].max()
-                                    
-                                    fig_ct.add_hrect(
-                                        x0=run_start_time, x1=run_end_time,
-                                        y0=mode_ct_lower_for_run, y1=mode_ct_upper_for_run,
-                                        fillcolor="grey", opacity=0.20,
-                                        line_width=0,
-                                        name=f"Run {run_id} Mode Band" if len(df_day_shots['run_id'].unique()) > 1 else "Mode CT Band"
-                                    )
-                            
-                            # --- Hide duplicate legend entries for the bands ---
-                            legend_names_seen = set()
-                            for trace in fig_ct.data:
-                                if "Mode Band" in trace.name:
-                                    if trace.name in legend_names_seen:
-                                        trace.showlegend = False
-                                    else:
-                                        legend_names_seen.add(trace.name)
-                            # --- End v6.96 ---
-                            
-                            # --- v6.54: Use Reference CT for line ---
-                            # --- v7.20: BUG FIX (NameError) ---
-                            fig_ct.add_shape(
-                                type='line',
-                                x0=df_day_shots['SHOT TIME'].min(), x1=df_day_shots['SHOT TIME'].max(),
-                                y0=reference_ct_for_day, y1=reference_ct_for_day,
-                                line=dict(color='green', dash='dash'), name=f'{reference_ct_label} ({reference_ct_for_day:.2f}s)'
-                            )
-
-                            fig_ct.add_annotation(
-                                x=df_day_shots['SHOT TIME'].max(), y=reference_ct_for_day,
-                                text=f"{reference_ct_label}: {reference_ct_for_day:.2f}s", showarrow=True, arrowhead=1
-                            )
-                            # --- vs6.54 End ---
-                            
-                            # --- v6.91: Add vertical lines for new runs ---
-                            if 'run_id' in df_day_shots.columns:
-                                run_starts = df_day_shots.groupby('run_id')['SHOT TIME'].min().sort_values()
-                                for start_time in run_starts.iloc[1:]: # Skip the very first run
-                                    run_id_val = df_day_shots[df_day_shots['SHOT TIME'] == start_time]['run_id'].iloc[0]
-                                    # --- v6.94: Fix TypeError by separating vline and annotation ---
-                                    fig_ct.add_vline(
-                                        x=start_time, 
-                                        line_width=2, 
-                                        line_dash="dash", 
-                                        line_color="purple"
-                                    )
-                                    fig_ct.add_annotation(
-                                        x=start_time,
-                                        y=y_axis_max * 0.95, # Position annotation near the top
-                                        text=f"Run {run_id_val} Start",
-                                        showarrow=False,
-                                        yshift=10,
-                                        textangle=-90
-                                    )
-
-                            fig_ct.update_layout(
-                                title=chart_title, # --- v6.91: Use dynamic title ---
-                                xaxis_title='Time of Day',
-                                yaxis_title='Actual Cycle Time (sec)',
-                                hovermode="closest",
-                                # --- v7.30: Use y_axis_max slider ---
-                                yaxis_range=[0, y_axis_max], # Apply the zoom
-                            )
-                            st.plotly_chart(fig_ct, use_container_width=True)
-
-                            # --- v7.30: Handle "All Dates" in table title ---
-                            selected_date_str = "All Dates" if isinstance(selected_date, str) else selected_date.strftime('%Y-%m-%d')
-                            st.subheader(f"Data for all {len(df_day_shots)} shots ({selected_date_str})")
-                            
-                            # --- v7.35: Increased shot limit from 1000 to 10000 ---
-                            if len(df_day_shots) > 10000:
-                                st.info(f"Displaying first 10,000 shots of {len(df_day_shots)} total.")
-                                df_to_display = df_day_shots.head(10000)
+                            # --- v6.89: Reset index for Run ID table ---
+                            if data_frequency == 'by Run':
+                                report_table_target_df = display_df_target.reset_index().rename(columns={'run_id': 'Run ID'})
+                                report_table_target = pd.DataFrame(index=report_table_target_df.index)
+                                report_table_target['Run ID'] = report_table_target_df['Run ID']
                             else:
-                                df_to_display = df_day_shots
-                                
-                            # --- v7.11: Add new columns to table ---
+                                report_table_target = pd.DataFrame(index=display_df_target.index)
+                                report_table_target_df = display_df_target
+
+                            report_table_target['Target Output (parts)'] = report_table_target_df.apply(lambda r: f"{r['Target Output (parts)']:,.2f}", axis=1)
+                            report_table_target['Actual Output (parts)'] = report_table_target_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
+                            
+                            # --- v7.35: Added Actual % vs Target ---
+                            report_table_target['Actual % (vs Target)'] = report_table_target_df.apply(lambda r: r['Actual Output (parts)'] / r['Target Output (parts)'] if r['Target Output (parts)'] > 0 else 0, axis=1).apply(lambda x: "{:.1%}".format(x) if pd.notna(x) else "N/A")
+                            
+                            report_table_target['Net Gap to Target (parts)'] = report_table_target_df['Gap to Target (parts)'].apply(lambda x: "{:+,.2f}".format(x) if pd.notna(x) else "N/A")
+                            
+                            # --- v7.39: This column is now correct ---
+                            report_table_target['Capacity Loss (vs Target)'] = report_table_target_df['Capacity Loss (vs Target) (parts)'].apply(lambda x: "{:,.2f}".format(x) if pd.notna(x) else "N/A")
+                            
+                            
+                            # --- v7.37: Renamed columns and logic ---
+                            report_table_target['Allocated Loss (RR Downtime)'] = report_table_target_df.apply(
+                                lambda r: f"{r['Allocated Loss (RR Downtime)']:,.2f} ({r['loss_downtime_ratio']:.1%})", 
+                                axis=1
+                            )
+                            report_table_target['Allocated Loss (Slow Cycles)'] = report_table_target_df.apply(
+                                lambda r: f"{r['Allocated Loss (Slow Cycles)']:,.2f} ({r['loss_slow_ratio']:.1%})", 
+                                axis=1
+                            )
+                            # --- v7.37: Added Allocated Gain ---
+                            report_table_target['Allocated Gain (Fast Cycles)'] = report_table_target_df.apply(
+                                lambda r: f"{r['Allocated Gain (Fast Cycles)']:,.2f} ({r['gain_fast_ratio']:.1%})", 
+                                axis=1
+                            )
+
+                            # --- v7.37: Style the Target Report ---
+                            def style_target_report_table(col):
+                                col_name = col.name
+                                if col_name == 'Net Gap to Target (parts)':
+                                    return ['color: green' if v > 0 else 'color: red' for v in display_df_target['Gap to Target (parts)']]
+                                if col_name == 'Actual % (vs Target)':
+                                    return ['color: green' if v > 1 else 'color: red' for v in (display_df_target['Actual Output (parts)'] / display_df_target['Target Output (parts)']).fillna(0)]
+                                if col_name == 'Capacity Loss (vs Target)':
+                                    return ['color: red'] * len(col)
+                                if col_name == 'Allocated Loss (RR Downtime)':
+                                    return ['color: red'] * len(col)
+                                if col_name == 'Allocated Loss (Slow Cycles)':
+                                    return ['color: red'] * len(col)
+                                if col_name == 'Allocated Gain (Fast Cycles)':
+                                    return ['color: green'] * len(col)
+                                return [''] * len(col)
+                            
                             st.dataframe(
-                                df_to_display[[
-                                    'SHOT TIME', 'Actual CT', 'Approved CT',
-                                    'Working Cavities', 'run_id', 'mode_ct', 
-                                    'Shot Type', 'stop_flag',
-                                    'rr_time_diff', 'adj_ct_sec',
-                                    'reference_ct', 'Mode CT Lower', 'Mode CT Upper'
-                                ]].style.format({
-                                    'Actual CT': '{:.2f}',
-                                    'Approved CT': '{:.1f}',
-                                    'reference_ct': '{:.2f}', 
-                                    'Mode CT Lower': '{:.2f}',
-                                    'Mode CT Upper': '{:.2f}',
-                                    'mode_ct': '{:.2f}',
-                                    'rr_time_diff': '{:.1f}s',
-                                    'adj_ct_sec': '{:.1f}s',
-                                    # --- v7.30: Conditionally format time ---
-                                    'SHOT TIME': lambda t: t.strftime('%Y-%m-%d %H:%M:%S') if selected_date == "All Dates" else t.strftime('%H:%M:%S')
-                                }),
+                                report_table_target.style.apply(style_target_report_table, axis=0),
                                 use_container_width=True
                             )
+                        # --- End v6.64 ---
+
+
+                    # --- 4. SHOT-BY-SHOT ANALYSIS ---
+                    st.divider()
+                    st.header("Shot-by-Shot Analysis (All Shots)")
+                    
+                    # --- v6.64: Benchmark is always Optimal ---
+                    st.info(f"This chart shows all shots. 'Production' shots are color-coded based on the **Optimal Output (Approved CT)** benchmark. 'RR Downtime (Stop)' shots are grey.")
+
+                    if all_shots_df.empty:
+                        st.warning("No shots were found in the file to analyze.")
+                    else:
+                        # --- v7.30: Add "All Dates" option ---
+                        available_dates_list = sorted(all_shots_df['date'].unique(), reverse=True)
+                        available_dates = ["All Dates"] + available_dates_list
+                        
+                        if not available_dates_list:
+                            st.warning("No valid dates found in shot data.")
+                        else:
+                            selected_date = st.selectbox(
+                                "Select a Date to Analyze",
+                                options=available_dates,
+                                format_func=lambda d: "All Dates" if isinstance(d, str) else d.strftime('%Y-%m-%d') # Format for display
+                            )
+                            
+                            # --- v7.30: Filter to selected date or all dates ---
+                            if selected_date == "All Dates":
+                                df_day_shots = all_shots_df.copy()
+                                chart_title = "All Shots for Full Period"
+                            else:
+                                df_day_shots = all_shots_df[all_shots_df['date'] == selected_date]
+                                chart_title = f"All Shots for {selected_date}"
+                            
+                            st.subheader("Chart Controls")
+                            # --- v6.27: Filter out huge run breaks from the slider max calculation ---
+                            non_break_df = df_day_shots[df_day_shots['Shot Type'] != 'Run Break (Excluded)']
+                            max_ct_for_day = 100 # Default
+                            if not non_break_df.empty:
+                                max_ct_for_day = non_break_df['Actual CT'].max()
+
+                            slider_max = int(np.ceil(max_ct_for_day / 10.0)) * 10
+                            slider_max = max(slider_max, 50)
+                            slider_max = min(slider_max, 1000)
+
+                            # --- v7.30: Re-introduce slider with default 200 ---
+                            y_axis_max = st.slider(
+                                "Zoom Y-Axis (sec)",
+                                min_value=10,
+                                max_value=1000, # Max to see all outliers
+                                value=min(slider_max, 200), # Default to 200 (or less if max is lower)
+                                step=10,
+                                help="Adjust the max Y-axis to zoom in on the cluster. (Set to 1000 to see all outliers)."
+                            )
+                            # --- End v7.30 ---
+
+                            # --- v7.02: Check for all required columns ---
+                            required_shot_cols = ['reference_ct', 'Mode CT Lower', 'Mode CT Upper', 'run_id', 'mode_ct', 'rr_time_diff', 'adj_ct_sec']
+                            missing_shot_cols = [col for col in required_shot_cols if col not in df_day_shots.columns]
+                            
+                            if missing_shot_cols:
+                                st.error(f"Error: Shot data is missing required columns. {', '.join(missing_shot_cols)}")
+                            elif df_day_shots.empty:
+                                st.warning(f"No shots found for {selected_date}.")
+                            else:
+                                # --- v6.64: Use Reference CT (which is Approved CT) ---
+                                reference_ct_for_day = df_day_shots['reference_ct'].iloc[0] 
+                                reference_ct_label = "Approved CT"
+                                
+                                fig_ct = go.Figure()
+                                # --- v7.28: Set 'On Target' to Blue ---
+                                color_map = {
+                                    'Slow': '#ff6961',                 # Red
+                                    'Fast': '#ffb347',                 # Orange
+                                    'On Target': '#3498DB',            # Blue
+                                    'RR Downtime (Stop)': '#808080',   # Dark Grey
+                                    'Run Break (Excluded)': '#d3d3d3'  # Light Grey
+                                }
+
+
+                                for shot_type, color in color_map.items():
+                                    df_subset = df_day_shots[df_day_shots['Shot Type'] == shot_type]
+                                    if not df_subset.empty:
+                                        fig_ct.add_bar(
+                                            x=df_subset['SHOT TIME'], y=df_subset['Actual CT'],
+                                            name=shot_type, marker_color=color,
+                                            # --- v6.89: Add run_id to hover text (now 1-based) ---
+                                            customdata=df_subset['run_id'],
+                                            hovertemplate='<b>%{x|%H:%M:%S}</b><br>Run ID: %{customdata}<br>Shot Type: %{fullData.name}<br>Actual CT: %{y:.2f}s<extra></extra>'
+                                        )
+                                
+                                # --- v6.96: Add dynamic, per-run Mode CT bands ---
+                                for run_id, df_run in df_day_shots.groupby('run_id'):
+                                    if not df_run.empty:
+                                        mode_ct_lower_for_run = df_run['Mode CT Lower'].iloc[0]
+                                        mode_ct_upper_for_run = df_run['Mode CT Upper'].iloc[0]
+                                        run_start_time = df_run['SHOT TIME'].min()
+                                        run_end_time = df_run['SHOT TIME'].max()
+                                        
+                                        fig_ct.add_hrect(
+                                            x0=run_start_time, x1=run_end_time,
+                                            y0=mode_ct_lower_for_run, y1=mode_ct_upper_for_run,
+                                            fillcolor="grey", opacity=0.20,
+                                            line_width=0,
+                                            name=f"Run {run_id} Mode Band" if len(df_day_shots['run_id'].unique()) > 1 else "Mode CT Band"
+                                        )
+                                
+                                # --- Hide duplicate legend entries for the bands ---
+                                legend_names_seen = set()
+                                for trace in fig_ct.data:
+                                    if "Mode Band" in trace.name:
+                                        if trace.name in legend_names_seen:
+                                            trace.showlegend = False
+                                        else:
+                                            legend_names_seen.add(trace.name)
+                                # --- End v6.96 ---
+                                
+                                # --- v6.54: Use Reference CT for line ---
+                                # --- v7.20: BUG FIX (NameError) ---
+                                fig_ct.add_shape(
+                                    type='line',
+                                    x0=df_day_shots['SHOT TIME'].min(), x1=df_day_shots['SHOT TIME'].max(),
+                                    y0=reference_ct_for_day, y1=reference_ct_for_day,
+                                    line=dict(color='green', dash='dash'), name=f'{reference_ct_label} ({reference_ct_for_day:.2f}s)'
+                                )
+
+                                fig_ct.add_annotation(
+                                    x=df_day_shots['SHOT TIME'].max(), y=reference_ct_for_day,
+                                    text=f"{reference_ct_label}: {reference_ct_for_day:.2f}s", showarrow=True, arrowhead=1
+                                )
+                                # --- vs6.54 End ---
+                                
+                                # --- v6.91: Add vertical lines for new runs ---
+                                if 'run_id' in df_day_shots.columns:
+                                    run_starts = df_day_shots.groupby('run_id')['SHOT TIME'].min().sort_values()
+                                    for start_time in run_starts.iloc[1:]: # Skip the very first run
+                                        run_id_val = df_day_shots[df_day_shots['SHOT TIME'] == start_time]['run_id'].iloc[0]
+                                        # --- v6.94: Fix TypeError by separating vline and annotation ---
+                                        fig_ct.add_vline(
+                                            x=start_time, 
+                                            line_width=2, 
+                                            line_dash="dash", 
+                                            line_color="purple"
+                                        )
+                                        fig_ct.add_annotation(
+                                            x=start_time,
+                                            y=y_axis_max * 0.95, # Position annotation near the top
+                                            text=f"Run {run_id_val} Start",
+                                            showarrow=False,
+                                            yshift=10,
+                                            textangle=-90
+                                        )
+
+                                fig_ct.update_layout(
+                                    title=chart_title, # --- v6.91: Use dynamic title ---
+                                    xaxis_title='Time of Day',
+                                    yaxis_title='Actual Cycle Time (sec)',
+                                    hovermode="closest",
+                                    # --- v7.30: Use y_axis_max slider ---
+                                    yaxis_range=[0, y_axis_max], # Apply the zoom
+                                )
+                                st.plotly_chart(fig_ct, use_container_width=True)
+
+                                # --- v7.30: Handle "All Dates" in table title ---
+                                selected_date_str = "All Dates" if isinstance(selected_date, str) else selected_date.strftime('%Y-%m-%d')
+                                st.subheader(f"Data for all {len(df_day_shots)} shots ({selected_date_str})")
+                                
+                                # --- v7.35: Increased shot limit from 1000 to 10000 ---
+                                if len(df_day_shots) > 10000:
+                                    st.info(f"Displaying first 10,000 shots of {len(df_day_shots)} total.")
+                                    df_to_display = df_day_shots.head(10000)
+                                else:
+                                    df_to_display = df_day_shots
+                                    
+                                # --- v7.11: Add new columns to table ---
+                                # --- v7.40: Fixed IndentationError here ---
+                                st.dataframe(
+                                    df_to_display[[
+                                        'SHOT TIME', 'Actual CT', 'Approved CT',
+                                        'Working Cavities', 'run_id', 'mode_ct', 
+                                        'Shot Type', 'stop_flag',
+                                        'rr_time_diff', 'adj_ct_sec',
+                                        'reference_ct', 'Mode CT Lower', 'Mode CT Upper'
+                                    ]].style.format({
+                                        'Actual CT': '{:.2f}',
+                                        'Approved CT': '{:.1f}',
+                                        'reference_ct': '{:.2f}', 
+                                        'Mode CT Lower': '{:.2f}',
+                                        'Mode CT Upper': '{:.2f}',
+                                        'mode_ct': '{:.2f}',
+                                        'rr_time_diff': '{:.1f}s',
+                                        'adj_ct_sec': '{:.1f}s',
+                                        'SHOT TIME': lambda t: t.strftime('%Y-%m-%d %H:%M:%S') if selected_date == "All Dates" else t.strftime('%H:%M:%S')
+                                    }),
+                                    use_container_width=True
+                                )
+
+                # --- v7.40: NEW DEMAND FORECAST TAB ---
+                with tab2:
+                    # --- v7.42: Call new render function ---
+                    render_demand_planning_tab(daily_summary_df, all_shots_df, run_summary_df_for_total)
+
 
 else:
     st.info("👈 Please upload a data file to begin.")
