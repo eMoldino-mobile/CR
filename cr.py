@@ -1567,28 +1567,28 @@ if uploaded_file is not None:
                         else:
                                 df_to_display = df_day_shots
                                 
-                            # --- v7.11: Add new columns to table ---
-                            st.dataframe(
-                                df_to_display[[
-                                    'SHOT TIME', 'Actual CT', 'Approved CT',
-                                    'Working Cavities', 'run_id', 'mode_ct', 
-                                    'Shot Type', 'stop_flag',
-                                    'rr_time_diff', 'adj_ct_sec',
-                                    'reference_ct', 'Mode CT Lower', 'Mode CT Upper'
-                                ]].style.format({
-                                    'Actual CT': '{:.2f}',
-                                    'Approved CT': '{:.1f}',
-                                    'reference_ct': '{:.2f}', 
-                                    'Mode CT Lower': '{:.2f}',
-                                    'Mode CT Upper': '{:.2f}',
-                                    'mode_ct': '{:.2f}',
-                                    'rr_time_diff': '{:.1f}s',
-                                    'adj_ct_sec': '{:.1f}s',
-                                    # --- v7.30: Conditionally format time ---
-                                    'SHOT TIME': lambda t: t.strftime('%Y-%m-%d %H:%M:%S') if selected_date == "All Dates" else t.strftime('%H:%M:%S')
-                                }),
-                                use_container_width=True
-                            )
+                        # --- v7.11: Add new columns to table ---
+                        st.dataframe(
+                            df_to_display[[
+                                'SHOT TIME', 'Actual CT', 'Approved CT',
+                                'Working Cavities', 'run_id', 'mode_ct', 
+                                'Shot Type', 'stop_flag',
+                                'rr_time_diff', 'adj_ct_sec',
+                                'reference_ct', 'Mode CT Lower', 'Mode CT Upper'
+                            ]].style.format({
+                                'Actual CT': '{:.2f}',
+                                'Approved CT': '{:.1f}',
+                                'reference_ct': '{:.2f}', 
+                                'Mode CT Lower': '{:.2f}',
+                                'Mode CT Upper': '{:.2f}',
+                                'mode_ct': '{:.2f}',
+                                'rr_time_diff': '{:.1f}s',
+                                'adj_ct_sec': '{:.1f}s',
+                                # --- v7.30: Conditionally format time ---
+                                'SHOT TIME': lambda t: t.strftime('%Y-%m-%d %H:%M:%S') if selected_date == "All Dates" else t.strftime('%H:%M:%S')
+                            }),
+                            use_container_width=True
+                        )
 
                 # --- v7.40: NEW DEMAND FORECAST TAB ---
                 with tab2:
