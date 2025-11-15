@@ -8,8 +8,8 @@ import io # v7.40: Import io for text parsing
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.40: Added Demand Forecast Tab (and fixed IndentationError)
-__version__ = "v7.40 (Added Demand Forecast Tab)"
+# v7.41: Fixed date_input crash for small datasets
+__version__ = "v7.41 (Fixed Demand Tab date_input crash)"
 # ==================================================================
 
 # ==================================================================
@@ -1628,9 +1628,13 @@ if uploaded_file is not None:
                     
                     c1, c2 = st.columns(2)
                     with c1:
+                        # --- v7.41: FIX for date_input crash ---
+                        # Ensure default value is never less than min_value
+                        default_start_date = max(min_data_date, max_data_date - timedelta(days=6))
+                        
                         analysis_start = st.date_input(
                             "Analysis Start Date", 
-                            value=max_data_date - timedelta(days=6), # Default to last 7 days
+                            value=default_start_date, # Use safe default
                             min_value=min_data_date, 
                             max_value=max_data_date,
                             key="forecast_start"
