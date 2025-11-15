@@ -7,8 +7,8 @@ from datetime import datetime # v7.21: Import datetime for formatting
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.36: Implemented "reasonable" allocation for Target Report
-__version__ = "7.36 (Reasonable Gap Allocation)"
+# v7.37: Allocation logic now correctly includes gains
+__version__ = "7.37 (Allocation includes Gains)"
 # ==================================================================
 
 # ==================================================================
@@ -543,7 +543,7 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
 @st.cache_data
 # --- v6.64: Renamed target_perc to target_perc_slider ---
 # --- v6.61: Removed approved_tol ---
-def run_capacity_calculation(raw_data_df, toggle, cavities, target_perc_slider, mode_tol, rr_gap, run_interval, _cache_version=None):
+def run_capacity_calculation(raw_data_df, toggle, cavities, target_output_perc_slider, mode_tol, rr_gap, run_interval, _cache_version=None):
     """Cached wrapper for the main calculation function."""
     return calculate_capacity_risk(
         raw_data_df,
@@ -1106,24 +1106,31 @@ if uploaded_file is not None:
                     display_df['Capacity Loss (vs Target) (parts %)'] = np.where( display_df['Target Output (parts)'] > 0, display_df['Capacity Loss (vs Target) (parts)'] / display_df['Target Output (parts)'], 0)
                     display_df['Total Capacity Loss (cycle time) (parts)'] = display_df['Capacity Loss (slow cycle time) (parts)'] - display_df['Capacity Gain (fast cycle time) (parts)']
                     
-                    # --- v7.36: NEW "Reasonable" Allocation Logic ---
-                    # 1. Find the *causes* of loss (only positive losses, from Optimal report)
-                    positive_downtime_loss = np.maximum(0, display_df['Capacity Loss (downtime) (parts)'])
-                    positive_slow_loss = np.maximum(0, display_df['Capacity Loss (slow cycle time) (parts)'])
-                    total_positive_loss = positive_downtime_loss + positive_slow_loss
+                    # --- v7.37: NEW Allocation Logic including Gains ---
+                    # 1. Find the *net impact* of each category (from Optimal report)
+                    net_downtime_loss = display_df['Capacity Loss (downtime) (parts)']
+                    net_slow_loss = display_df['Capacity Loss (slow cycle time) (parts)']
+                    net_fast_gain = display_df['Capacity Gain (fast cycle time) (parts)'] # This is a positive number
                     
-                    # 2. Find the *ratio* of those positive losses
-                    ratio_downtime = np.where(total_positive_loss > 0, positive_downtime_loss / total_positive_loss, 0)
-                    ratio_slow = np.where(total_positive_loss > 0, positive_slow_loss / total_positive_loss, 0)
+                    # 2. Calculate the *Total Net Loss (vs Optimal)*
+                    #    This is the denominator for our ratio.
+                    total_net_loss_vs_optimal = net_downtime_loss + net_slow_loss - net_fast_gain
+                    
+                    # 3. Find the *ratio* of each category's impact
+                    #    (Handle division by zero if total_net_loss_vs_optimal is 0)
+                    ratio_downtime = np.where(total_net_loss_vs_optimal != 0, net_downtime_loss / total_net_loss_vs_optimal, 0)
+                    ratio_slow = np.where(total_net_loss_vs_optimal != 0, net_slow_loss / total_net_loss_vs_optimal, 0)
+                    ratio_fast = np.where(total_net_loss_vs_optimal != 0, -net_fast_gain / total_net_loss_vs_optimal, 0) # Note the negative sign
 
-                    # 3. Find the *actual amount* we missed the target by (as a positive number)
+                    # 4. Find the *actual amount* we missed the target by (as a positive number)
                     #    This is 'Capacity Loss (vs Target) (parts)', which is already max(0, Target - Actual)
                     gap_as_loss = display_df['Capacity Loss (vs Target) (parts)']
                     
-                    # 4. Allocate the *missed amount* based on the *cause ratios*
+                    # 5. Allocate the *missed amount* based on the *impact ratios*
                     display_df['Allocated Loss (RR Downtime)'] = gap_as_loss * ratio_downtime
                     display_df['Allocated Loss (Slow Cycles)'] = gap_as_loss * ratio_slow
-                    # --- End v7.36 Logic ---
+                    display_df['Allocated Gain (Fast Cycles)'] = gap_as_loss * ratio_fast # This will be negative (a gain)
+                    # --- End v7.37 Logic ---
                     
                     display_df['Filtered Run Time (d/h/m)'] = display_df['Filtered Run Time (sec)'].apply(format_seconds_to_dhm)
                     display_df['Actual Cycle Time Total (d/h/m)'] = display_df['Actual Cycle Time Total (sec)'].apply(format_seconds_to_dhm)
@@ -1315,8 +1322,8 @@ if uploaded_file is not None:
                     if benchmark_view == "Target Output": 
                         # --- TABLE 2: vs Target (Expanded) ---
                         st.header(f"Target Report ({target_output_perc:.0f}%) ({data_frequency})")
-                        # --- v7.36: Updated info text ---
-                        st.info("This table allocates your `Capacity Loss (vs Target)` based on the ratio of your *true* losses (Downtime vs. Slow Cycles).")
+                        # --- v7.37: Updated info text ---
+                        st.info("This table allocates your `Capacity Loss (vs Target)` based on the proportional impact of all your *true* losses and gains (Downtime, Slow Cycles, and Fast Cycles).")
                         
                         # --- v6.64: Use same processed df ---
                         display_df_target = display_df
@@ -1342,15 +1349,15 @@ if uploaded_file is not None:
                         # --- v7.36: Renamed and simplified Gap columns ---
                         report_table_target['Capacity Loss (vs Target)'] = report_table_target_df['Capacity Loss (vs Target) (parts)'].apply(lambda x: "{:,.2f}".format(x) if pd.notna(x) else "N/A")
                         
-                        # --- v7.36: Add the NEW allocated columns ---
+                        # --- v7.37: Add the NEW allocated columns ---
                         report_table_target['Allocated Loss (RR Downtime)'] = report_table_target_df['Allocated Loss (RR Downtime)'].apply(lambda x: "{:,.2f}".format(x) if pd.notna(x) else "N/A")
                         report_table_target['Allocated Loss (Slow Cycles)'] = report_table_target_df['Allocated Loss (Slow Cycles)'].apply(lambda x: "{:,.2f}".format(x) if pd.notna(x) else "N/A")
                         
-                        # --- v7.36: Add Fast Gain back as a reference column ---
-                        report_table_target['Gain (Fast Cycles) (vs Optimal)'] = report_table_target_df.apply(lambda r: f"{r['Capacity Gain (fast cycle time) (parts)']:,.2f}", axis=1)
+                        # --- v7.37: 'Allocated Gain' is now also an allocated column, formatted as a gain ---
+                        report_table_target['Allocated Gain (Fast Cycles)'] = report_table_target_df['Allocated Gain (Fast Cycles)'].apply(lambda x: "{:,.2f}".format(x) if pd.notna(x) else "N/A")
                         
                         
-                        # --- v7.36: Update styling function ---
+                        # --- v7.37: Update styling function ---
                         def style_target_table(col):
                             # Style based on the raw numeric value from the underlying dataframe
                             col_name = col.name
@@ -1362,14 +1369,15 @@ if uploaded_file is not None:
                             if col_name == 'Net Gap to Target (parts)':
                                 return ['color: green' if v >= 0 else 'color: red' for v in raw_gap_values]
                             
-                            # --- v7.36: Style the new loss/gain columns ---
+                            # --- v7.37: Style the new loss/gain columns ---
                             if col_name == 'Capacity Loss (vs Target)':
                                 return ['color: red' if v > 0 else 'color: black' for v in display_df_target['Capacity Loss (vs Target) (parts)']]
                             if col_name == 'Allocated Loss (RR Downtime)':
                                 return ['color: red'] * len(col)
                             if col_name == 'Allocated Loss (Slow Cycles)':
                                 return ['color: red'] * len(col)
-                            if col_name == 'Gain (Fast Cycles) (vs Optimal)':
+                            # --- v7.37: Style 'Allocated Gain' as green ---
+                            if col_name == 'Allocated Gain (Fast Cycles)':
                                 return ['color: green'] * len(col)
                                 
                             return [''] * len(col)
