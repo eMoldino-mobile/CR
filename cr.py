@@ -7,8 +7,8 @@ from datetime import datetime # v7.21: Import datetime for formatting
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.38: Renamed cached function to bust cache and fix NameError
-__version__ = "7.38 (Cache bust fix)"
+# v7.39: Fixed aggregation bug for 'Capacity Loss (vs Target)'
+__version__ = "7.39 (Fix Target Loss Aggregation)"
 # ==================================================================
 
 # ==================================================================
@@ -1086,6 +1086,11 @@ if uploaded_file is not None:
                 if display_df.empty:
                     st.warning(f"No data to display for the '{data_frequency}' frequency.")
                 else:
+                    # --- v7.39: FIX ---
+                    # Re-calculate 'Capacity Loss (vs Target)' AFTER aggregation
+                    # This fixes the discrepancy bug.
+                    display_df['Capacity Loss (vs Target) (parts)'] = np.maximum(0, -display_df['Gap to Target (parts)'])
+                    
                     # --- Calculate Percentage Columns AFTER aggregation ---
                     perc_base_parts = display_df['Optimal Output (parts)']
                     chart_title = f"{chart_title_prefix} Capacity Report (vs Optimal)"
