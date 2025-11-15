@@ -11,10 +11,14 @@ from dateutil.relativedelta import relativedelta # v7.42: Import for monthly for
 # ==================================================================
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 # v7.42: Added 12-Month Strategic Forecast Model
 __version__ = "v7.42 (12-Month Strategic Forecast)"
 =======
 # v7.40: Added Demand Forecast Tab (and fixed IndentationError)
+=======
+# v7.40: Added Demand Forecast Tab
+>>>>>>> parent of 9ef28da (Update cr.py)
 =======
 # v7.40: Added Demand Forecast Tab
 >>>>>>> parent of 9ef28da (Update cr.py)
@@ -1060,6 +1064,7 @@ if uploaded_file is not None:
                     total_net_cycle_loss_parts = total_slow_loss_parts - total_fast_gain_parts
                     
 <<<<<<< HEAD
+<<<<<<< HEAD
                     # 1. Get the 'by Run' summary dataframe
                     # run_summary_df_for_total = run_summary_df.copy() # (Moved up)
                     
@@ -1085,6 +1090,16 @@ if uploaded_file is not None:
                     total_net_cycle_loss_sec = total_slow_loss_sec - total_fast_gain_sec
 >>>>>>> parent of 9ef28da (Update cr.py)
                     
+=======
+                    total_optimal_100 = run_summary_df_for_total['Optimal Output (parts)'].sum()
+                    total_target = run_summary_df_for_total['Target Output (parts)'].sum()
+                    
+                    total_downtime_loss_sec = run_summary_df_for_total['Capacity Loss (downtime) (sec)'].sum()
+                    total_slow_loss_sec = run_summary_df_for_total['Capacity Loss (slow cycle time) (sec)'].sum()
+                    total_fast_gain_sec = run_summary_df_for_total['Capacity Gain (fast cycle time) (sec)'].sum()
+                    total_net_cycle_loss_sec = total_slow_loss_sec - total_fast_gain_sec
+                    
+>>>>>>> parent of 9ef28da (Update cr.py)
                     # These are the key metrics that are now correct:
                     run_time_sec_total = run_summary_df_for_total['Filtered Run Time (sec)'].sum()
                     run_time_dhm_total = format_seconds_to_dhm(run_time_sec_total)
