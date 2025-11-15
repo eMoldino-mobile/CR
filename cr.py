@@ -7,8 +7,8 @@ from datetime import datetime # v7.21: Import datetime for formatting
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.37: Allocation logic now correctly includes gains
-__version__ = "7.37 (Allocation includes Gains)"
+# v7.38: Renamed cached function to bust cache and fix NameError
+__version__ = "7.38 (Cache bust fix)"
 # ==================================================================
 
 # ==================================================================
@@ -541,9 +541,8 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
 # ==================================================================
 
 @st.cache_data
-# --- v6.64: Renamed target_perc to target_perc_slider ---
-# --- v6.61: Removed approved_tol ---
-def run_capacity_calculation(raw_data_df, toggle, cavities, target_output_perc_slider, mode_tol, rr_gap, run_interval, _cache_version=None):
+# --- v7.38: Renamed function to bust cache ---
+def run_capacity_calculation_cached(raw_data_df, toggle, cavities, target_perc_slider, mode_tol, rr_gap, run_interval, _cache_version=None):
     """Cached wrapper for the main calculation function."""
     return calculate_capacity_risk(
         raw_data_df,
@@ -663,8 +662,9 @@ if uploaded_file is not None:
             # --- v6.64: Single Calculation Logic ---
             
             # 1. Always calculate vs. Optimal (100%)
-            cache_key = f"{__version__}_{uploaded_file.name}_{target_output_perc}_{mode_ct_tolerance}_{rr_downtime_gap}_{run_interval_hours}"
-            results_df, all_shots_df = run_capacity_calculation(
+            cache_key = f"{__version__}_{uploaded_file.name}_{target_output_perc}_{mode_ct_tolerance}_{rr_downtime_gap}_{run_interval_hours}" # line 665
+            # --- v7.38: Call the new renamed function ---
+            results_df, all_shots_df = run_capacity_calculation_cached(
                 df_raw,
                 toggle_filter,
                 default_cavities,
