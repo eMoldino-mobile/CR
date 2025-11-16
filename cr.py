@@ -743,7 +743,9 @@ def render_demand_planning_tab(daily_summary_df, all_shots_df, all_time_summary_
     with st.expander("Expand for short-term daily planning"):
         # --- Use the already-calculated dataframes from tab 1 ---
         if 'daily_summary_df' not in locals():
-            daily_summary_df = results_df.copy()
+            # This is a fallback in case the function is called in a weird context
+            st.error("Daily summary data not found. Please reload the app.")
+            st.stop()
         if 'all_shots_df' not in locals():
             st.error("Shot data not loaded. Please ensure main report runs.")
             st.stop()
@@ -908,6 +910,94 @@ def render_demand_planning_tab(daily_summary_df, all_shots_df, all_time_summary_
 # ==================================================================
 #                       MAIN APP LOGIC (v7.42)
 # ==================================================================
+
+# --- Page Config ---
+st.set_page_config(
+    page_title=f"Capacity Risk Calculator (v{__version__})",
+    layout="wide"
+)
+
+st.title("Capacity Risk Report")
+st.markdown(f"**App Version:** `{__version__}` (RR-Downtime + CR-Inefficiency)")
+
+# --- Sidebar for Inputs ---
+st.sidebar.header("Configuration")
+
+uploaded_file = st.sidebar.file_uploader("Upload Raw Data File (CSV or Excel)", type=["csv", "xlsx", "xls"])
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("Run Rate Logic (for Downtime)")
+st.sidebar.info("These settings define 'Downtime'.")
+
+# --- v6.57: Restored Mode CT Tolerance slider ---
+mode_ct_tolerance = st.sidebar.slider(
+    "Mode CT Tolerance (%)", 0.01, 0.50, 0.25, 0.01,  
+    help="Tolerance band (±) around the **Actual Mode CT**. Shots outside this band are flagged as 'Abnormal Cycle' (Downtime)."
+)
+
+# --- v6.61: Removed Approved CT Tolerance slider ---
+
+rr_downtime_gap = st.sidebar.slider(
+    "RR Downtime Gap (sec)", 0.0, 10.0, 2.0, 0.5, 
+    help="Minimum idle time between shots to be considered a stop."
+)
+
+# --- v6.27: Add Run Interval Threshold ---
+run_interval_hours = st.sidebar.slider(
+    "Run Interval Threshold (hours)", 1.0, 24.0, 8.0, 0.5,
+    help="Gaps between shots *longer* than this will be excluded from all calculations (e.g., weekends)."
+)
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("CR Logic (for Inefficiency)")
+st.sidebar.info("These settings define 'Inefficiency' during Uptime.")
+
+data_frequency = st.sidebar.radio(
+    "Select Graph Frequency",
+    ['Daily', 'Weekly', 'Monthly', 'by Run'], # <-- v6.89: Added 'by Run'
+    index=0,
+    horizontal=True
+)
+
+toggle_filter = st.sidebar.toggle(
+    "Remove Maintenance/Warehouse Shots",
+    value=False, # Default OFF
+    help="If ON, all calculations will exclude shots where 'Plant Area' is 'Maintenance' or 'Warehouse'."
+)
+
+default_cavities = st.sidebar.number_input(
+    "Default Working Cavities",
+    min_value=1,
+    value=2,
+    help="This value will be used if the 'Working Cavities' column is not found in the file."
+)
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("Target & View")
+
+benchmark_view = st.sidebar.radio(
+    "Select Report Benchmark",
+    ['Optimal Output', 'Target Output'],
+    index=0, # Default to Optimal
+    horizontal=False,
+    help="Select the benchmark to compare against (e.g., 'Total Capacity Loss' vs 'Optimal' or 'Target')."
+)
+
+if benchmark_view == "Target Output":
+    target_output_perc = st.sidebar.slider(
+        "Target Output % (of Optimal)",
+        min_value=0.0, max_value=100.0,
+        value=90.0, # Default 90%
+        step=1.0,
+        format="%.0f%%",
+        help="Sets the 'Target Output (parts)' goal as a percentage of 'Optimal Output (parts)'."
+    )
+else:
+    # --- v6.64: Set to 100.0 for the function ---
+    target_output_perc = 100.0 
+    
+st.sidebar.caption(f"App Version: **{__version__}**")
+
 
 # --- Main Page Display ---
 if uploaded_file is not None:
@@ -1737,7 +1827,7 @@ if uploaded_file is not None:
                             missing_shot_cols = [col for col in required_shot_cols if col not in df_day_shots.columns]
                             
                             if missing_shot_cols:
-                                st.error(f"Error: Shot data is missing required columns. {', '.join(missing_shot_cols)}")
+                                st.error(f"Error: Missing required columns. {', '.join(missing_shot_cols)}")
                             elif df_day_shots.empty:
                                 st.warning(f"No shots found for {selected_date}.")
                             else:
