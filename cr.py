@@ -10,8 +10,8 @@ from dateutil.relativedelta import relativedelta # v7.42: Import for monthly for
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.45: New 3-Tab structure (Report, Auto-Risk, Demand Planning)
-__version__ = "v7.45 (New 3-Tab Layout)"
+# v7.46: Fixed floating point bug causing 'ghost' slow cycle loss
+__version__ = "v7.46 (Floating Point Fix)"
 # ==================================================================
 
 # ==================================================================
@@ -259,39 +259,53 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     df_downtime   = df_rr[df_rr['stop_flag'] == 1].copy()
 
     # 11. Calculate per-shot losses/gains
+    
+    # --- v7.46: FIX for floating point bug ---
+    # Use np.isclose to ensure logic is 100% consistent
+    # A shot is "Slow" only if it's measurably greater than the reference
+    is_slow = (df_production['Actual CT'] > df_production['reference_ct']) & \
+              ~np.isclose(df_production['Actual CT'], df_production['reference_ct'])
+    
+    # A shot is "Fast" only if it's measurably less than the reference
+    is_fast = (df_production['Actual CT'] < df_production['reference_ct']) & \
+              ~np.isclose(df_production['Actual CT'], df_production['reference_ct'])
+    
+    # A shot is "On Target" only if it's "close enough"
+    is_on_target = np.isclose(df_production['Actual CT'], df_production['reference_ct'])
+    
     df_production['parts_gain'] = np.where(
-        df_production['Actual CT'] < df_production['reference_ct'],
+        is_fast,
         ((df_production['reference_ct'] - df_production['Actual CT']) / df_production['reference_ct']) * df_production['Working Cavities'],
         0
     )
     df_production['parts_loss'] = np.where(
-        df_production['Actual CT'] > df_production['reference_ct'],
+        is_slow,
         ((df_production['Actual CT'] - df_production['reference_ct']) / df_production['reference_ct']) * df_production['Working Cavities'],
         0
     )
     df_production['time_gain_sec'] = np.where(
-        df_production['Actual CT'] < df_production['reference_ct'],
+        is_fast,
         (df_production['reference_ct'] - df_production['Actual CT']),
         0
     )
     df_production['time_loss_sec'] = np.where(
-        df_production['Actual CT'] > df_production['reference_ct'],
+        is_slow,
         (df_production['Actual CT'] - df_production['reference_ct']),
         0
     )
+    # --- End v7.46 Fix ---
     
     # Update df_rr with the values from df_production
     df_rr.update(df_production[['parts_gain', 'parts_loss', 'time_gain_sec', 'time_loss_sec']])
 
     # 12. Add Shot Type and date
     
-    # --- v7.27: Reverted Shot Type logic to fix bug ---
+    # --- v7.46: Use the same robust logic for Shot Type ---
     conditions = [
-        (df_production['Actual CT'] > df_production['reference_ct']),
-        (df_production['Actual CT'] < df_production['reference_ct']),
-        (df_production['Actual CT'] == df_production['reference_ct'])
+        is_slow,
+        is_fast,
+        is_on_target
     ]
-    # --- v7.28: Set 'On Target' to Blue ---
     choices = ['Slow', 'Fast', 'On Target']
     df_production['Shot Type'] = np.select(conditions, choices, default='N/A')
     
@@ -299,7 +313,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     df_rr['Shot Type'] = df_production['Shot Type'] 
     df_rr.loc[is_run_break, 'Shot Type'] = 'Run Break (Excluded)'
     df_rr['Shot Type'].fillna('RR Downtime (Stop)', inplace=True) 
-    # --- End v7.27 Revert ---
+    # --- End v7.46 Fix ---
     
     df_rr['date'] = df_rr['SHOT TIME'].dt.date
     df_production['date'] = df_production['SHOT TIME'].dt.date # df_production is still used for daily calcs
@@ -1296,7 +1310,7 @@ if uploaded_file is not None:
                     run_modes = df_for_mode.groupby('run_id')['Actual CT'].apply(lambda x: x.mode().iloc[0] if not x.mode().empty else 0)
                     all_shots_df['mode_ct'] = all_shots_df['run_id'].map(run_modes)
                     all_shots_df['mode_lower_limit'] = all_shots_df['mode_ct'] * (1 - mode_ct_tolerance)
-                    all_shots_df['mode_upper_limit'] = all_shots_df['mode_ct'] * (1 + mode_Dct_tolerance)
+                    all_shots_df['mode_upper_limit'] = all_shots_df['mode_ct'] * (1 + mode_ct_tolerance) # <-- Bug was here, 'mode_Dct_tolerance'
                     all_shots_df['Mode CT Lower'] = all_shots_df['mode_lower_limit']
                     all_shots_df['Mode CT Upper'] = all_shots_df['mode_upper_limit']
                     
@@ -1763,7 +1777,7 @@ if uploaded_file is not None:
                         report_table_optimal['Loss (RR Downtime)'] = report_table_optimal_df.apply(lambda r: f"{r['Capacity Loss (downtime) (parts)']:,.2f} ({r['Capacity Loss (downtime) (parts %)']:.1%})", axis=1)
                         report_table_optimal['Loss (Slow Cycles)'] = report_table_optimal_df.apply(lambda r: f"{r['Capacity Loss (slow cycle time) (parts)']:,.2f} ({r['Capacity Loss (slow cycle time) (parts %)']:.1%})", axis=1)
                         report_table_optimal['Gain (Fast Cycles)'] = report_table_optimal_df.apply(lambda r: f"{r['Capacity Gain (fast cycle time) (parts)']:,.2f} ({r['Capacity Gain (fast cycle time) (parts %)']:.1%})", axis=1)
-                        report_table_optimal['Total Net Loss'] = report_table_optimal_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
+                            report_table_optimal['Total Net Loss'] = report_table_optimal_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
                         
                         def style_loss_gain_table(col):
                             col_name = col.name
@@ -1771,6 +1785,7 @@ if uploaded_file is not None:
                             if col_name == 'Loss (Slow Cycles)': return ['color: red'] * len(col)
                             if col_name == 'Gain (Fast Cycles)': return ['color: green'] * len(col)
                             if col_name == 'Total Net Loss':
+                                # Style based on the raw numeric value from the underlying dataframe
                                 return ['color: green' if v < 0 else 'color: red' for v in display_df_optimal['Total Capacity Loss (parts)']]
                             return [''] * len(col)
 
@@ -1797,10 +1812,10 @@ if uploaded_file is not None:
                             report_table_target['Actual Output (parts)'] = report_table_target_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
                             report_table_target['Actual % (vs Target)'] = report_table_target_df.apply(lambda r: r['Actual Output (parts)'] / r['Target Output (parts)'] if r['Target Output (parts)'] > 0 else 0, axis=1).apply(lambda x: "{:.1%}".format(x) if pd.notna(x) else "N/A")
                             report_table_target['Net Gap to Target (parts)'] = report_table_target_df['Gap to Target (parts)'].apply(lambda x: "{:+,.2f}".format(x) if pd.notna(x) else "N/A")
-                            report_table_target['Capacity Loss (vs Target)'] = report_table_target_df['Capacity Loss (vs Target) (parts)'].apply(lambda x: "{:,.2f}".format(x) if pd.notna(x) else "N/A")
-                            report_table_target['Allocated Loss (RR Downtime)'] = report_table_target_df.apply(lambda r: f"{r['Allocated Loss (RR Downtime)']:,.2f} ({r['loss_downtime_ratio']:.1%})", axis=1)
-                            report_table_target['Allocated Loss (Slow Cycles)'] = report_table_target_df.apply(lambda r: f"{r['Allocated Loss (Slow Cycles)']:,.2f} ({r['loss_slow_ratio']:.1%})", axis=1)
-                            report_table_target['Allocated Gain (Fast Cycles)'] = report_table_target_df.apply(lambda r: f"{r['Allocated Gain (Fast Cycles)']:,.2f} ({r['gain_fast_ratio']:.1%})", axis=1)
+                            report_table_target['Allocated Gain (Fast Cycles)'] = report_table_target_df.apply(
+                                lambda r: f"{r['Allocated Gain (Fast Cycles)']:,.2f} ({r['gain_fast_ratio']:.1%})", 
+                                axis=1
+                            )
 
                             def style_target_report_table(col):
                                 col_name = col.name
