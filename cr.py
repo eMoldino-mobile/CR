@@ -1777,7 +1777,7 @@ if uploaded_file is not None:
                         report_table_optimal['Loss (RR Downtime)'] = report_table_optimal_df.apply(lambda r: f"{r['Capacity Loss (downtime) (parts)']:,.2f} ({r['Capacity Loss (downtime) (parts %)']:.1%})", axis=1)
                         report_table_optimal['Loss (Slow Cycles)'] = report_table_optimal_df.apply(lambda r: f"{r['Capacity Loss (slow cycle time) (parts)']:,.2f} ({r['Capacity Loss (slow cycle time) (parts %)']:.1%})", axis=1)
                         report_table_optimal['Gain (Fast Cycles)'] = report_table_optimal_df.apply(lambda r: f"{r['Capacity Gain (fast cycle time) (parts)']:,.2f} ({r['Capacity Gain (fast cycle time) (parts %)']:.1%})", axis=1)
-                            report_table_optimal['Total Net Loss'] = report_table_optimal_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
+                        report_table_optimal['Total Net Loss'] = report_table_optimal_df.apply(lambda r: f"{r['Total Capacity Loss (parts)']:,.2f} ({r['Total Capacity Loss (parts %)']:.1%})", axis=1)
                         
                         def style_loss_gain_table(col):
                             col_name = col.name
