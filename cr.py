@@ -10,8 +10,8 @@ from dateutil.relativedelta import relativedelta # v7.42: Import for monthly for
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.48: Renamed cached function to force cache bust
-__version__ = "v7.48 (Forced Cache Bust v2)"
+# v7.49: Removed crash-loop block
+__version__ = "v7.49 (Removed crash-loop block)"
 # ==================================================================
 
 # ==================================================================
@@ -1284,58 +1284,7 @@ if uploaded_file is not None:
                 _cache_version=cache_key
             )
 
-            # --- v7.11: REDUNDANT FIX BLOCK ---
-            # This block ensures all_shots_df has all required columns
-            # *after* being loaded from cache.
-            if not all_shots_df.empty:
-                if 'run_id' not in all_shots_df.columns:
-                    st.warning("Cache issue: 'run_id' missing. Recalculating...")
-                    is_run_break = all_shots_df["run_break_time_diff"] > (run_interval_hours * 3600)
-                    all_shots_df['run_id'] = is_run_break.cumsum()
-                
-                # --- v7.03: Increment run_id to be 1-based ---
-                all_shots_df['run_id'] = all_shots_df['run_id'] + 1
-                    
-                # --- v7.02: Add missing columns if they don't exist ---
-                if 'reference_ct' not in all_shots_df.columns:
-                    st.warning("Cache issue: 'reference_ct' missing. Recalculating...")
-                    run_approved_cts = all_shots_df.groupby('run_id')['Approved CT'].apply(lambda x: x.mode().iloc[0] if not x.mode().empty else 0)
-                    all_shots_df['approved_ct_for_run'] = all_shots_df['run_id'].map(run_approved_cts)
-                    all_shots_df['reference_ct'] = all_shots_df['approved_ct_for_run']
-
-                if 'Mode CT Lower' not in all_shots_df.columns:
-                    st.warning("Cache issue: 'Mode CT' columns missing. Recalculating...")
-                    df_for_mode = all_shots_df[all_shots_df["Actual CT"] < 999.9]
-                    # --- v7.13: Reverted .median() back to .mode() ---
-                    run_modes = df_for_mode.groupby('run_id')['Actual CT'].apply(lambda x: x.mode().iloc[0] if not x.mode().empty else 0)
-                    all_shots_df['mode_ct'] = all_shots_df['run_id'].map(run_modes)
-                    all_shots_df['mode_lower_limit'] = all_shots_df['mode_ct'] * (1 - mode_ct_tolerance)
-                    all_shots_df['mode_upper_limit'] = all_shots_df['mode_ct'] * (1 + mode_ct_tolerance)
-                    all_shots_df['Mode CT Lower'] = all_shots_df['mode_lower_limit']
-                    all_shots_df['Mode CT Upper'] = all_shots_df['mode_upper_limit']
-                    
-                # --- v7.04: Add gain/loss columns ---
-                if 'time_gain_sec' not in all_shots_df.columns:
-                    st.warning("Cache issue: 'gain/loss' columns missing. Adding...")
-                    all_shots_df['time_gain_sec'] = 0.0
-                    all_shots_df['time_loss_sec'] = 0.0
-                    all_shots_df['parts_gain'] = 0.0
-                    all_shots_df['parts_loss'] = 0.0
-                    
-                # --- v7.11: Add all other missing columns ---
-                if 'mode_ct' not in all_shots_df.columns:
-                     all_shots_df['mode_ct'] = all_shots_df['run_id'].map(all_shots_df.groupby('run_id')['mode_ct'].first())
-                if 'rr_time_diff' not in all_shots_df.columns:
-                    all_shots_df["rr_time_diff"] = all_shots_df["SHOT TIME"].diff().dt.total_seconds().fillna(0.0)
-                if 'adj_ct_sec' not in all_shots_df.columns:
-                    all_shots_df['adj_ct_sec'] = 0.0 # This is ok to leave at 0, only used in aggregates
-                if 'Shot Type' not in all_shots_df.columns:
-                    all_shots_df['Shot Type'] = 'N/A'
-                if 'stop_flag' not in all_shots_df.columns:
-                    all_shots_df['stop_flag'] = 0
-
-
-            # --- END REDUNDANT FIX BLOCK ---
+            # --- v7.49: REMOVED the entire "REDUNDANT FIX BLOCK" that was causing the crash-loop ---
 
             if results_df is None or results_df.empty or all_shots_df.empty:
                 st.error("No valid data found in file. Cannot proceed.")
