@@ -10,8 +10,8 @@ from dateutil.relativedelta import relativedelta # v7.42: Import for monthly for
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.49: Removed crash-loop block
-__version__ = "v7.49 (Removed crash-loop block)"
+# v7.50: Fixed Run Break logic & Graph Label
+__version__ = "v7.50 (Run Break & Label Fix)"
 # ==================================================================
 
 # ==================================================================
@@ -245,8 +245,10 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     # if it is an abnormal cycle.
     is_abnormal_cycle = ~in_mode_band & ~is_hard_stop_code
     
-    # --- v7.07: Remove 'is_run_break' from stop_flag ---
-    df_rr["stop_flag"] = np.where(is_abnormal_cycle | is_time_gap | is_hard_stop_code, 1, 0)
+    # --- v7.50: FIX for Run Break ghost loss ---
+    # Add is_run_break to the stop_flag logic. This forces all "Run Break"
+    # shots to have stop_flag=1, excluding them from df_production.
+    df_rr["stop_flag"] = np.where(is_abnormal_cycle | is_time_gap | is_hard_stop_code | is_run_break, 1, 0)
     
     df_rr['adj_ct_sec'] = df_rr['Actual CT']
     # Use 'rr_time_diff' for the stoppage time
@@ -1899,7 +1901,9 @@ if uploaded_file is not None:
                                         )
                                         fig_ct.add_annotation(
                                             x=start_time, y=y_axis_max * 0.95,
-                                            text=f"Run {run_id_val} Start",
+                                            # --- v7.50: FIX for graph label ---
+                                            # run_id is now 0-based, so add 1 for display
+                                            text=f"Run {run_id_val + 1} Start",
                                             showarrow=False, yshift=10, textangle=-90
                                         )
 
