@@ -10,8 +10,8 @@ from dateutil.relativedelta import relativedelta # v7.42: Import for monthly for
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.47: Force cache bust for v7.46 float fix + Indent fix
-__version__ = "v7.47 (Cache Bust & Indent Fix)"
+# v7.48: Renamed cached function to force cache bust
+__version__ = "v7.48 (Forced Cache Bust v2)"
 # ==================================================================
 
 # ==================================================================
@@ -567,8 +567,8 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
 # ==================================================================
 
 @st.cache_data
-# --- v7.38: Renamed function to bust cache ---
-def run_capacity_calculation_cached(raw_data_df, toggle, cavities, target_output_perc_slider, mode_tol, rr_gap, run_interval, _cache_version=None):
+# --- v7.48: Renamed function to bust cache ---
+def run_capacity_calculation_cached_v2(raw_data_df, toggle, cavities, target_output_perc_slider, mode_tol, rr_gap, run_interval, _cache_version=None):
     """Cached wrapper for the main calculation function."""
     return calculate_capacity_risk(
         raw_data_df,
@@ -1272,8 +1272,8 @@ if uploaded_file is not None:
             
             # 1. Always calculate vs. Optimal (100%)
             cache_key = f"{__version__}_{uploaded_file.name}_{target_output_perc}_{mode_ct_tolerance}_{rr_downtime_gap}_{run_interval_hours}"
-            # --- v7.38: Renamed function to bust cache ---
-            results_df, all_shots_df = run_capacity_calculation_cached(
+            # --- v7.48: Renamed function call to bust cache ---
+            results_df, all_shots_df = run_capacity_calculation_cached_v2(
                 df_raw,
                 toggle_filter,
                 default_cavities,
@@ -1310,7 +1310,7 @@ if uploaded_file is not None:
                     run_modes = df_for_mode.groupby('run_id')['Actual CT'].apply(lambda x: x.mode().iloc[0] if not x.mode().empty else 0)
                     all_shots_df['mode_ct'] = all_shots_df['run_id'].map(run_modes)
                     all_shots_df['mode_lower_limit'] = all_shots_df['mode_ct'] * (1 - mode_ct_tolerance)
-                    all_shots_df['mode_upper_limit'] = all_shots_df['mode_ct'] * (1 + mode_ct_tolerance) # <-- Bug was here, 'mode_Dct_tolerance'
+                    all_shots_df['mode_upper_limit'] = all_shots_df['mode_ct'] * (1 + mode_ct_tolerance)
                     all_shots_df['Mode CT Lower'] = all_shots_df['mode_lower_limit']
                     all_shots_df['Mode CT Upper'] = all_shots_df['mode_upper_limit']
                     
