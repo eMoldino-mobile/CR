@@ -9,8 +9,8 @@ from dateutil.relativedelta import relativedelta # v7.42: Import for monthly for
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.42: Added 12-Month Strategic Forecast Model
-__version__ = "v7.42 (12-Month Strategic Forecast)"
+# v7.43: Added Actuals to Forecast & better input defaults
+__version__ = "v7.43 (Forecasts now include Actuals)"
 # ==================================================================
 
 # ==================================================================
@@ -566,7 +566,7 @@ def run_capacity_calculation_cached(raw_data_df, toggle, cavities, target_output
     )
 
 # ==================================================================
-#                       NEW TAB 2 FUNCTION (v7.42)
+#                       NEW TAB 2 FUNCTION (v7.43)
 # ==================================================================
 
 def render_demand_planning_tab(daily_summary_df, all_shots_df, all_time_summary_df):
@@ -577,22 +577,29 @@ def render_demand_planning_tab(daily_summary_df, all_shots_df, all_time_summary_
     total_prod_sec_hist = all_time_summary_df['Actual Cycle Time Total (sec)'].sum()
     total_run_time_sec_hist = all_time_summary_df['Filtered Run Time (sec)'].sum()
 
-    default_parts_per_hour = (total_parts_hist / (total_prod_sec_hist / 3600)) if total_prod_sec_hist > 0 else 0
+    # --- v7.43: Calculate "Current Trend" (Uptime Rate) ---
+    default_parts_per_uptime_hour = (total_parts_hist / (total_prod_sec_hist / 3600)) if total_prod_sec_hist > 0 else 0
     default_stability = (total_prod_sec_hist / total_run_time_sec_hist) * 100 if total_run_time_sec_hist > 0 else 0
+    
+    # --- v7.43: Calculate "Max Possible" (Optimal Rate) ---
+    total_optimal_parts_hist = all_time_summary_df['Optimal Output (parts)'].sum()
+    default_parts_per_total_hour = (total_optimal_parts_hist / (total_run_time_sec_hist / 3600)) if total_run_time_sec_hist > 0 else 0
+
 
     st.info(f"""
     This tool forecasts your ability to meet future demand. It's pre-filled with your historical averages:
     - **Baseline Stability:** `{default_stability:.1f}%` (Your historical uptime)
-    - **Baseline Production Rate:** `{default_parts_per_hour:,.0f} parts / hour` (Your historical rate *during* uptime)
+    - **Baseline Production Rate:** `{default_parts_per_uptime_hour:,.0f} parts / hour` (Your historical rate *during* uptime)
+    - **Max Possible Rate:** `{default_parts_per_total_hour:,.0f} parts / hour` (Your 100% optimal rate)
     """)
     
     # --- 2. 12-Month Strategic Model ---
     st.subheader("1. 12-Month Strategic Forecast")
     
     with st.container(border=True):
-        st.markdown("##### Model Inputs")
+        st.markdown("##### Scenario Inputs")
         
-        c1, c2, c3 = st.columns(3)
+        c1, c2 = st.columns(2)
         with c1:
             working_hours_per_month = st.number_input(
                 "Total Working Hours / Month",
@@ -605,26 +612,49 @@ def render_demand_planning_tab(daily_summary_df, all_shots_df, all_time_summary_
                 min_value=0.0, max_value=100.0, value=default_stability, step=0.5, format="%.1f%%",
                 help="Your expected uptime (Stability Index). Defaulted from your historical average."
             )
-        with c3:
-            baseline_parts_per_hour = st.slider(
-                "Projected Production Rate (Parts/Uptime Hour)",
+            
+        # --- v7.43: New Input Sliders ---
+        st.markdown("###### Production Rate Scenarios")
+        c1, c2 = st.columns(2)
+        with c1:
+            projected_uptime_rate = st.slider(
+                "Projected Uptime Rate (Parts/hr)",
                 min_value=0.0, 
-                max_value=default_parts_per_hour * 2 if default_parts_per_hour > 0 else 1000.0, 
-                value=default_parts_per_hour, 
-                step=max(1.0, default_parts_per_hour * 0.01), # 1% step
+                max_value=default_parts_per_uptime_hour * 2 if default_parts_per_uptime_hour > 0 else 1000.0, 
+                value=default_parts_per_uptime_hour, 
+                step=max(1.0, default_parts_per_uptime_hour * 0.01), # 1% step
                 format="%.0f parts/hr",
-                help="Your expected production rate during uptime. Defaulted from your historical average."
+                help="Your expected production rate *during uptime*. (DEFAULT = CURRENT TREND)"
+            )
+        with c2:
+            projected_max_rate = st.slider(
+                "Maximum Possible Rate (Parts/hr)",
+                min_value=0.0, 
+                max_value=default_parts_per_total_hour * 1.5 if default_parts_per_total_hour > 0 else 1000.0, 
+                value=default_parts_per_total_hour, 
+                step=max(1.0, default_parts_per_total_hour * 0.01), # 1% step
+                format="%.0f parts/hr",
+                help="Your theoretical max production rate at 100% stability. (DEFAULT = 100% OPTIMAL)"
             )
             
-        # Calculated Monthly Capacity
+        # --- v7.43: Updated Capacity Calculations ---
         projected_uptime_hours = working_hours_per_month * (baseline_stability / 100.0)
-        projected_monthly_capacity = projected_uptime_hours * baseline_parts_per_hour
-        
-        st.metric(
-            "Calculated Monthly Capacity (based on inputs)",
-            f"{projected_monthly_capacity:,.0f} parts / month"
-        )
-        st.caption(f"{working_hours_per_month:,.0f} available hours * {baseline_stability:.1f}% stability * {baseline_parts_per_hour:,.0f} parts/hr = {projected_monthly_capacity:,.0f} parts/month")
+        projected_monthly_capacity = projected_uptime_hours * projected_uptime_rate
+        projected_max_monthly_capacity = working_hours_per_month * projected_max_rate
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.metric(
+                "Forecasted Capacity (at Current Trend)",
+                f"{projected_monthly_capacity:,.0f} parts / month"
+            )
+            st.caption(f"{working_hours_per_month:,.0f} hr * {baseline_stability:.1f}% stability * {projected_uptime_rate:,.0f} parts/hr")
+        with c2:
+            st.metric(
+                "Maximum Capacity (at 100% Optimal)",
+                f"{projected_max_monthly_capacity:,.0f} parts / month"
+            )
+            st.caption(f"{working_hours_per_month:,.0f} hr * {projected_max_rate:,.0f} parts/hr")
         
         st.markdown("##### Demand Inputs")
         
@@ -647,20 +677,39 @@ def render_demand_planning_tab(daily_summary_df, all_shots_df, all_time_summary_
                 if len(demand_list) != 12:
                     st.error(f"Error: You must provide exactly 12 numbers for the 12-month forecast. You provided {len(demand_list)}.")
                 else:
+                    # --- v7.43: Get historical monthly actuals ---
+                    hist_actuals_monthly = daily_summary_df['Actual Output (parts)'].resample('ME').sum()
+                    hist_actuals_monthly.index = hist_actuals_monthly.index.strftime('%Y-%m')
+                    
                     forecast_data = []
                     current_inventory = start_inventory_monthly
+                    start_month = datetime.now()
                     
                     for i, demand in enumerate(demand_list):
-                        month_name = (datetime.now() + relativedelta(months=i)).strftime('%Y-%m')
-                        monthly_net = projected_monthly_capacity - demand
+                        current_month_dt = start_month + relativedelta(months=i)
+                        month_name = current_month_dt.strftime('%Y-%m')
+                        
+                        # Check if we have historical data for this month
+                        if month_name in hist_actuals_monthly.index:
+                            actual_production = hist_actuals_monthly.loc[month_name]
+                            status = "Actual"
+                            monthly_production = actual_production
+                        else:
+                            status = "Forecast"
+                            monthly_production = projected_monthly_capacity
+                        
+                        monthly_net = monthly_production - demand
                         ending_inventory = current_inventory + monthly_net
                         
                         forecast_data.append({
                             "Month": month_name,
+                            "Status": status,
                             "Demand": demand,
-                            "Calculated Capacity": projected_monthly_capacity,
+                            "Production": monthly_production,
                             "Monthly Net": monthly_net,
-                            "Projected End Inventory": ending_inventory
+                            "Projected End Inventory": ending_inventory,
+                            "Forecasted Capacity": projected_monthly_capacity, # Keep for chart line
+                            "Max Capacity": projected_max_monthly_capacity # Keep for chart line
                         })
                         
                         current_inventory = ending_inventory # Set for next loop
@@ -680,10 +729,10 @@ def render_demand_planning_tab(daily_summary_df, all_shots_df, all_time_summary_
                     c2.metric("Projected Max Shortfall", f"{min_inventory_monthly:,.0f} parts" if min_inventory_monthly < 0 else "No Shortfall", delta_color="inverse")
                     c3.metric("Projected Shortfall Month", shortfall_month if shortfall_month else "None")
 
-                    # --- Monthly Chart ---
+                    # --- v7.43: Updated Monthly Chart ---
                     fig_monthly = go.Figure()
 
-                    # Add Demand bars
+                    # Add Demand bars (Red)
                     fig_monthly.add_trace(go.Bar(
                         x=df_forecast_monthly['Month'],
                         y=df_forecast_monthly['Demand'],
@@ -691,16 +740,35 @@ def render_demand_planning_tab(daily_summary_df, all_shots_df, all_time_summary_
                         marker_color='red'
                     ))
                     
-                    # Add Capacity line
+                    # Add Actual Production bars (Green) - will only show for "Actual" months
+                    df_actuals_chart = df_forecast_monthly[df_forecast_monthly['Status'] == 'Actual']
+                    if not df_actuals_chart.empty:
+                        fig_monthly.add_trace(go.Bar(
+                            x=df_actuals_chart['Month'],
+                            y=df_actuals_chart['Production'],
+                            name='Actual Production',
+                            marker_color='green'
+                        ))
+
+                    # Add Forecasted Capacity line (Dotted Blue)
                     fig_monthly.add_trace(go.Scatter(
                         x=df_forecast_monthly['Month'],
-                        y=df_forecast_monthly['Calculated Capacity'],
-                        name='Monthly Capacity',
+                        y=df_forecast_monthly['Forecasted Capacity'],
+                        name='Forecasted Capacity (Trend)',
                         mode='lines',
                         line=dict(color='blue', dash='dot')
                     ))
                     
-                    # Add Inventory line on secondary axis
+                    # Add Max Capacity line (Dotted Grey)
+                    fig_monthly.add_trace(go.Scatter(
+                        x=df_forecast_monthly['Month'],
+                        y=df_forecast_monthly['Max Capacity'],
+                        name='Max Possible Capacity',
+                        mode='lines',
+                        line=dict(color='grey', dash='dot')
+                    ))
+                    
+                    # Add Inventory line on secondary axis (Solid Green)
                     fig_monthly.add_trace(go.Scatter(
                         x=df_forecast_monthly['Month'],
                         y=df_forecast_monthly['Projected End Inventory'],
@@ -709,6 +777,9 @@ def render_demand_planning_tab(daily_summary_df, all_shots_df, all_time_summary_
                         line=dict(color='green'),
                         yaxis="y2"
                     ))
+                    
+                    # Set barmode to group to see Demand vs Actual side-by-side
+                    fig_monthly.update_layout(barmode='group')
 
                     fig_monthly.update_layout(
                         title="12-Month Strategic Forecast",
@@ -724,14 +795,22 @@ def render_demand_planning_tab(daily_summary_df, all_shots_df, all_time_summary_
                     st.plotly_chart(fig_monthly, use_container_width=True)
                     
                     # --- Data Table ---
-                    st.dataframe(df_forecast_monthly.style.format({
+                    # --- v7.43: Re-order and format table ---
+                    display_cols_monthly = [
+                        "Month", "Status", "Demand", "Production", 
+                        "Monthly Net", "Projected End Inventory"
+                    ]
+                    st.dataframe(df_forecast_monthly[display_cols_monthly].style.format({
                         'Demand': '{:,.0f}',
-                        'Calculated Capacity': '{:,.0f}',
-                        'Monthly Net': '{:,.0f}',
+                        'Production': '{:,.0f}',
+                        'Monthly Net': '{:+,.0f}',
                         'Projected End Inventory': '{:,.0f}'
                     }).applymap(
+                        lambda v: 'color: red;' if v < 0 else ('color: green;' if v > 0 else None),
+                        subset=['Monthly Net']
+                    ).applymap(
                         lambda v: 'color: red;' if v < 0 else None,
-                        subset=['Monthly Net', 'Projected End Inventory']
+                        subset=['Projected End Inventory']
                     ), use_container_width=True)
 
             except Exception as e:
