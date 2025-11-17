@@ -254,7 +254,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     prev_actual_ct = df_rr["Actual CT"].shift(1).fillna(0)
     in_mode_band = (df_rr["Actual CT"] >= df_rr['mode_lower_limit']) & (df_rr["Actual CT"] <= df_rr['mode_upper_limit'])
     
-    # --- v8.5: This logic now perfectly matches run_rate_app.py ---
+    # --- v8.6: This logic now perfectly matches run_rate_app.py ---
     # A time gap is a stop
     is_time_gap = (df_rr["rr_time_diff"] > (prev_actual_ct + rr_downtime_gap))
     
@@ -264,17 +264,22 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     # Flag all three types of stops
     df_rr["stop_flag"] = np.where(is_abnormal_cycle | is_time_gap | is_hard_stop_code, 1, 0)
     
-    # --- v8.5: FIX to match run_rate_app.py stop logic ---
-    # Only force the *very first shot of the file* (index 0) to be a production shot.
+    # --- v8.6: FIX to match run_rate_app.py chunk logic ---
+    # Force the *first shot of every run* to be a production shot.
     if not df_rr.empty:
-        df_rr.loc[0, "stop_flag"] = 0
-    # --- End v8.5 Fix ---
+        first_shot_of_each_run_idx = df_rr.groupby('run_id').head(1).index
+        df_rr.loc[first_shot_of_each_run_idx, "stop_flag"] = 0
+    # --- End v8.6 Fix ---
     
     df_rr['adj_ct_sec'] = df_rr['Actual CT']
     # Use 'rr_time_diff' for the stoppage time
     df_rr.loc[is_time_gap, 'adj_ct_sec'] = df_rr['rr_time_diff']
     df_rr.loc[is_hard_stop_code, 'adj_ct_sec'] = 0 
-    df_rr.loc[is_run_break, 'adj_ct_sec'] = 0 # Run break gaps are NOT downtime
+    
+    # --- v8.6: REMOVED BUGGY LINE ---
+    # This line was incorrectly zeroing-out downtime
+    # df_rr.loc[is_run_break, 'adj_ct_sec'] = 0 
+    # --- End v8.6 Fix ---
 
     # 11. Separate all shots into Production and Downtime
     df_production = df_rr[df_rr['stop_flag'] == 0].copy()
