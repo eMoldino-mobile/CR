@@ -114,72 +114,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     This function ALWAYS calculates vs Optimal (Approved CT).
     """
 
-    # --- 1. Standardize and Prepare Data ---
-    df = _df_raw.copy()
-
-    # --- Flexible Column Name Mapping ---
-    column_variations = {
-        'SHOT TIME': ['shot time', 'shot_time', 'timestamp', 'datetime'],
-        'Approved CT': ['approved ct', 'approved_ct', 'approved cycle time', 'std ct', 'standard ct'],
-        'Actual CT': ['actual ct', 'actual_ct', 'actual cycle time', 'cycle time', 'ct'],
-        'Working Cavities': ['working cavities', 'working_cavities', 'cavities', 'cavity'],
-        'Plant Area': ['plant area', 'plant_area', 'area']
-    }
-
-    rename_dict = {}
-    found_cols = {}
-
-    for standard_name, variations in column_variations.items():
-        found = False
-        for col in df.columns:
-            col_str_lower = str(col).strip().lower()
-            if col_str_lower in variations:
-                rename_dict[col] = standard_name
-                found_cols[standard_name] = True
-                found = True
-                break
-        if not found:
-            found_cols[standard_name] = False
-
-    df.rename(columns=rename_dict, inplace=True)
-
-    # --- 2. Check for Required Columns ---
-    required_cols = ['SHOT TIME', 'Approved CT', 'Actual CT']
-    missing_cols = [col for col in required_cols if not found_cols.get(col)]
-
-    if missing_cols:
-        st.error(f"Error: Missing required columns: {', '.join(missing_cols)}")
-        return None, None
-
-    # --- 3. Handle Optional Columns and Data Types ---
-    if not found_cols.get('Working Cavities'):
-        st.info(f"'Working Cavities' column not found. Using default value: {default_cavities}")
-        df['Working Cavities'] = default_cavities
-    else:
-        df['Working Cavities'] = pd.to_numeric(df['Working Cavities'], errors='coerce')
-        df['Working Cavities'].fillna(1, inplace=True)
-
-    if not found_cols.get('Plant Area'):
-        if toggle_filter:
-            st.warning("'Plant Area' column not found. Cannot apply Maintenance/Warehouse filter.")
-            toggle_filter = False
-        df['Plant Area'] = 'Production'
-    else:
-        df['Plant Area'].fillna('Production', inplace=True)
-
-    try:
-        df['SHOT TIME'] = pd.to_datetime(df['SHOT TIME'])
-        df['Actual CT'] = pd.to_numeric(df['Actual CT'], errors='coerce')
-        df['Approved CT'] = pd.to_numeric(df['Approved CT'], errors='coerce')
-        
-        # Drop rows where essential data could not be parsed
-        df.dropna(subset=['SHOT TIME', 'Actual CT', 'Approved CT'], inplace=True)
-        
-    except Exception as e:
-        st.error(f"Error converting data types: {e}. Check for non-numeric values in CT or Cavities columns.")
-        return None, None
-
-
+# ... (code from lines 112-180) ...
     # --- 4. Apply Filters (The Toggle) ---
 
     if df.empty or len(df) < 2:
@@ -264,8 +199,6 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     # Flag all three types of stops
     df_rr["stop_flag"] = np.where(is_abnormal_cycle | is_time_gap | is_hard_stop_code, 1, 0)
     
-    # --- v8.6: FIX to match run_rate_app.py chunk logic ---
-    # Force the *first shot of every run* to be a production shot.
     # --- FIX: Force only the *very first shot of the entire file* (at index 0)
     # to be a production shot. This prevents mis-categorizing 999.9
     # shots that start subsequent runs.
@@ -276,17 +209,15 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     
     df_rr['adj_ct_sec'] = df_rr['Actual CT']
     
-    # --- FIX: Re-ordered these two lines ---
-    # 1. Set 0 for 999.9 stops first.
-    df_rr.loc[is_hard_stop_code, 'adj_ct_sec'] = 0 
-    # 2. Overwrite with the real gap time. This ensures 'Time Gap'
-    #    takes priority over 'Hard Stop' and captures the full downtime.
+    # --- FINAL FIX: 'is_hard_stop_code' line is DELETED ---
+    
+    # Overwrite with the real gap time. This ensures 'Time Gap'
+    # takes priority and captures the full downtime.
     df_rr.loc[is_time_gap, 'adj_ct_sec'] = df_rr['rr_time_diff']
     # --- End Fix ---
     
     # --- FINAL FIX: Explicitly set Run Breaks to 0 ---
-    # This is the line that was commented out. It is needed to
-    # exclude long gaps (like weekends) from the downtime total.
+    # This is needed to exclude long gaps (like weekends) from the downtime total.
     df_rr.loc[is_run_break, 'adj_ct_sec'] = 0
     # --- End Final Fix ---
 
