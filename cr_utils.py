@@ -284,10 +284,11 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     df_rr.loc[is_time_gap, 'adj_ct_sec'] = df_rr['rr_time_diff']
     # --- End Fix ---
     
-    # --- v8.6: REMOVED BUGGY LINE ---
-    # This line was incorrectly zeroing-out downtime for run-starting shots
-    # df_rr.loc[is_run_break, 'adj_ct_sec'] = 0 
-    # --- End v8.6 Fix ---
+    # --- FINAL FIX: Explicitly set Run Breaks to 0 ---
+    # This is the line that was commented out. It is needed to
+    # exclude long gaps (like weekends) from the downtime total.
+    df_rr.loc[is_run_break, 'adj_ct_sec'] = 0
+    # --- End Final Fix ---
 
     # 11. Separate all shots into Production and Downtime
     df_production = df_rr[df_rr['stop_flag'] == 0].copy()
