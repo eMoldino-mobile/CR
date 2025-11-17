@@ -114,8 +114,9 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     This function ALWAYS calculates vs Optimal (Approved CT).
     """
     
-    # Fix for NameError
+    # --- FIX: ADD THIS LINE BACK TO FIX NameError ---
     df = _df_raw.copy()
+    # --- END FIX ---
 
     # --- 1. Standardize and Prepare Data ---
     # --- Flexible Column Name Mapping ---
@@ -270,15 +271,17 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     #    This includes 'Abnormal Cycle' stops.
     df_rr['adj_ct_sec'] = df_rr['Actual CT']
     
-    # 2. Set 0 for 999.9 stops first.
+    # 2. Set 0 for 999.9 stops first. (This creates the 7-min gap)
     df_rr.loc[is_hard_stop_code, 'adj_ct_sec'] = 0 
     
     # 3. Overwrite with the real gap time. This ensures 'Time Gap'
     #    takes priority over 'Hard Stop' and captures the full downtime.
+    #    (This fixes the 7-min 999.9 gap)
     df_rr.loc[is_time_gap, 'adj_ct_sec'] = df_rr['rr_time_diff']
     
     # 4. Explicitly set Run Breaks to 0. This overwrites the 'Time Gap'
     #    value only if the gap is a Run Break, excluding it from the sum.
+    #    (This fixes the 2-day downtime bug)
     df_rr.loc[is_run_break, 'adj_ct_sec'] = 0
     # --- End Final Fix ---
 
