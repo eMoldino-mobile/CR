@@ -17,8 +17,8 @@ from cr_utils import (
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v8.1: Fixed SyntaxError and aligned Prod Time logic
-__version__ = "v8.1 (Prod Time & Syntax Fix)"
+# v8.3: Fixed Total Downtime calculation to be bottom-up
+__version__ = "v8.3 (Downtime Calc Fix)"
 # ==================================================================
 
 # ==================================================================
@@ -26,6 +26,7 @@ __version__ = "v8.1 (Prod Time & Syntax Fix)"
 # ==================================================================
 
 # --- Page Config ---
+# ... (rest of cr.py is unchanged from v8.1) ...
 st.set_page_config(
     page_title=f"Capacity Risk Calculator (v{__version__})",
     layout="wide"
@@ -598,7 +599,13 @@ if uploaded_file is not None:
                             report_table_1_df = display_df_totals.reset_index().rename(columns={'run_id': 'Run ID'})
                             # Add 1 to run_id for display
                             report_table_1_df['Run ID'] = report_table_1_df['Run ID'] + 1
-                            report_table_1_df['Total Downtime (sec)'] = report_table_1_df['Filtered Run Time (sec)'] - report_table_1_df['Actual Cycle Time Total (sec)']
+                            
+                            # --- v8.3 FIX: Use the correct bottom-up downtime sum ---
+                            # This was the bug. It was incorrectly calculating top-down.
+                            # report_table_1_df['Total Downtime (sec)'] = report_table_1_df['Filtered Run Time (sec)'] - report_table_1_df['Actual Cycle Time Total (sec)']
+                            report_table_1_df['Total Downtime (sec)'] = report_table_1_df['Capacity Loss (downtime) (sec)']
+                            # --- End v8.3 Fix ---
+
                             report_table_1_df['Total Downtime (d/h/m)'] = report_table_1_df['Total Downtime (sec)'].apply(format_seconds_to_dhm)
                             report_table_1 = pd.DataFrame(index=report_table_1_df.index)
                             report_table_1['Run ID'] = report_table_1_df['Run ID']
