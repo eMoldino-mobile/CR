@@ -501,6 +501,8 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
         results['Capacity Gain (fast cycle time) (sec)'] = run_prod['time_gain_sec'].sum()
         results['Capacity Loss (slow cycle time) (sec)'] = run_prod['time_loss_sec'].sum()
         results['Capacity Loss (slow cycle time) (parts)'] = run_prod['parts_loss'].sum()
+        
+        # --- v8.6: FIX for NameError (run_PROD -> run_prod) ---
         results['Capacity Gain (fast cycle time) (parts)'] = run_prod['parts_gain'].sum()
 
         # Reconciliation
