@@ -1057,7 +1057,8 @@ if uploaded_file is not None:
                         elif data_frequency == 'Monthly': xaxis_title = "Month"
                         elif data_frequency == 'by Run': xaxis_title = "Run ID"
                         else: xaxis_title = "Date"
-                        elif data_frequency == 'by Run':
+                        
+                        if data_frequency == 'by Run':
                             chart_df = display_df.reset_index().rename(columns={'run_id': 'X-Axis'})
                             # --- v7.51: Add 1 to run_id for display ---
                             chart_df['X-Axis'] = 'Run ' + (chart_df['X-Axis'] + 1).astype(str)
