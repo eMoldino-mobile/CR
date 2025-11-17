@@ -113,8 +113,77 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     using the hybrid RR (downtime) + CR (inefficiency) logic.
     This function ALWAYS calculates vs Optimal (Approved CT).
     """
+    
+    # --- FIX: ADD THIS LINE BACK TO FIX NameError ---
+    df = _df_raw.copy()
+    # --- END FIX ---
 
-# ... (code from lines 112-180) ...
+    # --- 1. Standardize and Prepare Data ---
+    # (We already copied df, so no need to do it again)
+
+    # --- Flexible Column Name Mapping ---
+    column_variations = {
+        'SHOT TIME': ['shot time', 'shot_time', 'timestamp', 'datetime'],
+        'Approved CT': ['approved ct', 'approved_ct', 'approved cycle time', 'std ct', 'standard ct'],
+        'Actual CT': ['actual ct', 'actual_ct', 'actual cycle time', 'cycle time', 'ct'],
+        'Working Cavities': ['working cavities', 'working_cavities', 'cavities', 'cavity'],
+        'Plant Area': ['plant area', 'plant_area', 'area']
+    }
+
+    rename_dict = {}
+    found_cols = {}
+
+    for standard_name, variations in column_variations.items():
+        found = False
+        for col in df.columns:
+            col_str_lower = str(col).strip().lower()
+            if col_str_lower in variations:
+                rename_dict[col] = standard_name
+                found_cols[standard_name] = True
+                found = True
+                break
+        if not found:
+            found_cols[standard_name] = False
+
+    df.rename(columns=rename_dict, inplace=True)
+
+    # --- 2. Check for Required Columns ---
+    required_cols = ['SHOT TIME', 'Approved CT', 'Actual CT']
+    missing_cols = [col for col in required_cols if not found_cols.get(col)]
+
+    if missing_cols:
+        st.error(f"Error: Missing required columns: {', '.join(missing_cols)}")
+        return None, None
+
+    # --- 3. Handle Optional Columns and Data Types ---
+    if not found_cols.get('Working Cavities'):
+        st.info(f"'Working Cavities' column not found. Using default value: {default_cavities}")
+        df['Working Cavities'] = default_cavities
+    else:
+        df['Working Cavities'] = pd.to_numeric(df['Working Cavities'], errors='coerce')
+        df['Working Cavities'].fillna(1, inplace=True)
+
+    if not found_cols.get('Plant Area'):
+        if toggle_filter:
+            st.warning("'Plant Area' column not found. Cannot apply Maintenance/Warehouse filter.")
+            toggle_filter = False
+        df['Plant Area'] = 'Production'
+    else:
+        df['Plant Area'].fillna('Production', inplace=True)
+
+    try:
+        df['SHOT TIME'] = pd.to_datetime(df['SHOT TIME'])
+        df['Actual CT'] = pd.to_numeric(df['Actual CT'], errors='coerce')
+        df['Approved CT'] = pd.to_numeric(df['Approved CT'], errors='coerce')
+        
+        # Drop rows where essential data could not be parsed
+        df.dropna(subset=['SHOT TIME', 'Actual CT', 'Approved CT'], inplace=True)
+        
+    except Exception as e:
+        st.error(f"Error converting data types: {e}. Check for non-numeric values in CT or Cavities columns.")
+        return None, None
+
+
     # --- 4. Apply Filters (The Toggle) ---
 
     if df.empty or len(df) < 2:
@@ -211,8 +280,8 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     
     # --- FINAL FIX: 'is_hard_stop_code' line is DELETED ---
     
-    # Overwrite with the real gap time. This ensures 'Time Gap'
-    # takes priority and captures the full downtime.
+    # 2. Overwrite with the real gap time. This ensures 'Time Gap'
+    #    takes priority and captures the full downtime.
     df_rr.loc[is_time_gap, 'adj_ct_sec'] = df_rr['rr_time_diff']
     # --- End Fix ---
     
@@ -424,7 +493,7 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
         if avg_approved_ct == 0 or pd.isna(avg_approved_ct): avg_approved_ct = 1
             
         df_run_prod_for_mode = df_run[df_run["Actual CT"] < 999.9]
-        if not df_run_prod_for_mode.empty:
+        if not df_run_prod_for_mode..empty:
             results['Mode CT'] = df_run_prod_for_mode['Actual CT'].mode().iloc[0] if not df_run_prod_for_mode['Actual CT'].mode().empty else 0.0
         else:
             results['Mode CT'] = 0.0
@@ -441,8 +510,6 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
         results['Capacity Gain (fast cycle time) (sec)'] = run_prod['time_gain_sec'].sum()
         results['Capacity Loss (slow cycle time) (sec)'] = run_prod['time_loss_sec'].sum()
         results['Capacity Loss (slow cycle time) (parts)'] = run_prod['parts_loss'].sum()
-        
-        # --- v8.6: FIX for NameError (run_PROD -> run_prod) ---
         results['Capacity Gain (fast cycle time) (parts)'] = run_prod['parts_gain'].sum()
 
         # Reconciliation
@@ -495,16 +562,4 @@ def run_capacity_calculation_cached_v2(raw_data_df, toggle, cavities, target_out
         return pd.DataFrame(), pd.DataFrame()
         
     return calculate_capacity_risk(
-        raw_data_df,
-        toggle,
-        cavities,
-        target_output_perc_slider,
-        mode_tol,      
-        rr_gap,        
-        run_interval    
-    )
-
-# ==================================================================
-#                       TABS 2 & 3 (COMMENTED)
-# ==================================================================
-# (All of Tab 2 and Tab 3 functions remain commented out)
+        raw_T... (rest of the file) ...
