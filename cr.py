@@ -10,8 +10,8 @@ from dateutil.relativedelta import relativedelta # v7.42: Import for monthly for
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v7.52: Commented out tabs 2 and 3
-__version__ = "v7.52 (Tabs 2 & 3 Commented)"
+# v7.53: Refactored UI into modular functions
+__version__ = "v7.53 (Modular Refactor)"
 # ==================================================================
 
 # ==================================================================
@@ -589,7 +589,86 @@ def run_capacity_calculation_cached_v2(raw_data_df, toggle, cavities, target_out
 
 # --- v7.52: Commented out Tab 2 ---
 # def render_automated_risk_tab(all_time_summary_df, all_time_totals):
-# ... (rest of function commented out) ...
+#     """
+#     Renders the new "Automated Risk Analysis" tab (Tab 2).
+#     This tab shows the historical gap to optimal and its causes.
+#     """
+#     st.header("Automated Risk Analysis")
+#     st.info("This tab analyzes your entire historical dataset to show the gap between your actual performance and your 100% optimal potential, highlighting the key drivers of that loss.")
+    
+#     # Extract totals calculated in the main app logic
+#     total_optimal_100 = all_time_totals['total_optimal_100']
+#     total_produced = all_time_totals['total_produced']
+#     total_true_net_loss_parts = all_time_totals['total_true_net_loss_parts']
+#     total_downtime_loss_parts = all_time_totals['total_downtime_loss_parts']
+#     total_slow_loss_parts = all_time_totals['total_slow_loss_parts']
+#     total_fast_gain_parts = all_time_totals['total_fast_gain_parts']
+#     total_net_cycle_loss_parts = all_time_totals['total_net_cycle_loss_parts']
+
+#     total_prod_sec_hist = all_time_summary_df['Actual Cycle Time Total (sec)'].sum()
+#     total_run_time_sec_hist = all_time_summary_df['Filtered Run Time (sec)'].sum()
+#     total_downtime_sec_hist = all_time_summary_df['Capacity Loss (downtime) (sec)'].sum()
+#     total_stops_hist = all_time_summary_df['Downtime Shots'].sum() # Note: This is a proxy. A better 'stops' sum may be needed.
+    
+#     # --- 1. Top-Level KPIs ---
+#     st.subheader("Historical Performance vs. Optimal")
+    
+#     c1, c2, c3 = st.columns(3)
+#     c1.metric("Optimal Output (100%)", f"{total_optimal_100:,.0f} parts")
+#     c2.metric("Actual Output", f"{total_produced:,.0f} parts", f"{((total_produced / total_optimal_100) * 100):.1f}% of Optimal")
+#     c3.metric("Total Capacity Loss", f"{total_true_net_loss_parts:,.0f} parts", delta_color="inverse")
+    
+#     st.divider()
+    
+#     # --- 2. Loss Driver Analysis ---
+#     st.subheader("Historical Loss Driver Analysis")
+    
+#     c1, c2 = st.columns([1, 1])
+    
+#     with c1:
+#         st.markdown("##### Loss Breakdown (Treemap)")
+        
+#         # Prepare data for the treemap
+#         loss_data = {
+#             'Category': ['Total Capacity Loss', 'Total Capacity Loss', 'Total Capacity Loss'],
+#             'Loss Type': ['Loss (RR Downtime)', 'Loss (Slow Cycles)', 'Gain (Fast Cycles)'],
+#             'Parts': [total_downtime_loss_parts, total_slow_loss_parts, total_fast_gain_parts]
+#         }
+#         df_loss_treemap = pd.DataFrame(loss_data)
+        
+#         # Create the treemap
+#         fig_treemap = px.treemap(
+#             df_loss_treemap,
+#             path=['Category', 'Loss Type'],
+#             values='Parts',
+#             color='Loss Type',
+#             color_discrete_map={
+#                 'Loss (RR Downtime)': '#ff6961', # Red
+#                 'Loss (Slow Cycles)': '#ffb347', # Orange
+#                 'Gain (Fast Cycles)': '#77dd77'  # Green
+#             },
+#             title="Root Causes of Capacity Loss (vs. Optimal)"
+#         )
+#         fig_treemap.update_traces(
+#             textinfo="label+value+percent root",
+#             hovertemplate='<b>%{label}</b><br>Parts: %{value:,.0f}<br>%{percentParent:.1%} of Total Loss'
+#         )
+#         fig_treemap.update_layout(margin = dict(t=50, l=0, r=0, b=0))
+#         st.plotly_chart(fig_treemap, use_container_width=True)
+
+#     with c2:
+#         st.markdown("##### Key Performance Levers")
+#         st.info("These are your historical averages. You can use these as levers to model scenarios in the 'Demand & Capacity Planning' tab.")
+        
+#         # Calculate historical metrics
+#         hist_uptime_perc = (total_prod_sec_hist / total_run_time_sec_hist) * 100 if total_run_time_sec_hist > 0 else 0
+#         hist_parts_per_uptime_hour = (total_produced / (total_prod_sec_hist / 3600)) if total_prod_sec_hist > 0 else 0
+#         hist_mttr_min = (total_downtime_sec_hist / 60 / total_stops_hist) if total_stops_hist > 0 else 0
+#         hist_mtbf_min = (total_prod_sec_hist / 60 / total_stops_hist) if total_stops_hist > 0 else (total_prod_sec_hist / 60)
+
+#         st.metric("Historical Uptime %", f"{hist_uptime_perc:.1f}%", help="The percentage of your total run time that was actual production (Uptime).")
+#         st.metric("Historical Production Rate", f"{hist_parts_per_uptime_hour:,.0f} parts / hr", help="Your average production rate *during Uptime*.")
+#         st.metric("Historical MTTR", f"{format_seconds_to_dhm(hist_mttr_min * 60)}", help="Mean Time To Repair: The average duration of a stop event.")
 #         st.metric("Historical MTBF", f"{format_seconds_to_dhm(hist_mtbf_min * 60)}", help="Mean Time Between Failures: The average duration of an Uptime period *between* stops.")
 
 
@@ -599,7 +678,493 @@ def run_capacity_calculation_cached_v2(raw_data_df, toggle, cavities, target_out
 
 # --- v7.52: Commented out Tab 3 ---
 # def render_demand_planning_tab(daily_summary_df, all_shots_df, all_time_summary_df):
-# ... (rest of function commented out) ...
+#     st.header("Capacity & Demand Planning")
+    
+#     # --- 1. Calculate Historical Baselines ---
+#     total_parts_hist = all_time_summary_df['Actual Output (parts)'].sum()
+#     total_prod_sec_hist = all_time_summary_df['Actual Cycle Time Total (sec)'].sum()
+#     total_run_time_sec_hist = all_time_summary_df['Filtered Run Time (sec)'].sum()
+
+#     # --- v7.43: Calculate "Current Trend" (Uptime Rate) ---
+#     # --- v7.44: Renamed for clarity ---
+#     default_parts_per_uptime_hour = (total_parts_hist / (total_prod_sec_hist / 3600)) if total_prod_sec_hist > 0 else 0
+#     default_uptime_perc = (total_prod_sec_hist / total_run_time_sec_hist) * 100 if total_run_time_sec_hist > 0 else 0
+    
+#     # --- v7.43: Calculate "Max Possible" (Optimal Rate) ---
+#     total_optimal_parts_hist = all_time_summary_df['Optimal Output (parts)'].sum()
+#     default_parts_per_total_hour = (total_optimal_parts_hist / (total_run_time_sec_hist / 3600)) if total_run_time_sec_hist > 0 else 0
+
+
+#     st.info(f"""
+#     This tool forecasts your ability to meet future demand. It's pre-filled with your historical averages from the 'Automated Risk Analysis' tab:
+#     - **Baseline Uptime %:** `{default_uptime_perc:.1f}%`
+#     - **Baseline Production Rate:** `{default_parts_per_uptime_hour:,.0f} parts / hour` (during uptime)
+#     - **Max Possible Rate:** `{default_parts_per_total_hour:,.0f} parts / hour` (at 100% optimal)
+#     """)
+    
+#     # --- 2. 12-Month Strategic Model ---
+#     st.subheader("1. 12-Month Strategic Forecast")
+    
+#     with st.container(border=True):
+#         st.markdown("##### Scenario Inputs")
+        
+#         c1, c2 = st.columns(2)
+#         with c1:
+#             working_hours_per_month = st.number_input(
+#                 "Total Working Hours / Month",
+#                 min_value=1, max_value=744, value=352, # 744=24*31
+#                 help="Your total available operating hours per month (e.g., 22 days * 16 hours = 352)"
+#             )
+#         with c2:
+#             # --- v7.44: Renamed "Stability" to "Uptime %" ---
+#             baseline_uptime_perc = st.slider(
+#                 "Projected Uptime %",
+#                 min_value=0.0, max_value=100.0, value=default_uptime_perc, step=0.5, format="%.1f%%",
+#                 help="Your expected uptime (e.g., Uptime / (Uptime + Downtime)). Defaulted from your historical average."
+#             )
+            
+#         # --- v7.43: New Input Sliders ---
+#         st.markdown("###### Production Rate Scenarios")
+#         c1, c2 = st.columns(2)
+#         with c1:
+#             projected_uptime_rate = st.slider(
+#                 "Projected Uptime Rate (Parts/hr)",
+#                 min_value=0.0, 
+#                 max_value=default_parts_per_uptime_hour * 2 if default_parts_per_uptime_hour > 0 else 1000.0, 
+#                 value=default_parts_per_uptime_hour, 
+#                 step=max(1.0, default_parts_per_uptime_hour * 0.01), # 1% step
+#                 format="%.0f parts/hr",
+#                 help="Your expected production rate *during uptime*. (DEFAULT = CURRENT TREND)"
+#             )
+#         with c2:
+#             projected_max_rate = st.slider(
+#                 "Maximum Possible Rate (Parts/hr)",
+#                 min_value=0.0, 
+#                 max_value=default_parts_per_total_hour * 1.5 if default_parts_per_total_hour > 0 else 1000.0, 
+#                 value=default_parts_per_total_hour, 
+#                 step=max(1.0, default_parts_per_total_hour * 0.01), # 1% step
+#                 format="%.0f parts/hr",
+#                 help="Your theoretical max production rate at 100% stability. (DEFAULT = 100% OPTIMAL)"
+#             )
+            
+#         # --- v7.43: Updated Capacity Calculations ---
+#         # --- v7.44: Renamed "baseline_stability" to "baseline_uptime_perc" ---
+#         projected_uptime_hours = working_hours_per_month * (baseline_uptime_perc / 100.0)
+#         projected_monthly_capacity = projected_uptime_hours * projected_uptime_rate
+#         projected_max_monthly_capacity = working_hours_per_month * projected_max_rate
+
+#         c1, c2 = st.columns(2)
+#         with c1:
+#             st.metric(
+#                 "Forecasted Capacity (at Current Trend)",
+#                 f"{projected_monthly_capacity:,.0f} parts / month"
+#             )
+#             st.caption(f"{working_hours_per_month:,.0f} hr * {baseline_uptime_perc:.1f}% Uptime * {projected_uptime_rate:,.0f} parts/hr")
+#         with c2:
+#             st.metric(
+#                 "Maximum Capacity (at 100% Optimal)",
+#                 f"{projected_max_monthly_capacity:,.0f} parts / month"
+#             )
+#             st.caption(f"{working_hours_per_month:,.0f} hr * {projected_max_rate:,.0f} parts/hr")
+        
+#         st.markdown("##### Demand Inputs")
+        
+#         start_inventory_monthly = st.number_input("Current Inventory (Starting Stock)", value=0, min_value=0, step=1000, key="monthly_stock")
+        
+#         # --- v7.44: New Demand Input UI ---
+#         demand_input_type = st.radio(
+#             "Demand Input Method",
+#             ["Monthly", "Quarterly", "Yearly"],
+#             horizontal=True,
+#             key="demand_input_type"
+#         )
+        
+#         demand_values = {}
+        
+#         if demand_input_type == "Monthly":
+#             st.markdown("###### Enter Demand for Each Month")
+#             cols = st.columns(4)
+#             months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+#             for i, month in enumerate(months):
+#                 with cols[i % 4]:
+#                     demand_values[i] = st.number_input(f"Month {i+1} ({month})", value=50000, min_value=0, step=100, key=f"month_{i}")
+        
+#         elif demand_input_type == "Quarterly":
+#             st.markdown("###### Enter Demand for Each Quarter")
+#             cols = st.columns(4)
+#             for i in range(4):
+#                 with cols[i]:
+#                     demand_values[i] = st.number_input(f"Q{i+1} Demand (per month)", value=50000, min_value=0, step=100, key=f"q_{i}")
+        
+#         elif demand_input_type == "Yearly":
+#             st.markdown("###### Enter Total Annual Demand")
+#             demand_values[0] = st.number_input("Total Yearly Demand", value=600000, min_value=0, step=1000, key="year_0")
+
+#         if st.button("Run 12-Month Forecast"):
+#             try:
+#                 # --- v7.44: Process new demand inputs ---
+#                 demand_list = []
+#                 if demand_input_type == "Monthly":
+#                     demand_list = [demand_values[i] for i in range(12)]
+#                 elif demand_input_type == "Quarterly":
+#                     demand_list.extend([demand_values[0]] * 3) # Q1
+#                     demand_list.extend([demand_values[1]] * 3) # Q2
+#                     demand_list.extend([demand_values[2]] * 3) # Q3
+#                     demand_list.extend([demand_values[3]] * 3) # Q4
+#                 elif demand_input_type == "Yearly":
+#                     monthly_avg = demand_values[0] / 12.0
+#                     demand_list = [monthly_avg] * 12
+                
+#                 if len(demand_list) != 12:
+#                     st.error(f"Error: Could not generate 12 months of demand. Please check inputs.")
+#                 else:
+#                     # --- v7.43: Get historical monthly actuals ---
+#                     hist_actuals_monthly = daily_summary_df['Actual Output (parts)'].resample('ME').sum()
+#                     hist_actuals_monthly.index = hist_actuals_monthly.index.strftime('%Y-%m')
+                    
+#                     forecast_data = []
+#                     current_inventory = start_inventory_monthly
+#                     start_month = datetime.now()
+                    
+#                     for i, demand in enumerate(demand_list):
+#                         current_month_dt = start_month + relativedelta(months=i)
+#                         month_name = current_month_dt.strftime('%Y-%m')
+                        
+#                         # Check if we have historical data for this month
+#                         if month_name in hist_actuals_monthly.index:
+#                             actual_production = hist_actuals_monthly.loc[month_name]
+#                             status = "Actual"
+#                             monthly_production = actual_production
+#                         else:
+#                             status = "Forecast"
+#                             monthly_production = projected_monthly_capacity
+                        
+#                         monthly_net = monthly_production - demand
+#                         ending_inventory = current_inventory + monthly_net
+                        
+#                         forecast_data.append({
+#                             "Month": month_name,
+#                             "Status": status,
+#                             "Demand": demand,
+#                             "Production": monthly_production,
+#                             "Monthly Net": monthly_net,
+#                             "Projected End Inventory": ending_inventory,
+#                             "Forecasted Capacity": projected_monthly_capacity, # Keep for chart line
+#                             "Max Capacity": projected_max_monthly_capacity # Keep for chart line
+#                         })
+                        
+#                         current_inventory = ending_inventory # Set for next loop
+                    
+#                     df_forecast_monthly = pd.DataFrame(forecast_data)
+                    
+#                     # --- KPIs for Monthly Forecast ---
+#                     end_inventory_monthly = df_forecast_monthly['Projected End Inventory'].iloc[-1]
+#                     min_inventory_monthly = df_forecast_monthly['Projected End Inventory'].min()
+#                     shortfall_month = None
+#                     if min_inventory_monthly < 0:
+#                         shortfall_month = df_forecast_monthly[df_forecast_monthly['Projected End Inventory'] < 0]['Month'].iloc[0]
+
+#                     st.markdown("##### 12-Month Forecast Results")
+#                     c1, c2, c3 = st.columns(3)
+#                     c1.metric("Projected Year-End Inventory", f"{end_inventory_monthly:,.0f} parts")
+#                     c2.metric("Projected Max Shortfall", f"{min_inventory_monthly:,.0f} parts" if min_inventory_monthly < 0 else "No Shortfall", delta_color="inverse")
+#                     c3.metric("Projected Shortfall Month", shortfall_month if shortfall_month else "None")
+
+#                     # --- v7.45: New Risk Driver Analysis ---
+#                     if min_inventory_monthly < 0:
+#                         st.markdown("##### Capacity Risk Drivers")
+#                         with st.container(border=True):
+#                             st.error(f"**Action Required:** Your forecast shows a maximum shortfall of **{min_inventory_monthly:,.0f} parts**.")
+                            
+#                             # Calculate what's needed to fix it
+#                             total_demand = df_forecast_monthly['Demand'].sum()
+#                             total_actual_prod = df_forecast_monthly[df_forecast_monthly['Status'] == 'Actual']['Production'].sum()
+                            
+#                             # Find demand just for forecasted months
+#                             forecast_demand = df_forecast_monthly[df_forecast_monthly['Status'] == 'Forecast']['Demand'].sum()
+#                             num_forecast_months = len(df_forecast_monthly[df_forecast_monthly['Status'] == 'Forecast'])
+                            
+#                             if num_forecast_months > 0:
+#                                 # We need to produce enough to cover forecast demand + starting inventory + shortfall
+#                                 required_total_forecast_prod = forecast_demand - (start_inventory_monthly + total_actual_prod) - min_inventory_monthly
+#                                 required_monthly_prod = required_total_forecast_prod / num_forecast_months
+                                
+#                                 # 1. How much more Uptime %?
+#                                 required_uptime_hours = required_monthly_prod / projected_uptime_rate if projected_uptime_rate > 0 else 0
+#                                 required_uptime_perc = (required_uptime_hours / working_hours_per_month) * 100 if working_hours_per_month > 0 else 0
+                                
+#                                 # 2. How much more Uptime Rate?
+#                                 required_uptime_rate = required_monthly_prod / projected_uptime_hours if projected_uptime_hours > 0 else 0
+                                
+#                                 st.markdown("To close this gap (break-even), you would need to achieve one of the following for all future months:")
+#                                 c1, c2 = st.columns(2)
+#                                 c1.metric(
+#                                     label=f"Increase Projected Uptime % to:",
+#                                     value=f"{required_uptime_perc:.1f}%",
+#                                     delta=f"{required_uptime_perc - baseline_uptime_perc:.1f}%"
+#                                 )
+#                                 c2.metric(
+#                                     label=f"Increase Projected Uptime Rate to:",
+#                                     value=f"{required_uptime_rate:,.0f} parts/hr",
+#                                     delta=f"{required_uptime_rate - projected_uptime_rate:,.0f} parts/hr"
+#                                 )
+                            
+
+#                     # --- v7.43: Updated Monthly Chart ---
+#                     # --- v7.44: Changed demand bar color to blue ---
+#                     fig_monthly = go.Figure()
+
+#                     # Add Demand bars (Blue)
+#                     fig_monthly.add_trace(go.Bar(
+#                         x=df_forecast_monthly['Month'],
+#                         y=df_forecast_monthly['Demand'],
+#                         name='Monthly Demand',
+#                         marker_color='#1f77b4' # Changed from red to blue
+#                     ))
+                    
+#                     # Add Actual Production bars (Green) - will only show for "Actual" months
+#                     df_actuals_chart = df_forecast_monthly[df_forecast_monthly['Status'] == 'Actual']
+#                     if not df_actuals_chart.empty:
+#                         fig_monthly.add_trace(go.Bar(
+#                             x=df_actuals_chart['Month'],
+#                             y=df_actuals_chart['Production'],
+#                             name='Actual Production',
+#                             marker_color='green'
+#                         ))
+
+#                     # Add Forecasted Capacity line (Dotted Blue)
+#                     fig_monthly.add_trace(go.Scatter(
+#                         x=df_forecast_monthly['Month'],
+#                         y=df_forecast_monthly['Forecasted Capacity'],
+#                         name='Forecasted Capacity (Trend)',
+#                         mode='lines',
+#                         line=dict(color='blue', dash='dot')
+#                     ))
+                    
+#                     # Add Max Capacity line (Dotted Grey)
+#                     fig_monthly.add_trace(go.Scatter(
+#                         x=df_forecast_monthly['Month'],
+#                         y=df_forecast_monthly['Max Capacity'],
+#                         name='Max Possible Capacity',
+#                         mode='lines',
+#                         line=dict(color='grey', dash='dot')
+#                     ))
+                    
+#                     # Add Inventory line on secondary axis (Solid Green)
+#                     fig_monthly.add_trace(go.Scatter(
+#                         x=df_forecast_monthly['Month'],
+#                         y=df_forecast_monthly['Projected End Inventory'],
+#                         name='Projected End Inventory',
+#                         mode='lines+markers',
+#                         line=dict(color='green'),
+#                         yaxis="y2"
+#                     ))
+                    
+#                     # Set barmode to group to see Demand vs Actual side-by-side
+#                     fig_monthly.update_layout(barmode='group')
+
+#                     fig_monthly.update_layout(
+#                         title="12-Month Strategic Forecast",
+#                         xaxis_title="Month",
+#                         yaxis_title="Parts (Demand vs. Capacity)",
+#                         yaxis2=dict(
+#                             title="Parts (Projected Inventory)",
+#                             overlaying="y",
+#                             side="right"
+#                         ),
+#                         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+#                     )
+#                     st.plotly_chart(fig_monthly, use_container_width=True)
+                    
+#                     # --- Data Table ---
+#                     # --- v7.43: Re-order and format table ---
+#                     display_cols_monthly = [
+#                         "Month", "Status", "Demand", "Production", 
+#                         "Monthly Net", "Projected End Inventory"
+#                     ]
+#                     st.dataframe(df_forecast_monthly[display_cols_monthly].style.format({
+#                         'Demand': '{:,.0f}',
+#                         'Production': '{:,.0f}',
+#                         'Monthly Net': '{:+,.0f}',
+#                         'Projected End Inventory': '{:,.0f}'
+#                     }).applymap(
+#                         lambda v: 'color: red;' if v < 0 else ('color: green;' if v > 0 else None),
+#                         subset=['Monthly Net']
+#                     ).applymap(
+#                         lambda v: 'color: red;' if v < 0 else None,
+#                         subset=['Projected End Inventory']
+#                     ), use_container_width=True)
+
+#             except Exception as e:
+#                 st.error(f"Error parsing demand data: {e}. Please ensure you have 12 valid numbers.")
+
+#     # --- 3. Short-Term Daily Model (Original) ---
+#     st.subheader("2. Short-Term Daily Forecast")
+    
+#     with st.expander("Expand for short-term daily planning"):
+#         # --- Use the already-calculated dataframes from tab 1 ---
+#         if 'daily_summary_df' not in locals():
+#             # This is a fallback in case the function is called in a weird context
+#             st.error("Daily summary data not found. Please reload the app.")
+#             st.stop()
+#         if 'all_shots_df' not in locals():
+#             st.error("Shot data not loaded. Please ensure main report runs.")
+#             st.stop()
+            
+#         min_data_date = all_shots_df['SHOT TIME'].dt.date.min()
+#         max_data_date = all_shots_df['SHOT TIME'].dt.date.max()
+
+#         st.markdown("##### Calculate Current Run Rate")
+        
+#         c1, c2 = st.columns(2)
+#         with c1:
+#             # --- v7.41: FIX for date_input crash ---
+#             # Ensure default value is never less than min_value
+#             default_start_date = max(min_data_date, max_data_date - timedelta(days=6))
+            
+#             analysis_start = st.date_input(
+#                 "Analysis Start Date", 
+#                 value=default_start_date, # Use safe default
+#                 min_value=min_data_date, 
+#                 max_value=max_data_date,
+#                 key="forecast_start"
+#             )
+#         with c2:
+#             analysis_end = st.date_input(
+#                 "Analysis End Date", 
+#                 value=max_data_date, 
+#                 min_value=min_data_date, 
+#                 max_value=max_data_date,
+#                 key="forecast_end"
+#             )
+        
+#         if analysis_start > analysis_end:
+#             st.error("Analysis Start Date must be before End Date.")
+#         else:
+#             analysis_df = daily_summary_df.loc[analysis_start:analysis_end]
+            
+#             total_parts = analysis_df['Actual Output (parts)'].sum()
+#             total_sec = analysis_df['Filtered Run Time (sec)'].sum()
+            
+#             parts_per_day = (total_parts / total_sec) * 86400 if total_sec > 0 else 0
+            
+#             st.metric(
+#                 f"Calculated Run Rate (from {analysis_start} to {analysis_end})", 
+#                 f"{parts_per_day:,.0f} Parts / Day"
+#             )
+#             st.caption(f"Based on {total_parts:,.0f} parts produced in {format_seconds_to_dhm(total_sec)} of run time.")
+
+#             st.markdown("##### Input Future Demand Plan")
+            
+#             c1, c2 = st.columns([1, 2])
+#             with c1:
+#                 start_inventory = st.number_input("Current Inventory (Starting Stock)", value=0, min_value=0, step=100, key="daily_stock")
+            
+#             with c2:
+#                 demand_sample = f"{(datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')},500\n{(datetime.now() + timedelta(days=2)).strftime('%Y-%m-%d')},500\n{(datetime.now() + timedelta(days=3)).strftime('%Y-%m-%d')},550"
+#                 demand_input = st.text_area(
+#                     "Paste Demand Data (Date,Demand)", 
+#                     value=demand_sample, 
+#                     height=150,
+#                     help="Paste CSV data with two columns: `Date` and `Demand`. e.g., '2025-11-16,500'",
+#                     key="daily_demand"
+#                 )
+            
+#             if st.button("Run Daily Forecast"):
+#                 if parts_per_day == 0:
+#                     st.error("Cannot forecast with a zero production rate. Select a different analysis period.")
+#                 elif not demand_input:
+#                     st.error("Please paste demand data to run the forecast.")
+#                 else:
+#                     try:
+#                         demand_data = io.StringIO(demand_input)
+#                         df_demand = pd.read_csv(demand_data, header=None, names=['Date', 'Demand'])
+#                         df_demand['Date'] = pd.to_datetime(df_demand['Date'])
+#                         df_demand['Demand'] = pd.to_numeric(df_demand['Demand'])
+                        
+#                         # Create a full date range from the demand data
+#                         forecast_start_date = df_demand['Date'].min()
+#                         forecast_end_date = df_demand['Date'].max()
+#                         all_forecast_dates = pd.date_range(start=forecast_start_date, end=forecast_end_date, freq='D')
+                        
+#                         forecast_df = pd.DataFrame(all_forecast_dates, columns=['Date'])
+                        
+#                         # Merge demand data, filling non-demand days with 0
+#                         forecast_df = pd.merge(forecast_df, df_demand, on='Date', how='left').fillna(0)
+                        
+#                         forecast_df['Projected Production'] = parts_per_day
+#                         forecast_df['Cumulative Demand'] = forecast_df['Demand'].cumsum()
+#                         forecast_df['Cumulative Production'] = forecast_df['Projected Production'].cumsum()
+#                         forecast_df['Projected Inventory'] = start_inventory + forecast_df['Cumulative Production'] - forecast_df['Cumulative Demand']
+                        
+#                         # --- Calculate KPIs ---
+#                         end_inventory = forecast_df['Projected Inventory'].iloc[-1]
+#                         min_inventory = forecast_df['Projected Inventory'].min()
+#                         shortfall_date = None
+#                         if min_inventory < 0:
+#                             shortfall_date = forecast_df[forecast_df['Projected Inventory'] < 0]['Date'].min()
+
+#                         c1, c2, c3 = st.columns(3)
+#                         with c1:
+#                             st.metric(
+#                                 "Projected End Inventory", 
+#                                 f"{end_inventory:,.0f} parts",
+#                                 delta=f"{end_inventory - start_inventory:,.0f}",
+#                                 delta_color="normal"
+#                             )
+#                         with c2:
+#                             st.metric(
+#                                 "Projected Max Shortfall",
+#                                 f"{min_inventory:,.0f} parts" if min_inventory < 0 else "No Shortfall",
+#                                 delta_color="inverse"
+#                             )
+#                         with c3:
+#                             if shortfall_date:
+#                                 st.metric("Projected Shortfall Date", shortfall_date.strftime('%Y-%m-%d'))
+#                             else:
+#                                 st.metric("Projected Shortfall Date", "None")
+                        
+#                         # --- Plot Chart ---
+#                         fig_forecast = go.Figure()
+
+#                         # Add Cumulative Demand
+#                         fig_forecast.add_trace(go.Scatter(
+#                             x=forecast_df['Date'],
+#                             y=forecast_df['Cumulative Demand'],
+#                             name='Cumulative Demand',
+#                             mode='lines',
+#                             line=dict(color='red', width=2, dash='dot')
+#                         ))
+                        
+#                         # Add Cumulative Production (with starting inventory)
+#                         fig_forecast.add_trace(go.Scatter(
+#                             x=forecast_df['Date'],
+#                             y=forecast_df['Cumulative Production'] + start_inventory,
+#                             name='Projected Cumulative Production (incl. stock)',
+#                             mode='lines',
+#                             line=dict(color='blue', width=2)
+#                         ))
+                        
+#                         fig_forecast.update_layout(
+#                             title="Projected Production vs. Demand",
+#                             xaxis_title="Date",
+#                             yaxis_title="Cumulative Parts",
+#                             hovermode="x unified"
+#                         )
+#                         st.plotly_chart(fig_forecast, use_container_width=True)
+                        
+#                         # --- Show Data Table ---
+#                         with st.expander("View Forecast Data Table"):
+#                             st.dataframe(forecast_df.style.format({
+#                                 'Demand': '{:,.0f}',
+#                                 'Projected Production': '{:,.0f}',
+#                                 'Cumulative Demand': '{:,.0f}',
+#                                 'Cumulative Production': '{:,.0f}',
+#                                 'Projected Inventory': '{:,.0f}'
+#                             }), use_container_width=True)
+
+#                     except Exception as e:
+#                         st.error(f"Error parsing demand data: {e}")
 #                         st.info("Please ensure your data is in the format 'YYYY-MM-DD,500' with one entry per line.")
 
 
@@ -1055,7 +1620,8 @@ if uploaded_file is not None:
                             
                         if data_frequency == 'Weekly': xaxis_title = "Week"
                         elif data_frequency == 'Monthly': xaxis_title = "Month"
-                        elif data_frequency == 'by Run': xaxis_title = "Run ID"
+                        # --- v7.53: Fix SyntaxError by changing 'elif' to 'if' ---
+                        if data_frequency == 'by Run': xaxis_title = "Run ID"
                         else: xaxis_title = "Date"
                         
                         if data_frequency == 'by Run':
@@ -1211,6 +1777,16 @@ if uploaded_file is not None:
                             report_table_target['Actual Output (parts)'] = report_table_target_df.apply(lambda r: f"{r['Actual Output (parts)']:,.2f} ({r['Actual Output (%)']:.1%})", axis=1)
                             report_table_target['Actual % (vs Target)'] = report_table_target_df.apply(lambda r: r['Actual Output (parts)'] / r['Target Output (parts)'] if r['Target Output (parts)'] > 0 else 0, axis=1).apply(lambda x: "{:.1%}".format(x) if pd.notna(x) else "N/A")
                             report_table_target['Net Gap to Target (parts)'] = report_table_target_df['Gap to Target (parts)'].apply(lambda x: "{:+,.2f}".format(x) if pd.notna(x) else "N/A")
+                            report_table_target['Capacity Loss (vs Target)'] = report_table_target_df['Capacity Loss (vs Target) (parts)'].apply(lambda x: "{:,.2f}".format(x) if pd.notna(x) else "N/A")
+                            
+                            report_table_target['Allocated Loss (RR Downtime)'] = report_table_target_df.apply(
+                                lambda r: f"{r['Allocated Loss (RR Downtime)']:,.2f} ({r['loss_downtime_ratio']:.1%})", 
+                                axis=1
+                            )
+                            report_table_target['Allocated Loss (Slow Cycles)'] = report_table_target_df.apply(
+                                lambda r: f"{r['Allocated Loss (Slow Cycles)']:,.2f} ({r['loss_slow_ratio']:.1%})", 
+                                axis=1
+                            )
                             report_table_target['Allocated Gain (Fast Cycles)'] = report_table_target_df.apply(
                                 lambda r: f"{r['Allocated Gain (Fast Cycles)']:,.2f} ({r['gain_fast_ratio']:.1%})", 
                                 axis=1
