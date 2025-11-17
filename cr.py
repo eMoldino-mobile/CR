@@ -18,7 +18,7 @@ from cr_utils import (
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
 # v8.6: Final alignment logic for run_rate_app.py
-__version__ = "v9.0 (downtime bug fix 999.9)"
+__version__ = "v9.1 (downtime bug fix 999.9)"
 # ==================================================================
 
 # ==================================================================
