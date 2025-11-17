@@ -276,17 +276,18 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         df_rr.loc[0, "stop_flag"] = 0
     # --- End Fix ---
     
+    # --- FINAL, CORRECT adj_ct_sec LOGIC ---
+    # 1. Set the default time for ALL shots to their Actual CT.
+    #    This correctly includes 'Abnormal Cycle' and 'Hard Stop' (999.9)
+    #    stops in the downtime calculation.
     df_rr['adj_ct_sec'] = df_rr['Actual CT']
-    
-    # --- FINAL FIX: 'is_hard_stop_code' line is DELETED ---
     
     # 2. Overwrite with the real gap time. This ensures 'Time Gap'
     #    takes priority and captures the full downtime.
     df_rr.loc[is_time_gap, 'adj_ct_sec'] = df_rr['rr_time_diff']
-    # --- End Fix ---
     
-    # --- FINAL FIX: Explicitly set Run Breaks to 0 ---
-    # This is needed to exclude long gaps (like weekends) from the downtime total.
+    # 3. Explicitly set Run Breaks to 0. This overwrites the 'Time Gap'
+    #    value only if the gap is a Run Break, excluding it from the sum.
     df_rr.loc[is_run_break, 'adj_ct_sec'] = 0
     # --- End Final Fix ---
 
@@ -493,7 +494,7 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
         if avg_approved_ct == 0 or pd.isna(avg_approved_ct): avg_approved_ct = 1
             
         df_run_prod_for_mode = df_run[df_run["Actual CT"] < 999.9]
-        if not df_run_prod_for_mode..empty:
+        if not df_run_prod_for_mode.empty:
             results['Mode CT'] = df_run_prod_for_mode['Actual CT'].mode().iloc[0] if not df_run_prod_for_mode['Actual CT'].mode().empty else 0.0
         else:
             results['Mode CT'] = 0.0
@@ -562,4 +563,16 @@ def run_capacity_calculation_cached_v2(raw_data_df, toggle, cavities, target_out
         return pd.DataFrame(), pd.DataFrame()
         
     return calculate_capacity_risk(
-        raw_T... (rest of the file) ...
+        raw_data_df,
+        toggle,
+        cavities,
+        target_output_perc_slider,
+        mode_tol,      
+        rr_gap,        
+        run_interval    
+    )
+
+# ==================================================================
+#                       TABS 2 & 3 (COMMENTED)
+# ==================================================================
+# (All of Tab 2 and Tab 3 functions remain commented out)
