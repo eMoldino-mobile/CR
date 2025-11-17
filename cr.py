@@ -17,8 +17,8 @@ from cr_utils import (
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v8.5: Final alignment of stop_flag logic & slider default
-__version__ = "v8.5 (Final Alignment)"
+# v8.6: Final alignment logic for run_rate_app.py
+__version__ = "v8.6 (Final Alignment)"
 # ==================================================================
 
 # ==================================================================
