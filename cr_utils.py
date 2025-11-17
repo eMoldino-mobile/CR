@@ -277,7 +277,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     df_rr.loc[is_hard_stop_code, 'adj_ct_sec'] = 0 
     
     # --- v8.6: REMOVED BUGGY LINE ---
-    # This line was incorrectly zeroing-out downtime
+    # This line was incorrectly zeroing-out downtime for run-starting shots
     # df_rr.loc[is_run_break, 'adj_ct_sec'] = 0 
     # --- End v8.6 Fix ---
 
@@ -329,8 +329,12 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     
     # Update df_rr with the new 'Shot Type'
     df_rr['Shot Type'] = df_production['Shot Type'] 
-    df_rr.loc[is_run_break, 'Shot Type'] = 'Run Break (Excluded)'
+    
+    # --- v8.6: FIX for "Ghost" 0.12 Loss ---
+    # Only label a shot "Run Break (Excluded)" if it's *also* a downtime shot
+    df_rr.loc[is_run_break & (df_rr['stop_flag'] == 1), 'Shot Type'] = 'Run Break (Excluded)'
     df_rr['Shot Type'].fillna('RR Downtime (Stop)', inplace=True) 
+    # --- End v8.6 Fix ---
     
     df_rr['date'] = df_rr['SHOT TIME'].dt.date
     df_production['date'] = df_production['SHOT TIME'].dt.date
