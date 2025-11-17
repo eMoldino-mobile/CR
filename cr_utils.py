@@ -255,7 +255,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     in_mode_band = (df_rr["Actual CT"] >= df_rr['mode_lower_limit']) & (df_rr["Actual CT"] <= df_rr['mode_upper_limit'])
     
     # --- v8.4: This logic now perfectly matches run_rate_app.py ---
-    # A time gap is a stop (but not if it's a run break)
+    # A time gap is a stop
     is_time_gap = (df_rr["rr_time_diff"] > (prev_actual_ct + rr_downtime_gap))
     
     # An abnormal cycle is a stop
