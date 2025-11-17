@@ -114,13 +114,10 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     This function ALWAYS calculates vs Optimal (Approved CT).
     """
     
-    # --- FIX 1: ADD THIS LINE BACK TO FIX NameError ---
+    # Fix for NameError
     df = _df_raw.copy()
-    # --- END FIX 1 ---
 
     # --- 1. Standardize and Prepare Data ---
-    # (We already copied df, so no need to do it again)
-
     # --- Flexible Column Name Mapping ---
     column_variations = {
         'SHOT TIME': ['shot time', 'shot_time', 'timestamp', 'datetime'],
@@ -207,18 +204,11 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     
     # This finds gaps between *all shots* (for RR stoppage logic)
     df_rr["rr_time_diff"] = df_rr["SHOT TIME"].diff().dt.total_seconds().fillna(0.0)
-    
-    # This finds the true gaps between *production runs*
-    # --- FIX 2: This variable is no longer needed for run breaks ---
-    # df_production_gaps = df_rr[~is_hard_stop_code]["SHOT TIME"].diff().dt.total_seconds()
-    # df_rr["run_break_time_diff"] = df_production_gaps.fillna(0.0)
-    # --- END FIX 2 ---
 
     # 4. Identify global "Run Breaks"
     run_break_threshold_sec = run_interval_hours * 3600
-    # --- FIX 2: Base 'is_run_break' on 'rr_time_diff' (all shots) ---
+    # --- FINAL FIX: Base 'is_run_break' on 'rr_time_diff' (all shots) ---
     is_run_break = df_rr["rr_time_diff"] > run_break_threshold_sec
-    # --- END FIX 2 ---
     df_rr['is_run_break'] = is_run_break
     
     # 5. Assign a *global* run_id (0-based index)
@@ -272,22 +262,22 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     df_rr["stop_flag"] = np.where(is_abnormal_cycle | is_time_gap | is_hard_stop_code, 1, 0)
     
     # Force the *first shot of the entire file* (at index 0)
-    # to be a production shot.
     if not df_rr.empty:
-        # Note: df_rr was reset_index, so loc[0] is the first shot
         df_rr.loc[0, "stop_flag"] = 0
     
     # --- FINAL, CORRECT adj_ct_sec LOGIC ---
     # 1. Set the default time for ALL shots to their Actual CT.
-    #    This correctly includes 'Abnormal Cycle' and 'Hard Stop' (999.9)
-    #    stops in the downtime calculation.
+    #    This includes 'Abnormal Cycle' stops.
     df_rr['adj_ct_sec'] = df_rr['Actual CT']
     
-    # 2. Overwrite with the real gap time. This ensures 'Time Gap'
-    #    takes priority and captures the full downtime.
+    # 2. Set 0 for 999.9 stops first.
+    df_rr.loc[is_hard_stop_code, 'adj_ct_sec'] = 0 
+    
+    # 3. Overwrite with the real gap time. This ensures 'Time Gap'
+    #    takes priority over 'Hard Stop' and captures the full downtime.
     df_rr.loc[is_time_gap, 'adj_ct_sec'] = df_rr['rr_time_diff']
     
-    # 3. Explicitly set Run Breaks to 0. This overwrites the 'Time Gap'
+    # 4. Explicitly set Run Breaks to 0. This overwrites the 'Time Gap'
     #    value only if the gap is a Run Break, excluding it from the sum.
     df_rr.loc[is_run_break, 'adj_ct_sec'] = 0
     # --- End Final Fix ---
@@ -298,15 +288,12 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
 
     # 12. Calculate per-shot losses/gains (with floating point fix)
     
-    # A shot is "Slow" only if it's measurably greater than the reference
     is_slow = (df_production['Actual CT'] > df_production['reference_ct']) & \
               ~np.isclose(df_production['Actual CT'], df_production['reference_ct'])
     
-    # A shot is "Fast" only if it's measurably less than the reference
     is_fast = (df_production['Actual CT'] < df_production['reference_ct']) & \
               ~np.isclose(df_production['Actual CT'], df_production['reference_ct'])
     
-    # A shot is "On Target" only if it's "close enough"
     is_on_target = np.isclose(df_production['Actual CT'], df_production['reference_ct'])
     
     df_production['parts_gain'] = np.where(
@@ -330,7 +317,6 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         0
     )
     
-    # Update df_rr with the values from df_production
     df_rr.update(df_production[['parts_gain', 'parts_loss', 'time_gain_sec', 'time_loss_sec']])
 
     # 13. Add Shot Type and date
@@ -338,10 +324,8 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     choices = ['Slow', 'Fast', 'On Target']
     df_production['Shot Type'] = np.select(conditions, choices, default='N/A')
     
-    # Update df_rr with the new 'Shot Type'
     df_rr['Shot Type'] = df_production['Shot Type'] 
     
-    # Only label a shot "Run Break (Excluded)" if it's *also* a downtime shot
     df_rr.loc[is_run_break & (df_rr['stop_flag'] == 1), 'Shot Type'] = 'Run Break (Excluded)'
     df_rr['Shot Type'].fillna('RR Downtime (Stop)', inplace=True) 
     
@@ -395,7 +379,6 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         results['Capacity Loss (downtime) (sec)'] = daily_down['adj_ct_sec'].sum()
         results['Actual Output (parts)'] = daily_prod['Working Cavities'].sum()
         
-        # Match run_rate_app.py: Sum the CT of production shots directly.
         results['Actual Cycle Time Total (sec)'] = daily_prod['Actual CT'].sum()
         
         # Inefficiency (CT Slow/Fast) Loss
@@ -421,7 +404,6 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         
         results['Gap to Target (parts)'] = results['Actual Output (parts)'] - results['Target Output (parts)']
         
-        # This value is RE-CALCULATED after aggregation in the main app.
         results['Capacity Loss (vs Target) (parts)'] = np.maximum(0, results['Target Output (parts)'] - results['Actual Output (parts)'])
         
         results['Capacity Loss (vs Target) (sec)'] = (results['Capacity Loss (vs Target) (parts)'] * avg_reference_ct) / max_cavities
@@ -502,7 +484,6 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
         results['Capacity Loss (downtime) (sec)'] = run_down['adj_ct_sec'].sum()
         results['Actual Output (parts)'] = run_prod['Working Cavities'].sum()
         
-        # Match run_rate_app.py: Sum the CT of production shots directly.
         results['Actual Cycle Time Total (sec)'] = run_prod['Actual CT'].sum()
 
         results['Capacity Gain (fast cycle time) (sec)'] = run_prod['time_gain_sec'].sum()
