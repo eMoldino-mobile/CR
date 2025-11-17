@@ -264,6 +264,8 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     # Flag all three types of stops
     df_rr["stop_flag"] = np.where(is_abnormal_cycle | is_time_gap | is_hard_stop_code, 1, 0)
     
+    # --- v8.6: FIX to match run_rate_app.py chunk logic ---
+    # Force the *first shot of every run* to be a production shot.
     # --- FIX: Force only the *very first shot of the entire file* (at index 0)
     # to be a production shot. This prevents mis-categorizing 999.9
     # shots that start subsequent runs.
@@ -273,9 +275,14 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     # --- End Fix ---
     
     df_rr['adj_ct_sec'] = df_rr['Actual CT']
-    # Use 'rr_time_diff' for the stoppage time
-    df_rr.loc[is_time_gap, 'adj_ct_sec'] = df_rr['rr_time_diff']
+    
+    # --- FIX: Re-ordered these two lines ---
+    # 1. Set 0 for 999.9 stops first.
     df_rr.loc[is_hard_stop_code, 'adj_ct_sec'] = 0 
+    # 2. Overwrite with the real gap time. This ensures 'Time Gap'
+    #    takes priority over 'Hard Stop' and captures the full downtime.
+    df_rr.loc[is_time_gap, 'adj_ct_sec'] = df_rr['rr_time_diff']
+    # --- End Fix ---
     
     # --- v8.6: REMOVED BUGGY LINE ---
     # This line was incorrectly zeroing-out downtime for run-starting shots
