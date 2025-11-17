@@ -17,8 +17,8 @@ from cr_utils import (
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v8.4: Aligned stop_flag logic with run_rate_app.py
-__version__ = "v8.4 (Stop Logic Alignment)"
+# v8.5: Final alignment of stop_flag logic & slider default
+__version__ = "v8.5 (Final Alignment)"
 # ==================================================================
 
 # ==================================================================
@@ -112,7 +112,7 @@ if uploaded_file is not None:
     st.sidebar.subheader("3. Set Calculation Logic")
     
     mode_ct_tolerance = st.sidebar.slider(
-        "Mode CT Tolerance (%)", 0.01, 0.50, 0.25, 0.01,  
+        "Mode CT Tolerance (%)", 0.01, 0.50, 0.05, 0.01,  # v8.5: Set default to 0.05 (5%)
         help="Tolerance band (±) around the **Actual Mode CT**. Shots outside this band are flagged as 'Abnormal Cycle' (Downtime)."
     )
     
