@@ -260,9 +260,14 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     # An abnormal cycle is a stop
     is_abnormal_cycle = ~in_mode_band & ~is_hard_stop_code
     
-    # A run break shot is only a stop if it's *also* an abnormal cycle or time gap.
-    # Otherwise, it's just the first shot of a new run.
+    # Flag all three types of stops
     df_rr["stop_flag"] = np.where(is_abnormal_cycle | is_time_gap | is_hard_stop_code, 1, 0)
+    
+    # --- v8.2: FIX to match run_rate_app.py logic ---
+    # Find the first shot of each run_id and force its stop_flag to 0.
+    first_shot_indices = df_rr.groupby('run_id', group_keys=False).head(1).index
+    df_rr.loc[first_shot_indices, "stop_flag"] = 0
+    # --- End v8.2 Fix ---
     
     df_rr['adj_ct_sec'] = df_rr['Actual CT']
     # Use 'rr_time_diff' for the stoppage time
@@ -550,9 +555,4 @@ def run_capacity_calculation_cached_v2(raw_data_df, toggle, cavities, target_out
 # ==================================================================
 #                       TABS 2 & 3 (COMMENTED)
 # ==================================================================
-
-# def render_automated_risk_tab(all_time_summary_df, all_time_totals):
-#     ...
-
-# def render_demand_planning_tab(daily_summary_df, all_shots_df, all_time_summary_df):
-#     ...
+# (All of Tab 2 and Tab 3 functions remain commented out)
