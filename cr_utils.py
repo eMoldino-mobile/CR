@@ -114,9 +114,13 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     This function ALWAYS calculates vs Optimal (Approved CT).
     """
     
+    # --- FIX: ADD THIS LINE BACK TO FIX NameError ---
     df = _df_raw.copy()
+    # --- END FIX ---
 
     # --- 1. Standardize and Prepare Data ---
+    # (We already copied df, so no need to do it again)
+
     # --- Flexible Column Name Mapping ---
     column_variations = {
         'SHOT TIME': ['shot time', 'shot_time', 'timestamp', 'datetime'],
@@ -260,13 +264,17 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     # Flag all three types of stops
     df_rr["stop_flag"] = np.where(is_abnormal_cycle | is_time_gap | is_hard_stop_code, 1, 0)
     
-    # Force the *first shot of the entire file* (at index 0)
+    # --- FIX: ALIGN WITH RR LOGIC (OPTION 2) ---
+    # Force the *first shot of every run* to be a production shot.
     if not df_rr.empty:
-        df_rr.loc[0, "stop_flag"] = 0
+        first_shot_of_each_run_idx = df_rr.groupby('run_id').head(1).index
+        df_rr.loc[first_shot_of_each_run_idx, "stop_flag"] = 0
+    # --- End Fix ---
     
     # --- `adj_ct_sec` LOGIC (Still needed for Shot Type) ---
     df_rr['adj_ct_sec'] = df_rr['Actual CT']
     df_rr.loc[is_time_gap, 'adj_ct_sec'] = df_rr['rr_time_diff']
+    # Explicitly set Run Breaks to 0
     df_rr.loc[is_run_break, 'adj_ct_sec'] = 0
     # --- End `adj_ct_sec` Logic ---
 
@@ -339,6 +347,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         results = {col: 0 for col in ALL_RESULT_COLUMNS} # Pre-fill all with 0
         results['Date'] = date
         
+        # We must re-filter for the daily shots *after* the per-run logic
         daily_prod = df_production[df_production['date'] == date]
         daily_down = df_downtime[df_downtime['date'] == date]
 
@@ -369,6 +378,8 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         
         # --- FINAL FIX: Make Downtime (sec) the plug figure ---
         results['Capacity Loss (downtime) (sec)'] = results['Filtered Run Time (sec)'] - results['Actual Cycle Time Total (sec)']
+        if results['Capacity Loss (downtime) (sec)'] < 0:
+             results['Capacity Loss (downtime) (sec)'] = 0
         # --- END FIX ---
         
         # Inefficiency (CT Slow/Fast) Loss
@@ -476,6 +487,8 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
 
         # --- FINAL FIX: Make Downtime (sec) the plug figure ---
         results['Capacity Loss (downtime) (sec)'] = results['Filtered Run Time (sec)'] - results['Actual Cycle Time Total (sec)']
+        if results['Capacity Loss (downtime) (sec)'] < 0:
+             results['Capacity Loss (downtime) (sec)'] = 0
         # --- END FIX ---
 
         results['Capacity Gain (fast cycle time) (sec)'] = run_prod['time_gain_sec'].sum()
