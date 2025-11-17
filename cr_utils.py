@@ -264,12 +264,13 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     # Flag all three types of stops
     df_rr["stop_flag"] = np.where(is_abnormal_cycle | is_time_gap | is_hard_stop_code, 1, 0)
     
-    # --- v8.6: FIX to match run_rate_app.py chunk logic ---
-    # Force the *first shot of every run* to be a production shot.
+    # --- FIX: Force only the *very first shot of the entire file* (at index 0)
+    # to be a production shot. This prevents mis-categorizing 999.9
+    # shots that start subsequent runs.
     if not df_rr.empty:
-        first_shot_of_each_run_idx = df_rr.groupby('run_id').head(1).index
-        df_rr.loc[first_shot_of_each_run_idx, "stop_flag"] = 0
-    # --- End v8.6 Fix ---
+        # Note: df_rr was reset_index, so loc[0] is the first shot
+        df_rr.loc[0, "stop_flag"] = 0
+    # --- End Fix ---
     
     df_rr['adj_ct_sec'] = df_rr['Actual CT']
     # Use 'rr_time_diff' for the stoppage time
