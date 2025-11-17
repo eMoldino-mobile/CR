@@ -17,8 +17,8 @@ from cr_utils import (
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v8.3: Fixed Total Downtime calculation to be bottom-up
-__version__ = "v8.3 (Downtime Calc Fix)"
+# v8.4: Aligned stop_flag logic with run_rate_app.py
+__version__ = "v8.4 (Stop Logic Alignment)"
 # ==================================================================
 
 # ==================================================================
@@ -26,7 +26,6 @@ __version__ = "v8.3 (Downtime Calc Fix)"
 # ==================================================================
 
 # --- Page Config ---
-# ... (rest of cr.py is unchanged from v8.1) ...
 st.set_page_config(
     page_title=f"Capacity Risk Calculator (v{__version__})",
     layout="wide"
@@ -554,6 +553,7 @@ if uploaded_file is not None:
                                 chart_df['Capacity Loss (slow cycle time) (parts)'],
                                 chart_df['Capacity Gain (fast cycle time) (parts)']
                             ), axis=-1),
+                            # --- v8.1: Fixed SyntaxError by removing stray underscore ---
                             hovertemplate=
                                 '<b>Net Cycle Time Loss: %{customdata[0]:,.0f}</b><br>' +
                                 'Slow Cycle Loss: %{customdata[1]:,.0f}<br>' +
@@ -601,8 +601,6 @@ if uploaded_file is not None:
                             report_table_1_df['Run ID'] = report_table_1_df['Run ID'] + 1
                             
                             # --- v8.3 FIX: Use the correct bottom-up downtime sum ---
-                            # This was the bug. It was incorrectly calculating top-down.
-                            # report_table_1_df['Total Downtime (sec)'] = report_table_1_df['Filtered Run Time (sec)'] - report_table_1_df['Actual Cycle Time Total (sec)']
                             report_table_1_df['Total Downtime (sec)'] = report_table_1_df['Capacity Loss (downtime) (sec)']
                             # --- End v8.3 Fix ---
 
