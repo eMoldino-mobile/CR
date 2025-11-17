@@ -17,8 +17,8 @@ from cr_utils import (
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v8.0: Refactored into multi-file app and cleaned all code
-__version__ = "v8.0 (Refactored)"
+# v8.1: Fixed SyntaxError and aligned Prod Time logic
+__version__ = "v8.1 (Prod Time & Syntax Fix)"
 # ==================================================================
 
 # ==================================================================
@@ -556,7 +556,7 @@ if uploaded_file is not None:
                             hovertemplate=
                                 '<b>Net Cycle Time Loss: %{customdata[0]:,.0f}</b><br>' +
                                 'Slow Cycle Loss: %{customdata[1]:,.0f}<br>' +
-                                'Fast Cycle Gain: -%{customdata[2]:,.0f}<br>'_
+                                'Fast Cycle Gain: -%{customdata[2]:,.0f}<br>' +
                                 '<extra></extra>'
                         ))
                         
