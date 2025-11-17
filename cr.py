@@ -553,7 +553,7 @@ if uploaded_file is not None:
                                 chart_df['Capacity Loss (slow cycle time) (parts)'],
                                 chart_df['Capacity Gain (fast cycle time) (parts)']
                             ), axis=-1),
-                            # --- v8.1: Fixed SyntaxError by removing stray underscore ---
+                            # --- v8.6: Fixed SyntaxError by removing stray underscore ---
                             hovertemplate=
                                 '<b>Net Cycle Time Loss: %{customdata[0]:,.0f}</b><br>' +
                                 'Slow Cycle Loss: %{customdata[1]:,.0f}<br>' +
