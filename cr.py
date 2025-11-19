@@ -18,8 +18,8 @@ from cr_utils import (
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v9.9: Custom Prediction Dates
-__version__ = "v10.0 (Target Demand Input Added)"
+# v10.0: Target Demand Input Added
+__version__ = "v10.1 (Fix Prediction Start Value)"
 # ==================================================================
 
 # ==================================================================
@@ -1010,12 +1010,25 @@ if uploaded_file is not None:
                         prog_df_pred = daily_summary_df.sort_index().copy()
                         prog_df_pred['Cum Actual'] = prog_df_pred['Actual Output (parts)'].cumsum()
                         
-                        last_actual_date = prog_df_pred.index.max().to_pydatetime().date()
-                        current_cumulative_output = prog_df_pred['Cum Actual'].iloc[-1]
+                        # Fix: Ensure we look at the cumulative sum *at the chosen start date*
+                        # If the user picks a past date, the starting point for projection must be the actual
+                        # cumulative total at that date, not the final total.
                         
-                        # --- 2. Calculate Projections (Slopes) ---
-                        days_in_period = (last_actual_date - min_pred_date).days + 1
-                        current_daily_rate = current_cumulative_output / days_in_period if days_in_period > 0 else 0
+                        if pd.Timestamp(pred_start_date) in prog_df_pred.index:
+                             start_val = prog_df_pred.loc[pd.Timestamp(pred_start_date), 'Cum Actual']
+                        else:
+                             # Fallback: find closest date before or equal to pred_start_date
+                             past_data = prog_df_pred[prog_df_pred.index <= pd.Timestamp(pred_start_date)]
+                             if not past_data.empty:
+                                 start_val = past_data['Cum Actual'].iloc[-1]
+                             else:
+                                 start_val = 0 # If prediction starts before any data
+                        
+                        # Determine the daily rate from history up to that point
+                        # Or do we project based on the *entire* history's average?
+                        # Usually, "current run rate" implies the rate calculated from the analyzed period.
+                        days_in_period = len(daily_summary_df)
+                        current_daily_rate = all_time_totals['total_produced'] / days_in_period if days_in_period > 0 else 0
                         
                         # --- 3. Generate Future Dates based on User Selection ---
                         # Days between prediction start and target date
@@ -1026,11 +1039,7 @@ if uploaded_file is not None:
                         
                         # --- 4. Build Future Datapoints ---
                         
-                        # Calculate offset if start date is different from last actual date
-                        # (For simplicity, we project from current cumulative total at the start date)
-                        start_val = current_cumulative_output
-                        
-                        # Projections
+                        # Projections starting from the correct 'start_val'
                         future_actual_proj = [start_val + (current_daily_rate * i) for i in range(len(future_dates))]
                         future_peak_proj = [start_val + (peak_daily * i) for i in range(len(future_dates))]
                         
@@ -1044,7 +1053,7 @@ if uploaded_file is not None:
                         
                         fig_pred = go.Figure()
                         
-                        # A. Historical Actual (Solid Line)
+                        # A. Historical Actual (Solid Line) - Plot full history up to last actual date
                         fig_pred.add_trace(go.Scatter(
                             x=prog_df_pred.index, y=prog_df_pred['Cum Actual'],
                             mode='lines', name='Historical Actual',
@@ -1076,7 +1085,7 @@ if uploaded_file is not None:
                                 opacity=0.6
                             ))
                         
-                        # E. Company Demand (Horizontal Line) - NEW
+                        # E. Company Demand (Horizontal Line)
                         if demand_target > 0:
                             fig_pred.add_hline(
                                 y=demand_target, 
@@ -1085,9 +1094,9 @@ if uploaded_file is not None:
                                 annotation_position="top right"
                             )
                         
-                        # F. Add "Today/Start" marker
+                        # F. Add "Forecast Start" marker
                         fig_pred.add_vline(x=pred_start_date, line_width=1, line_color="grey", line_dash="solid")
-                        fig_pred.add_annotation(x=pred_start_date, y=current_cumulative_output, text="Forecast Start", showarrow=True, arrowhead=1)
+                        fig_pred.add_annotation(x=pred_start_date, y=start_val, text="Forecast Start", showarrow=True, arrowhead=1)
 
                         fig_pred.update_layout(
                             title=f"Future Capacity Prediction ({projection_days} Days)",
@@ -1118,7 +1127,8 @@ if uploaded_file is not None:
                         if demand_target > 0:
                             st.markdown("---")
                             d_c1, d_c2 = st.columns(2)
-                            final_projected_total = current_cumulative_output + projected_total_gain
+                            # Final projected total is the starting cumulative value + gain
+                            final_projected_total = start_val + projected_total_gain
                             
                             with d_c1:
                                 demand_gap = demand_target - final_projected_total
