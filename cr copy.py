@@ -11,15 +11,14 @@ from cr_utils import (
     load_data,
     get_preprocessed_data,
     calculate_run_summaries,
-    run_capacity_calculation_cached_v2,
-    calculate_capacity_risk_factor # <<< ADD THIS IMPORT
+    run_capacity_calculation_cached_v2
 )
 
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v9.2: Downtime bug fix
-__version__ = "v9.3 (Schedule Detection)"
+# v8.6: Final alignment logic for run_rate_app.py
+__version__ = "v9.2 (downtime bug fix 999.9)"
 # ==================================================================
 
 # ==================================================================
@@ -269,14 +268,6 @@ if uploaded_file is not None:
                         'total_true_net_loss_sec': total_true_net_loss_sec, 'total_calculated_net_loss_parts': total_calculated_net_loss_parts,
                         'total_calculated_net_loss_sec': total_calculated_net_loss_sec
                     }
-
-                # --- NEW: Calculate the Monthly Factor and Theoretical Capacity ---
-                # Only calculate this if analyzing the entire file or a custom, multi-day period
-                if analysis_period_selector in ["Entire File", "Custom Period"] or display_frequency in ["Weekly", "Monthly"]:
-                    monthly_cap, factor, avg_days_week, peak_daily = calculate_capacity_risk_factor(daily_summary_df)
-                else:
-                    # Reset for non-aggregate views
-                    monthly_cap, factor, avg_days_week, peak_daily = 0, 0, 0, 0 
                 
                 # --- Only display the single main tab ---
                 tab1, = st.tabs(["Capacity Risk Report"])
@@ -290,7 +281,7 @@ if uploaded_file is not None:
 
                     # --- Box 1: Overall Summary ---
                     with st.container(border=True):
-                        c1, c2, c3, c4, c5 = st.columns(5)
+                        c1, c2, c3, c4 = st.columns(4)
                         
                         with c1:
                             st.metric(run_time_label, all_time_totals['run_time_dhm_total'])
@@ -324,13 +315,6 @@ if uploaded_file is not None:
                                 st.markdown(f"**Total Capacity Loss (True)**")
                                 st.markdown(f"<h3><span style='color:red;'>{all_time_totals['total_true_net_loss_parts']:,.0f} parts</span></h3>", unsafe_allow_html=True) 
                                 st.caption(f"Total Time Lost: {format_seconds_to_dhm(all_time_totals['total_true_net_loss_sec'])}")
-
-                        # NEW Column 5 (Theoretical Monthly Capacity)
-                        if factor > 0:
-                            with c5:
-                                st.markdown(f"**Theoretical Monthly Capacity**")
-                                st.markdown(f"<h3><span style='color:green;'>{monthly_cap:,.0f} parts</span></h3>", unsafe_allow_html=True)
-                                st.caption(f"Based on **{avg_days_week:.1f} days/week** (Factor: {factor:.1f})")
                                 
                     # --- Waterfall Chart Layout ---
                     st.subheader(f"Capacity Loss Breakdown (vs {benchmark_title})")

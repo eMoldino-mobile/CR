@@ -104,64 +104,6 @@ def get_preprocessed_data(df_raw):
         return pd.DataFrame(), None, None
 
 # ==================================================================
-#                       SCHEDULE DETECTION LOGIC
-# ==================================================================
-
-def calculate_capacity_risk_factor(df_summary):
-    """
-    Calculates the average weekly production schedule, the monthly factor (4.33 based),
-    and the Peak Daily Output.
-    df_summary is the daily_summary_df (index is Date).
-    """
-    if df_summary.empty:
-        # Check if index is datetime-like; if not, assume single day and skip
-        if not isinstance(df_summary.index, pd.DatetimeIndex):
-            return 0, 0, 0, 0
-        return 0, 0, 0, 0
-        
-    # 1. Total Operating Days (Actual days shots were recorded)
-    operating_days = len(df_summary)
-
-    # 2. Total Span (Days) - Find the time difference between the min and max date indices
-    # We must reset the index for calculation if it was lost during grouping/resampling
-    if df_summary.index.empty:
-        min_date = datetime.now().date()
-        max_date = datetime.now().date()
-    else:
-        # Ensure the index is converted to datetime/date for subtraction
-        min_date = df_summary.index.min().to_pydatetime().date()
-        max_date = df_summary.index.max().to_pydatetime().date()
-    
-    # +1 Day to include the last day in the span
-    total_span_days = (max_date - min_date).days + 1 
-    
-    if total_span_days <= 0 or operating_days == 0:
-        return 0, 0, 0, 0
-
-    total_span_weeks = total_span_days / 7
-    
-    if total_span_weeks <= 0:
-        return 0, 0, 0, 0
-        
-    # A. Detected Average Production Days per Week
-    # This is the actual inferred schedule
-    avg_prod_days_per_week = operating_days / total_span_weeks
-    
-    # B. Monthly Factor (Average Production Days per Week * 4.33)
-    # 4.33 is the Average Weeks in a Month Constant
-    monthly_schedule_factor = avg_prod_days_per_week * 4.33  
-    
-    # C. Average Peak Daily Production (P90 of Actual Output)
-    # This aligns with the Item 21/28 concept: realistic maximum sustainable production
-    peak_daily_output = df_summary['Actual Output (parts)'].quantile(0.90)
-
-    # D. Theoretical Monthly Capacity (The new, realistic ceiling)
-    theoretical_monthly_capacity = peak_daily_output * monthly_schedule_factor if monthly_schedule_factor > 0 else 0
-
-    # Returns: (Theoretical Monthly Capacity, Monthly Factor, Avg Days/Week, Peak Daily Output)
-    return theoretical_monthly_capacity, monthly_schedule_factor, avg_prod_days_per_week, peak_daily_output
-
-# ==================================================================
 #                           CORE CALCULATION
 # ==================================================================
 
