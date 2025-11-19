@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from datetime import datetime
+from datetime import datetime, timedelta
 import calendar
 
 # Import all calculation functions from the helper file
@@ -12,24 +12,19 @@ from cr_utils import (
     get_preprocessed_data,
     calculate_run_summaries,
     run_capacity_calculation_cached_v2,
-    calculate_capacity_risk_factor # <<< ADD THIS IMPORT
+    calculate_capacity_risk_factor 
 )
 
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v9.3: Schedule Detection added
-__version__ = "v9.5 (Capacity Risk & Progression Charts)"
+# v9.4: Capacity Risk & Progression Charts added
+__version__ = "v9.5 (Prediction Graph Tab)"
 # ==================================================================
 
 # ==================================================================
 #                       MAIN APP LOGIC
 # ==================================================================
-
-# ... (Page Config & Sidebar code remains exactly the same) ...
-# To save space in the response, I will include the full file content 
-# but condensing the unchanged parts is not allowed by the instructions 
-# ("all code must be in a file"). I will output the FULL file.
 
 # --- Page Config ---
 st.set_page_config(
@@ -265,7 +260,8 @@ if uploaded_file is not None:
                 else:
                     monthly_cap, factor, avg_days_week, peak_daily = 0, 0, 0, 0 
                 
-                tab1, = st.tabs(["Capacity Risk Report"])
+                # --- TABS ---
+                tab1, tab2 = st.tabs(["Capacity Risk Report", "Future Prediction 🔮"])
 
                 with tab1:
                     st.header("Overall Summary for Selected Period")
@@ -318,7 +314,7 @@ if uploaded_file is not None:
                                 st.markdown(f"<h3><span style='color:green;'>{monthly_cap:,.0f} parts</span></h3>", unsafe_allow_html=True)
                                 st.caption(f"Based on **{avg_days_week:.1f} days/week** (Factor: {factor:.1f})")
 
-                    # --- NEW SECTION: CAPACITY PROGRESSION & RISK ANALYSIS ---
+                    # --- CAPACITY PROGRESSION & RISK ANALYSIS ---
                     if monthly_cap > 0 and not daily_summary_df.empty:
                         st.markdown("---")
                         st.subheader("Capacity Progression & Risk Analysis")
@@ -958,11 +954,135 @@ if uploaded_file is not None:
                                     use_container_width=True
                                 )
 
-                # --- Tabs 2 & 3 are commented out ---
-                # with tab2:
-                #     ...
-                # with tab3:
-                #     ...
+                with tab2:
+                     if monthly_cap > 0 and not daily_summary_df.empty:
+                        st.header("Future Prediction & Capacity Forecast")
+                        st.markdown("This tab visualizes where you are currently, and projects your future performance based on your detected run rate.")
+                        
+                        # --- 1. Calculate Current Cumulative & Last Known Point ---
+                        # We already calculated cumulative sums for the chart in Tab 1, let's reuse logic
+                        prog_df_pred = daily_summary_df.sort_index().copy()
+                        prog_df_pred['Cum Actual'] = prog_df_pred['Actual Output (parts)'].cumsum()
+                        
+                        last_date = prog_df_pred.index.max()
+                        current_cumulative_output = prog_df_pred['Cum Actual'].iloc[-1]
+                        
+                        # --- 2. Calculate Projections (Slopes) ---
+                        
+                        # A. Current Run Rate (Linear Projection)
+                        # Average parts/day over the selected period
+                        days_in_period = (last_date - prog_df_pred.index.min()).days + 1
+                        current_daily_rate = current_cumulative_output / days_in_period if days_in_period > 0 else 0
+                        
+                        # B. Peak Capacity (Theoretical Max Slope)
+                        # We already calculated 'peak_daily' in the main logic
+                        # peak_daily is the P90 of Daily Output
+                        
+                        # C. Target Output Slope (if defined)
+                        # We have 'total_target' for the period. 
+                        # Let's assume target output accumulates daily.
+                        # We can check 'Target Output (parts)' column in daily_summary_df
+                        
+                        # --- 3. Generate Future Dates (Next 30 Days) ---
+                        future_days = 30
+                        future_dates = [last_date + timedelta(days=i) for i in range(1, future_days + 1)]
+                        
+                        # --- 4. Build Future Datapoints ---
+                        
+                        # Start projections from the LAST ACTUAL point to ensure continuity
+                        start_val = current_cumulative_output
+                        
+                        future_actual_proj = [start_val + (current_daily_rate * i) for i in range(1, future_days + 1)]
+                        future_peak_proj = [start_val + (peak_daily * i) for i in range(1, future_days + 1)]
+                        
+                        # For target, we can use the average target per day from history or extrapolate
+                        if 'Target Output (parts)' in prog_df_pred.columns and prog_df_pred['Target Output (parts)'].sum() > 0:
+                             avg_daily_target = prog_df_pred['Target Output (parts)'].mean()
+                             future_target_proj = [start_val + (avg_daily_target * i) for i in range(1, future_days + 1)]
+                        else:
+                             future_target_proj = []
+
+                        # --- 5. Create the Prediction Chart ---
+                        
+                        fig_pred = go.Figure()
+                        
+                        # A. Historical Actual (Solid Line)
+                        fig_pred.add_trace(go.Scatter(
+                            x=prog_df_pred.index, y=prog_df_pred['Cum Actual'],
+                            mode='lines', name='Historical Actual',
+                            line=dict(color='#3498DB', width=3)
+                        ))
+                        
+                        # B. Projected Actual (Dash Line)
+                        fig_pred.add_trace(go.Scatter(
+                            x=future_dates, y=future_actual_proj,
+                            mode='lines', name='Projected Trend (Current Rate)',
+                            line=dict(color='#3498DB', dash='dash', width=2),
+                            opacity=0.8
+                        ))
+                        
+                        # C. Projected Peak Capacity (Green Dot Line)
+                        fig_pred.add_trace(go.Scatter(
+                            x=future_dates, y=future_peak_proj,
+                            mode='lines', name='Theoretical Max Projection (P90)',
+                            line=dict(color='green', dash='dot', width=2),
+                            opacity=0.6
+                        ))
+                        
+                        # D. Projected Target (if available)
+                        if future_target_proj:
+                            fig_pred.add_trace(go.Scatter(
+                                x=future_dates, y=future_target_proj,
+                                mode='lines', name=f'Target Projection ({target_output_perc:.0f}%)',
+                                line=dict(color='deepskyblue', dash='longdashdot', width=2),
+                                opacity=0.6
+                            ))
+                        
+                        # E. Reference Line: Theoretical Monthly Capacity (Ceiling)
+                        # Plot this as a horizontal line ONLY if it makes sense scale-wise.
+                        # Or, plot it as a "Goal Line" relative to the START of the month?
+                        # Actually, a horizontal line at 'monthly_cap' is a fixed number (e.g. 50k parts).
+                        # If we are projecting 30 days into the future, we will likely cross it.
+                        # Let's add it as a reference.
+                        fig_pred.add_hline(
+                             y=monthly_cap,
+                             line_dash="dash", line_color="red",
+                             annotation_text=f"Monthly Capacity Ceiling: {monthly_cap:,.0f}",
+                             annotation_position="top right"
+                        )
+                        
+                        # F. Add "Today" marker
+                        fig_pred.add_vline(x=last_date, line_width=1, line_color="grey", line_dash="solid")
+                        fig_pred.add_annotation(x=last_date, y=current_cumulative_output, text="Today", showarrow=True, arrowhead=1)
+
+                        fig_pred.update_layout(
+                            title="Future Capacity Prediction (Next 30 Days)",
+                            xaxis_title="Date", yaxis_title="Cumulative Output (Parts)",
+                            hovermode="x unified", height=500
+                        )
+                        
+                        st.plotly_chart(fig_pred, use_container_width=True)
+                        
+                        # --- 6. Prediction Metrics ---
+                        st.subheader("30-Day Forecast Metrics")
+                        
+                        pred_c1, pred_c2, pred_c3 = st.columns(3)
+                        
+                        projected_30_day_total = future_actual_proj[-1] - start_val
+                        potential_30_day_max = future_peak_proj[-1] - start_val
+                        
+                        with pred_c1:
+                             st.metric("Predicted Output (Next 30 Days)", f"{projected_30_day_total:,.0f}", help="Additional parts produced if current rate continues")
+                        
+                        with pred_c2:
+                             st.metric("Theoretical Max Potential (Next 30 Days)", f"{potential_30_day_max:,.0f}", help="Output if running at Peak P90 Daily rate")
+                        
+                        with pred_c3:
+                             efficiency_gap = potential_30_day_max - projected_30_day_total
+                             st.metric("Projected Opportunity Gap", f"{efficiency_gap:,.0f}", delta="Lost Potential", delta_color="inverse")
+
+                     else:
+                         st.info("Not enough data to generate a prediction. Please analyze a period with valid production data.")
 
 else:
     st.info("👈 Please upload a data file to begin.")
