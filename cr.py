@@ -890,4 +890,4 @@ if uploaded_file is not None:
                 #     ...
 
 else:
-    st.info("👈 Please upload a data file to begin.")
+    st.info("👈 Please upload a data file to begin.") 
