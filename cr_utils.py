@@ -172,10 +172,13 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     This function ALWAYS calculates vs Optimal (Approved CT).
     """
     
-    # Fix for NameError
+    # --- FIX: ADD THIS LINE BACK TO FIX NameError ---
     df = _df_raw.copy()
+    # --- END FIX ---
 
     # --- 1. Standardize and Prepare Data ---
+    # (We already copied df, so no need to do it again)
+
     # --- Flexible Column Name Mapping ---
     column_variations = {
         'SHOT TIME': ['shot time', 'shot_time', 'timestamp', 'datetime'],
@@ -265,7 +268,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
 
     # 4. Identify global "Run Breaks"
     run_break_threshold_sec = run_interval_hours * 3600
-    # --- FINAL FIX: Base 'is_run_break' on 'rr_time_diff' (all shots) ---
+    # --- FIX: Base 'is_run_break' on 'rr_time_diff' (all shots) ---
     is_run_break = df_rr["rr_time_diff"] > run_break_threshold_sec
     df_rr['is_run_break'] = is_run_break
     
@@ -279,7 +282,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     df_rr['approved_ct_for_run'] = 0.0
     df_rr['reference_ct'] = 0.0
     df_rr['stop_flag'] = 0
-    df_rr['adj_ct_sec'] = 0.0
+    df_rr['adj_ct_sec'] = 0.0 # This is still used for the 'Shot Type' logic
     df_rr['parts_gain'] = 0.0
     df_rr['parts_loss'] = 0.0
     df_rr['time_gain_sec'] = 0.0
@@ -319,26 +322,19 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
     # Flag all three types of stops
     df_rr["stop_flag"] = np.where(is_abnormal_cycle | is_time_gap | is_hard_stop_code, 1, 0)
     
-    # Force the *first shot of the entire file* (at index 0)
+    # --- FIX: ALIGN WITH RR LOGIC (OPTION 2) ---
+    # Force the *first shot of every run* to be a production shot.
     if not df_rr.empty:
-        df_rr.loc[0, "stop_flag"] = 0
+        first_shot_of_each_run_idx = df_rr.groupby('run_id').head(1).index
+        df_rr.loc[first_shot_of_each_run_idx, "stop_flag"] = 0
+    # --- End Fix ---
     
-    # --- FINAL, CORRECT adj_ct_sec LOGIC ---
-    # 1. Set the default time for ALL shots to their Actual CT.
-    #    This includes 'Abnormal Cycle' stops.
+    # --- `adj_ct_sec` LOGIC (Still needed for Shot Type) ---
     df_rr['adj_ct_sec'] = df_rr['Actual CT']
-    
-    # 2. Set 0 for 999.9 stops first.
-    df_rr.loc[is_hard_stop_code, 'adj_ct_sec'] = 0 
-    
-    # 3. Overwrite with the real gap time. This ensures 'Time Gap'
-    #    takes priority over 'Hard Stop' and captures the full downtime.
     df_rr.loc[is_time_gap, 'adj_ct_sec'] = df_rr['rr_time_diff']
-    
-    # 4. Explicitly set Run Breaks to 0. This overwrites the 'Time Gap'
-    #    value only if the gap is a Run Break, excluding it from the sum.
+    # Explicitly set Run Breaks to 0
     df_rr.loc[is_run_break, 'adj_ct_sec'] = 0
-    # --- End Final Fix ---
+    # --- End `adj_ct_sec` Logic ---
 
     # 11. Separate all shots into Production and Downtime
     df_production = df_rr[df_rr['stop_flag'] == 0].copy()
@@ -409,6 +405,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         results = {col: 0 for col in ALL_RESULT_COLUMNS} # Pre-fill all with 0
         results['Date'] = date
         
+        # We must re-filter for the daily shots *after* the per-run logic
         daily_prod = df_production[df_production['date'] == date]
         daily_down = df_downtime[df_downtime['date'] == date]
 
@@ -434,10 +431,14 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
 
         # Calculate The 4 Segments (in Parts)
         results['Optimal Output (parts)'] = (results['Filtered Run Time (sec)'] / avg_reference_ct) * max_cavities
-        results['Capacity Loss (downtime) (sec)'] = daily_down['adj_ct_sec'].sum()
         results['Actual Output (parts)'] = daily_prod['Working Cavities'].sum()
-        
         results['Actual Cycle Time Total (sec)'] = daily_prod['Actual CT'].sum()
+        
+        # --- FINAL FIX: Make Downtime (sec) the plug figure ---
+        results['Capacity Loss (downtime) (sec)'] = results['Filtered Run Time (sec)'] - results['Actual Cycle Time Total (sec)']
+        if results['Capacity Loss (downtime) (sec)'] < 0:
+             results['Capacity Loss (downtime) (sec)'] = 0
+        # --- END FIX ---
         
         # Inefficiency (CT Slow/Fast) Loss
         results['Capacity Gain (fast cycle time) (sec)'] = daily_prod['time_gain_sec'].sum()
@@ -445,7 +446,7 @@ def calculate_capacity_risk(_df_raw, toggle_filter, default_cavities, target_out
         results['Capacity Loss (slow cycle time) (parts)'] = daily_prod['parts_loss'].sum()
         results['Capacity Gain (fast cycle time) (parts)'] = daily_prod['parts_gain'].sum()
         
-        # Reconciliation
+        # Reconciliation (Parts)
         true_capacity_loss_parts = results['Optimal Output (parts)'] - results['Actual Output (parts)']
         net_cycle_loss_parts = results['Capacity Loss (slow cycle time) (parts)'] - results['Capacity Gain (fast cycle time) (parts)']
         results['Capacity Loss (downtime) (parts)'] = true_capacity_loss_parts - net_cycle_loss_parts
@@ -539,10 +540,14 @@ def calculate_run_summaries(all_shots_df, target_output_perc_slider):
 
         # Calculate Segments
         results['Optimal Output (parts)'] = (results['Filtered Run Time (sec)'] / avg_reference_ct) * max_cavities
-        results['Capacity Loss (downtime) (sec)'] = run_down['adj_ct_sec'].sum()
         results['Actual Output (parts)'] = run_prod['Working Cavities'].sum()
-        
         results['Actual Cycle Time Total (sec)'] = run_prod['Actual CT'].sum()
+
+        # --- FINAL FIX: Make Downtime (sec) the plug figure ---
+        results['Capacity Loss (downtime) (sec)'] = results['Filtered Run Time (sec)'] - results['Actual Cycle Time Total (sec)']
+        if results['Capacity Loss (downtime) (sec)'] < 0:
+             results['Capacity Loss (downtime) (sec)'] = 0
+        # --- END FIX ---
 
         results['Capacity Gain (fast cycle time) (sec)'] = run_prod['time_gain_sec'].sum()
         results['Capacity Loss (slow cycle time) (sec)'] = run_prod['time_loss_sec'].sum()
