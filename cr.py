@@ -19,7 +19,7 @@ from cr_utils import (
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
 # v9.3: Schedule Detection added
-__version__ = "v9.4 (Capacity Risk & Progression Charts)"
+__version__ = "v9.5 (Capacity Risk & Progression Charts)"
 # ==================================================================
 
 # ==================================================================
