@@ -19,7 +19,7 @@ from cr_utils import (
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
 # v9.6: Refined Risk Tiers
-__version__ = "v9.7 (Prediction Dates & No Monthly Line)"
+__version__ = "v9.8 (Cleaned Code - Fixed NameError)"
 # ==================================================================
 
 # ==================================================================
@@ -1070,7 +1070,7 @@ if uploaded_file is not None:
                             xaxis_title="Date", yaxis_title="Cumulative Output (Parts)",
                             hovermode="x unified", height=500
                         )
-                        x
+                        
                         st.plotly_chart(fig_pred, use_container_width=True)
                         
                         # --- 6. Prediction Metrics ---
