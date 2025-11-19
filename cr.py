@@ -18,8 +18,8 @@ from cr_utils import (
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v9.6: Refined Risk Tiers
-__version__ = "v9.8 (Cleaned Code - Fixed NameError)"
+# v9.9: Custom Prediction Dates
+__version__ = "v10.0 (Target Demand Input Added)"
 # ==================================================================
 
 # ==================================================================
@@ -164,6 +164,24 @@ if uploaded_file is not None:
     else:
         target_output_perc = 100.0 
     
+    # --- 5. Additional Insight / Target Input ---
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("5. Additional Targets (Optional)")
+    
+    demand_target = st.sidebar.number_input(
+        "Target Demand (Parts)",
+        min_value=0,
+        value=0,
+        help="Optional: Enter a company-side target (e.g., Build Plan or Demand) to compare against projected output."
+    )
+    
+    received_parts = st.sidebar.number_input(
+        "Received Parts (to date)",
+        min_value=0,
+        value=0,
+        help="Optional: Enter parts already received to see remaining gap."
+    )
+
     st.sidebar.caption(f"App Version: **{__version__}**")
 
     # --- Run Calculation ---
@@ -1058,8 +1076,14 @@ if uploaded_file is not None:
                                 opacity=0.6
                             ))
                         
-                        # E. [REMOVED] Reference Line: Theoretical Monthly Capacity (Ceiling)
-                        # As per user request, the monthly line is removed from this specific chart.
+                        # E. Company Demand (Horizontal Line) - NEW
+                        if demand_target > 0:
+                            fig_pred.add_hline(
+                                y=demand_target, 
+                                line_dash="longdashdot", line_color="#8A2BE2", 
+                                annotation_text=f"Company Demand: {demand_target:,.0f}", 
+                                annotation_position="top right"
+                            )
                         
                         # F. Add "Today/Start" marker
                         fig_pred.add_vline(x=pred_start_date, line_width=1, line_color="grey", line_dash="solid")
@@ -1090,6 +1114,23 @@ if uploaded_file is not None:
                         with pred_c3:
                              efficiency_gap = potential_max_gain - projected_total_gain
                              st.metric("Projected Opportunity Gap", f"{efficiency_gap:,.0f}", delta="Lost Potential", delta_color="inverse")
+                        
+                        if demand_target > 0:
+                            st.markdown("---")
+                            d_c1, d_c2 = st.columns(2)
+                            final_projected_total = current_cumulative_output + projected_total_gain
+                            
+                            with d_c1:
+                                demand_gap = demand_target - final_projected_total
+                                status_color = "red" if demand_gap > 0 else "green"
+                                status_text = f"Shortfall: {demand_gap:,.0f}" if demand_gap > 0 else f"Surplus: {abs(demand_gap):,.0f}"
+                                st.markdown(f"**Demand Status**")
+                                st.markdown(f"<h3 style='color:{status_color};'>{status_text}</h3>", unsafe_allow_html=True)
+                                
+                            with d_c2:
+                                if received_parts > 0:
+                                    remaining_to_receive = max(0, demand_target - received_parts)
+                                    st.metric("Remaining Demand to Fill", f"{remaining_to_receive:,.0f}", help=f"Demand ({demand_target}) - Received ({received_parts})")
 
                      else:
                          st.info("Not enough data to generate a prediction. Please analyze a period with valid production data.")
