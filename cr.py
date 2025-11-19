@@ -18,13 +18,18 @@ from cr_utils import (
 # ==================================================================
 # 🚨 DEPLOYMENT CONTROL: INCREMENT THIS VALUE ON EVERY NEW DEPLOYMENT
 # ==================================================================
-# v9.2: Downtime bug fix
-__version__ = "v9.3 (Schedule Detection)"
+# v9.3: Schedule Detection added
+__version__ = "v9.4 (Capacity Risk & Progression Charts)"
 # ==================================================================
 
 # ==================================================================
 #                       MAIN APP LOGIC
 # ==================================================================
+
+# ... (Page Config & Sidebar code remains exactly the same) ...
+# To save space in the response, I will include the full file content 
+# but condensing the unchanged parts is not allowed by the instructions 
+# ("all code must be in a file"). I will output the FULL file.
 
 # --- Page Config ---
 st.set_page_config(
@@ -113,7 +118,7 @@ if uploaded_file is not None:
     st.sidebar.subheader("3. Set Calculation Logic")
     
     mode_ct_tolerance = st.sidebar.slider(
-        "Mode CT Tolerance (%)", 0.01, 0.50, 0.05, 0.01,  # v8.5: Set default to 0.05 (5%)
+        "Mode CT Tolerance (%)", 0.01, 0.50, 0.05, 0.01,
         help="Tolerance band (±) around the **Actual Mode CT**. Shots outside this band are flagged as 'Abnormal Cycle' (Downtime)."
     )
     
@@ -129,7 +134,7 @@ if uploaded_file is not None:
 
     toggle_filter = st.sidebar.toggle(
         "Remove Maintenance/Warehouse Shots",
-        value=False, # Default OFF
+        value=False, 
         help="If ON, all calculations will exclude shots where 'Plant Area' is 'Maintenance' or 'Warehouse'."
     )
     
@@ -147,7 +152,7 @@ if uploaded_file is not None:
     benchmark_view = st.sidebar.radio(
         "Select Report Benchmark",
         ['Optimal Output', 'Target Output'],
-        index=0, # Default to Optimal
+        index=0, 
         horizontal=False,
         help="Select the benchmark to compare against (e.g., 'Total Capacity Loss' vs 'Optimal' or 'Target')."
     )
@@ -156,7 +161,7 @@ if uploaded_file is not None:
         target_output_perc = st.sidebar.slider(
             "Target Output % (of Optimal)",
             min_value=0.0, max_value=100.0,
-            value=90.0, # Default 90%
+            value=90.0,
             step=1.0,
             format="%.0f%%",
             help="Sets the 'Target Output (parts)' goal as a percentage of 'Optimal Output (parts)'."
@@ -170,7 +175,6 @@ if uploaded_file is not None:
     if df_raw is not None:
         with st.spinner("Calculating Capacity Risk..."):
             
-            # Create a unique cache key based on all inputs
             cache_key_parts = [
                 __version__,
                 uploaded_file.name,
@@ -185,14 +189,12 @@ if uploaded_file is not None:
             if analysis_period_selector == "Custom Period":
                 cache_key_parts.extend([start_date, end_date])
             elif analysis_period_selector in ["Daily", "Weekly", "Monthly"]:
-                # Add the specific selection to the key
                 if 'selected_date' in locals(): cache_key_parts.append(selected_date)
                 if 'selected_week' in locals(): cache_key_parts.append(selected_week)
                 if 'selected_month' in locals(): cache_key_parts.append(selected_month)
                 
             cache_key = "_".join(map(str, cache_key_parts))
 
-            # --- Run the cached calculation ---
             results_df, all_shots_df = run_capacity_calculation_cached_v2(
                 df_to_process,
                 toggle_filter,
@@ -208,28 +210,15 @@ if uploaded_file is not None:
                 st.error("No valid data found for the selected period. Cannot proceed.")
             else:
                 
-                # --- 1. Calculate all dataframes ONCE at the top. ---
                 daily_summary_df = results_df.copy()
                 run_summary_df = calculate_run_summaries(all_shots_df, target_output_perc)
                 run_summary_df_for_total = run_summary_df.copy()
                 
-                # --- 2. Get All-Time totals (for the selected period) ---
+                # --- All-Time totals ---
                 all_time_totals = {}
                 
                 if run_summary_df_for_total.empty:
                     st.error("Failed to calculate 'by Run' summary for All-Time totals.")
-                    all_time_totals = {
-                        'total_produced': 0, 'total_downtime_loss_parts': 0,
-                        'total_slow_loss_parts': 0, 'total_fast_gain_parts': 0,
-                        'total_net_cycle_loss_parts': 0, 'total_optimal_100': 0,
-                        'total_target': 0, 'total_downtime_loss_sec': 0,
-                        'total_slow_loss_sec': 0, 'total_fast_gain_sec': 0,
-                        'total_net_cycle_loss_sec': 0, 'run_time_sec_total': 0,
-                        'run_time_dhm_total': "0m", 'total_actual_ct_sec': 0,
-                        'total_actual_ct_dhm': "0m", 'total_true_net_loss_parts': 0,
-                        'total_true_net_loss_sec': 0, 'total_calculated_net_loss_parts': 0,
-                        'total_calculated_net_loss_sec': 0
-                    }
                 else:
                     total_produced = run_summary_df_for_total['Actual Output (parts)'].sum()
                     total_downtime_loss_parts = run_summary_df_for_total['Capacity Loss (downtime) (parts)'].sum()
@@ -270,15 +259,12 @@ if uploaded_file is not None:
                         'total_calculated_net_loss_sec': total_calculated_net_loss_sec
                     }
 
-                # --- NEW: Calculate the Monthly Factor and Theoretical Capacity ---
-                # Only calculate this if analyzing the entire file or a custom, multi-day period
+                # --- Calculate the Monthly Factor and Theoretical Capacity ---
                 if analysis_period_selector in ["Entire File", "Custom Period"] or display_frequency in ["Weekly", "Monthly"]:
                     monthly_cap, factor, avg_days_week, peak_daily = calculate_capacity_risk_factor(daily_summary_df)
                 else:
-                    # Reset for non-aggregate views
                     monthly_cap, factor, avg_days_week, peak_daily = 0, 0, 0, 0 
                 
-                # --- Only display the single main tab ---
                 tab1, = st.tabs(["Capacity Risk Report"])
 
                 with tab1:
@@ -331,7 +317,96 @@ if uploaded_file is not None:
                                 st.markdown(f"**Theoretical Monthly Capacity**")
                                 st.markdown(f"<h3><span style='color:green;'>{monthly_cap:,.0f} parts</span></h3>", unsafe_allow_html=True)
                                 st.caption(f"Based on **{avg_days_week:.1f} days/week** (Factor: {factor:.1f})")
-                                
+
+                    # --- NEW SECTION: CAPACITY PROGRESSION & RISK ANALYSIS ---
+                    if monthly_cap > 0 and not daily_summary_df.empty:
+                        st.markdown("---")
+                        st.subheader("Capacity Progression & Risk Analysis")
+
+                        # 1. Calculate Projections
+                        total_days_in_view = len(daily_summary_df)
+                        current_daily_avg = all_time_totals['total_produced'] / total_days_in_view if total_days_in_view > 0 else 0
+                        
+                        # Projected Monthly Output = Current Daily Pace * Monthly Factor
+                        projected_monthly_output = current_daily_avg * factor
+                        
+                        # Monthly Utilization Risk = Projected / Theoretical Max
+                        monthly_utilization_risk = projected_monthly_output / monthly_cap
+                        
+                        # Determine Risk Tier
+                        if monthly_utilization_risk >= 0.95:
+                            risk_tier = "Critical (Over-utilized)"
+                            risk_color = "#ff6961" # Red
+                        elif monthly_utilization_risk >= 0.85:
+                            risk_tier = "High (Near Capacity)"
+                            risk_color = "#ffb347" # Orange
+                        elif monthly_utilization_risk >= 0.70:
+                            risk_tier = "Optimal"
+                            risk_color = "#77dd77" # Green
+                        elif monthly_utilization_risk >= 0.50:
+                            risk_tier = "Under-utilized"
+                            risk_color = "#aec6cf" # Blue
+                        else:
+                            risk_tier = "Idle (High Opportunity)"
+                            risk_color = "#cfcfc4" # Grey
+
+                        # 2. Display Risk Metrics
+                        with st.container(border=True):
+                            rc1, rc2, rc3, rc4 = st.columns(4)
+                            with rc1:
+                                st.metric("Theoretical Monthly Capacity", f"{monthly_cap:,.0f}", help=f"Based on P90 Peak Daily ({peak_daily:,.0f}) x {factor:.1f} detected monthly days")
+                            with rc2:
+                                st.metric("Projected Monthly Output", f"{projected_monthly_output:,.0f}", delta=f"{projected_monthly_output - monthly_cap:,.0f} vs Max", help="Projection based on current average daily pace")
+                            with rc3:
+                                st.metric("Projected Utilization", f"{monthly_utilization_risk:.1%}", help="Projected Output / Theoretical Capacity")
+                            with rc4:
+                                st.markdown(f"**Risk Tier**")
+                                st.markdown(f"<h3 style='color:{risk_color}; margin-top:0px;'>{risk_tier}</h3>", unsafe_allow_html=True)
+
+                        # 3. Progression Chart
+                        st.write("#### Cumulative Output Progression")
+                        prog_df = daily_summary_df.sort_index()
+                        prog_df['Cum Actual'] = prog_df['Actual Output (parts)'].cumsum()
+                        prog_df['Cum Optimal'] = prog_df['Optimal Output (parts)'].cumsum()
+                        
+                        fig_prog = go.Figure()
+                        
+                        # A. Cumulative Actual
+                        fig_prog.add_trace(go.Scatter(
+                            x=prog_df.index, y=prog_df['Cum Actual'],
+                            mode='lines+markers', name='Actual Output (Cumulative)',
+                            line=dict(color='#3498DB', width=3),
+                            hovertemplate='%{y:,.0f} parts'
+                        ))
+                        
+                        # B. Cumulative Optimal
+                        fig_prog.add_trace(go.Scatter(
+                            x=prog_df.index, y=prog_df['Cum Optimal'],
+                            mode='lines', name='Optimal Output (Cumulative)',
+                            line=dict(color='green', dash='dot', width=2),
+                            opacity=0.7,
+                            hovertemplate='%{y:,.0f} parts'
+                        ))
+
+                        # C. Theoretical Monthly Ceiling (Horizontal Line)
+                        # Only show if the time range is reasonable for a monthly view (<= 45 days)
+                        date_span_days = (prog_df.index.max() - prog_df.index.min()).days
+                        if date_span_days <= 45:
+                            fig_prog.add_hline(
+                                y=monthly_cap, 
+                                line_dash="dash", line_color="red", 
+                                annotation_text="Theoretical Monthly Max", 
+                                annotation_position="top left"
+                            )
+
+                        fig_prog.update_layout(
+                            xaxis_title="Date", yaxis_title="Cumulative Parts",
+                            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                            hovermode="x unified", height=450
+                        )
+                        st.plotly_chart(fig_prog, use_container_width=True)
+                        st.divider()
+
                     # --- Waterfall Chart Layout ---
                     st.subheader(f"Capacity Loss Breakdown (vs {benchmark_title})")
                     st.info(f"These values are calculated based on the *time-based* logic (Downtime + Slow/Fast Cycles) using **{benchmark_title}** as the benchmark.")
@@ -890,4 +965,4 @@ if uploaded_file is not None:
                 #     ...
 
 else:
-    st.info("👈 Please upload a data file to begin.") 
+    st.info("👈 Please upload a data file to begin.")
