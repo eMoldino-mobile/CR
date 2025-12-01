@@ -204,6 +204,7 @@ class CapacityRiskCalculator:
             "capacity_gain_fast_parts": capacity_gain_fast_parts,
             "total_capacity_loss_parts": true_loss_parts,
             "gap_to_target_parts": gap_to_target_parts,
+            "capacity_loss_vs_target_parts": capacity_loss_vs_target_parts,
             "efficiency_rate": (actual_output_parts / optimal_output_parts) if optimal_output_parts > 0 else 0
         }
 
@@ -335,6 +336,59 @@ def calculate_capacity_risk_scores(df_all, config):
 # ==============================================================================
 # --- PLOTTING FUNCTIONS ---
 # ==============================================================================
+
+def create_donut_chart(value, title, color_scheme='blue'):
+    """
+    Creates a donut chart similar to the Run Rate app style.
+    value: percentage (0-100)
+    title: string title for the center or header
+    color_scheme: 'blue', 'green', or custom hex
+    """
+    
+    # Determine color
+    if color_scheme == 'blue':
+        main_color = PASTEL_COLORS['blue']
+    elif color_scheme == 'green':
+        main_color = PASTEL_COLORS['green']
+    elif color_scheme == 'dynamic':
+        if value < 70: main_color = PASTEL_COLORS['red']
+        elif value < 90: main_color = PASTEL_COLORS['orange']
+        else: main_color = PASTEL_COLORS['green']
+    else:
+        main_color = color_scheme
+
+    # Cap value at 100 for visual, but text shows real value
+    plot_val = min(value, 100)
+    remainder = 100 - plot_val
+    
+    fig = go.Figure(data=[go.Pie(
+        values=[plot_val, remainder],
+        hole=0.75,
+        sort=False,
+        direction='clockwise',
+        textinfo='none',
+        marker=dict(colors=[main_color, '#e6e6e6']),
+        hoverinfo='none'
+    )])
+
+    # Center Text
+    fig.add_annotation(
+        text=f"{value:.1f}%",
+        x=0.5, y=0.5,
+        font=dict(size=24, weight='bold', color=main_color),
+        showarrow=False
+    )
+    
+    fig.update_layout(
+        title=dict(text=title, x=0.5, xanchor='center', y=0.95, font=dict(size=14)),
+        margin=dict(l=20, r=20, t=30, b=20),
+        height=180,
+        showlegend=False,
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)'
+    )
+    
+    return fig
 
 def plot_waterfall(metrics, benchmark_mode="Optimal"):
     total_opt = metrics['optimal_output_parts']
