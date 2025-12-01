@@ -111,10 +111,8 @@ class CapacityRiskCalculator:
         
         df = df.sort_values("shot_time").reset_index(drop=True)
 
-        # 1. Run Identification
-        # Calculate time difference from PREVIOUS shot (used for Run ID logic)
+        # 1. Run Identification (Run Rate Logic)
         df['time_diff_sec'] = df['shot_time'].diff().dt.total_seconds().fillna(0)
-        # Fix first shot of the file
         if len(df) > 0: df.loc[0, 'time_diff_sec'] = df.loc[0, 'actual_ct']
 
         is_new_run = df['time_diff_sec'] > (self.run_interval_hours * 3600)
@@ -131,7 +129,8 @@ class CapacityRiskCalculator:
         df['mode_lower'] = lower_limit
         df['mode_upper'] = upper_limit
 
-        # 3. Approved CT
+        # 3. Approved CT (Per Run - CR v7.53 Logic)
+        # Calculate the Mode Approved CT for each run to stabilize Optimal Output
         run_approved_cts = df.groupby('run_id')['approved_ct'].apply(
             lambda x: x.mode().iloc[0] if not x.mode().empty else 1
         )
@@ -150,6 +149,7 @@ class CapacityRiskCalculator:
         df['stop_flag'] = np.where(is_time_gap | is_abnormal | is_hard_stop, 1, 0)
         
         # Force ONLY the first shot of the entire file to be 0 (Run Rate behavior)
+        # We removed the block that forced every run start to be 0 to align with RR
         if not df.empty:
             df.loc[0, 'stop_flag'] = 0
         
@@ -190,7 +190,7 @@ class CapacityRiskCalculator:
         mttr_min = (downtime_sec / 60 / stops) if stops > 0 else 0
         stability_index = (production_time_sec / total_runtime_sec * 100) if total_runtime_sec > 0 else 100.0
 
-        # --- Capacity Logic ---
+        # --- Capacity Logic (v7.53 Alignment) ---
         
         avg_approved_ct = df['approved_ct_for_run'].mean()
         max_cavities = df['working_cavities'].max()
@@ -201,26 +201,29 @@ class CapacityRiskCalculator:
 
         true_loss_parts = optimal_output_parts - actual_output_parts
         
-        # Inefficiency
+        # Inefficiency Calculation
+        # Use 'approved_ct_for_run' instead of raw 'approved_ct' for stability
         prod_df['parts_delta'] = ((prod_df['approved_ct_for_run'] - prod_df['actual_ct']) / prod_df['approved_ct_for_run']) * prod_df['working_cavities']
         
         capacity_gain_fast_parts = prod_df.loc[prod_df['parts_delta'] > 0, 'parts_delta'].sum()
         capacity_loss_slow_parts = abs(prod_df.loc[prod_df['parts_delta'] < 0, 'parts_delta'].sum())
         
+        # Inefficiency Time Calculation
         prod_df['time_delta'] = prod_df['approved_ct_for_run'] - prod_df['actual_ct']
         capacity_gain_fast_sec = prod_df.loc[prod_df['time_delta'] > 0, 'time_delta'].sum()
         capacity_loss_slow_sec = abs(prod_df.loc[prod_df['time_delta'] < 0, 'time_delta'].sum())
 
         net_cycle_loss_parts = capacity_loss_slow_parts - capacity_gain_fast_parts
-        capacity_loss_downtime_parts = true_loss_parts - net_cycle_loss_parts 
+        capacity_loss_downtime_parts = true_loss_parts - net_cycle_loss_parts # The Plug
         
+        # Total Capacity Loss in Seconds
         net_cycle_loss_sec = capacity_loss_slow_sec - capacity_gain_fast_sec
         total_capacity_loss_sec = downtime_sec + net_cycle_loss_sec
         
         gap_to_target_parts = actual_output_parts - target_output_parts
         capacity_loss_vs_target_parts = max(0, -gap_to_target_parts)
 
-        # Classification
+        # Classification (Strict logic using Approved CT for Run)
         epsilon = 0.001
         conditions = [
             df['stop_flag'] == 1,
@@ -488,8 +491,8 @@ def plot_shot_analysis(df_shots, zoom_y=None):
         start = run_df['shot_time'].min()
         end = run_df['shot_time'].max()
         
-        fig.add_shape(type="rect", x0=start, x1=end, y0=lower, y1=upper, fillcolor=PASTEL_COLORS['green'], opacity=0.2, line_width=0)
-        if r_id == 0: fig.add_annotation(x=start, y=upper, text="Mode Tolerance Band", showarrow=False, yshift=10, font=dict(color=PASTEL_COLORS['green'], size=10))
+        fig.add_shape(type="rect", x0=start, x1=end, y0=lower, y1=upper, fillcolor="grey", opacity=0.2, line_width=0)
+        if r_id == 0: fig.add_annotation(x=start, y=upper, text="Mode Tolerance Band", showarrow=False, yshift=10, font=dict(color="grey", size=10))
 
     avg_ref = df_shots['approved_ct'].mean()
     fig.add_hline(y=avg_ref, line_dash="dash", line_color="green", annotation_text=f"Avg Approved CT: {avg_ref:.2f}s")
