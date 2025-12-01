@@ -105,18 +105,20 @@ class CapacityRiskCalculator:
         
         df['approved_ct'] = pd.to_numeric(df['approved_ct'], errors='coerce').fillna(1)
         df['working_cavities'] = pd.to_numeric(df['working_cavities'], errors='coerce').fillna(self.default_cavities)
+        
+        # Ensure positive Approved CT
         df.loc[df['approved_ct'] <= 0, 'approved_ct'] = 1
         
         df = df.sort_values("shot_time").reset_index(drop=True)
 
-        # Run Identification
+        # 1. Run Identification (Run Rate Logic)
         df['time_diff_sec'] = df['shot_time'].diff().dt.total_seconds().fillna(0)
         if len(df) > 0: df.loc[0, 'time_diff_sec'] = df.loc[0, 'actual_ct']
 
         is_new_run = df['time_diff_sec'] > (self.run_interval_hours * 3600)
         df['run_id'] = is_new_run.cumsum()
 
-        # Mode CT & Limits (RR Logic)
+        # 2. Mode CT & Limits (Per Run)
         run_modes = df[df['actual_ct'] < 1000].groupby('run_id')['actual_ct'].apply(
             lambda x: x.mode().iloc[0] if not x.mode().empty else x.mean()
         )
@@ -127,12 +129,20 @@ class CapacityRiskCalculator:
         df['mode_lower'] = lower_limit
         df['mode_upper'] = upper_limit
 
-        # Stop Detection
+        # 3. Approved CT (Per Run - CR v7.53 Logic)
+        # Calculate the Mode Approved CT for each run to stabilize Optimal Output
+        run_approved_cts = df.groupby('run_id')['approved_ct'].apply(
+            lambda x: x.mode().iloc[0] if not x.mode().empty else 1
+        )
+        df['approved_ct_for_run'] = df['run_id'].map(run_approved_cts)
+        
+        # 4. Stop Detection
         is_time_gap = (df['time_diff_sec'] > (df['actual_ct'] + self.downtime_gap_tolerance)) & (~is_new_run)
         is_abnormal = ((df['actual_ct'] < lower_limit) | (df['actual_ct'] > upper_limit))
         is_hard_stop = df['actual_ct'] >= 999.9
 
         df['stop_flag'] = np.where(is_time_gap | is_abnormal | is_hard_stop, 1, 0)
+        
         # Force first shot of every run to be production
         if not df.empty:
             first_shots = df.groupby('run_id').head(1).index
@@ -140,16 +150,14 @@ class CapacityRiskCalculator:
         
         df['stop_event'] = (df["stop_flag"] == 1) & (df["stop_flag"].shift(1, fill_value=0) == 0)
 
-        # Adjusted Time (For Shot Type logic only)
+        # 5. Adjusted Time (Used for Shot Type visualization only)
         df['adj_ct_sec'] = df['actual_ct']
         df.loc[is_time_gap, 'adj_ct_sec'] = df['time_diff_sec']
         df.loc[is_new_run, 'adj_ct_sec'] = df['actual_ct'] 
 
-        # --- Metrics Calculation (UPDATED: WALL CLOCK LOGIC) ---
+        # --- Metrics Calculation (Wall Clock Logic) ---
         
-        # 1. Total Run Duration (Wall Clock Method)
-        # Calculates (End - Start) + LastCT for each run, then sums them up.
-        # This matches the Run Rate App logic exactly.
+        # Total Run Duration (Sum of Wall Clocks)
         run_durations = []
         for _, run_df in df.groupby('run_id'):
             if not run_df.empty:
@@ -161,12 +169,11 @@ class CapacityRiskCalculator:
         
         total_runtime_sec = sum(run_durations)
 
-        # 2. Production Time (Sum of Actual Cycle Times for Normal Shots)
+        # Production Time
         prod_df = df[df['stop_flag'] == 0].copy()
         production_time_sec = prod_df['actual_ct'].sum()
         
-        # 3. Downtime (Plug Figure)
-        # Downtime is the difference between Total Run Time and Production Time
+        # Downtime (Plug)
         downtime_sec = total_runtime_sec - production_time_sec
         if downtime_sec < 0: downtime_sec = 0
 
@@ -174,8 +181,10 @@ class CapacityRiskCalculator:
         mttr_min = (downtime_sec / 60 / stops) if stops > 0 else 0
         stability_index = (production_time_sec / total_runtime_sec * 100) if total_runtime_sec > 0 else 100.0
 
-        # Capacity Logic
-        avg_approved_ct = df['approved_ct'].mean()
+        # --- Capacity Logic (v7.53 Alignment) ---
+        
+        # Use the Run-stabilized Approved CT for global calculations
+        avg_approved_ct = df['approved_ct_for_run'].mean()
         max_cavities = df['working_cavities'].max()
         
         optimal_output_parts = (total_runtime_sec / avg_approved_ct) * max_cavities
@@ -184,7 +193,9 @@ class CapacityRiskCalculator:
 
         true_loss_parts = optimal_output_parts - actual_output_parts
         
-        prod_df['parts_delta'] = ((prod_df['approved_ct'] - prod_df['actual_ct']) / prod_df['approved_ct']) * prod_df['working_cavities']
+        # Inefficiency Calculation
+        # Use 'approved_ct_for_run' instead of raw 'approved_ct' for stability
+        prod_df['parts_delta'] = ((prod_df['approved_ct_for_run'] - prod_df['actual_ct']) / prod_df['approved_ct_for_run']) * prod_df['working_cavities']
         
         capacity_gain_fast_parts = prod_df.loc[prod_df['parts_delta'] > 0, 'parts_delta'].sum()
         capacity_loss_slow_parts = abs(prod_df.loc[prod_df['parts_delta'] < 0, 'parts_delta'].sum())
@@ -195,12 +206,12 @@ class CapacityRiskCalculator:
         gap_to_target_parts = actual_output_parts - target_output_parts
         capacity_loss_vs_target_parts = max(0, -gap_to_target_parts)
 
-        # Classification
+        # Classification (Strict logic using Approved CT for Run)
         epsilon = 0.001
         conditions = [
             df['stop_flag'] == 1,
-            df['actual_ct'] > (df['approved_ct'] + epsilon), 
-            df['actual_ct'] < (df['approved_ct'] - epsilon)
+            df['actual_ct'] > (df['approved_ct_for_run'] + epsilon), 
+            df['actual_ct'] < (df['approved_ct_for_run'] - epsilon)
         ]
         choices = ['Downtime (Stop)', 'Slow Cycle', 'Fast Cycle']
         df['shot_type'] = np.select(conditions, choices, default='On Target')
@@ -222,6 +233,7 @@ class CapacityRiskCalculator:
             "capacity_gain_fast_parts": capacity_gain_fast_parts,
             "total_capacity_loss_parts": true_loss_parts,
             "gap_to_target_parts": gap_to_target_parts,
+            "capacity_loss_vs_target_parts": capacity_loss_vs_target_parts,
             "efficiency_rate": (actual_output_parts / optimal_output_parts) if optimal_output_parts > 0 else 0
         }
 
