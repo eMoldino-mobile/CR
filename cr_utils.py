@@ -21,7 +21,7 @@ PASTEL_COLORS = {
 }
 
 def format_seconds_to_dhm(total_seconds):
-    """Converts total seconds into a 'Xd Yh Zm' string."""
+    """Converts total seconds into a 'Xd Yh Zm' or 'Xs' string."""
     if pd.isna(total_seconds) or total_seconds < 0: return "N/A"
     total_minutes = int(total_seconds / 60)
     days = total_minutes // (60 * 24)
@@ -129,41 +129,30 @@ class CapacityRiskCalculator:
         df['mode_lower'] = lower_limit
         df['mode_upper'] = upper_limit
 
-        # 3. Approved CT (Per Run - CR v7.53 Logic)
-        # Calculate the Mode Approved CT for each run to stabilize Optimal Output
+        # 3. Approved CT (Per Run)
         run_approved_cts = df.groupby('run_id')['approved_ct'].apply(
             lambda x: x.mode().iloc[0] if not x.mode().empty else 1
         )
         df['approved_ct_for_run'] = df['run_id'].map(run_approved_cts)
         
-        # 4. Stop Detection (MATCHING RUN RATE LOGIC - LOOK AHEAD)
-        # Shift time_diff back by 1 to get the gap AFTER the current shot
+        # 4. Stop Detection (MATCHING RUN RATE LOGIC)
         df['next_shot_time_diff'] = df['time_diff_sec'].shift(-1).fillna(0)
         
-        # Look Ahead Logic: If the gap after this shot is > (this shot CT + tol), then THIS shot is a stop.
-        # This matches the Run Rate App logic exactly.
         is_time_gap = df['next_shot_time_diff'] > (df['actual_ct'] + self.downtime_gap_tolerance)
         is_abnormal = ((df['actual_ct'] < lower_limit) | (df['actual_ct'] > upper_limit))
         is_hard_stop = df['actual_ct'] >= 999.9
 
         df['stop_flag'] = np.where(is_time_gap | is_abnormal | is_hard_stop, 1, 0)
         
-        # Force ONLY the first shot of the entire file to be 0 (Run Rate behavior)
-        # We removed the block that forced every run start to be 0 to align with RR
         if not df.empty:
             df.loc[0, 'stop_flag'] = 0
         
         df['stop_event'] = (df["stop_flag"] == 1) & (df["stop_flag"].shift(1, fill_value=0) == 0)
 
-        # 5. Adjusted Time (Used for visualization, not aggregation)
-        # We map the gap to the shot BEFORE it (Look Ahead) for visualization if needed, 
-        # but usually visualization uses current time.
-        # For compatibility with legacy 'adj_ct_sec' usage:
         df['adj_ct_sec'] = df['actual_ct']
-        # If this shot causes a gap, its "adjusted time" is the gap length
         df.loc[is_time_gap, 'adj_ct_sec'] = df['next_shot_time_diff']
         
-        # --- Metrics Calculation (Wall Clock Logic) ---
+        # --- Metrics Calculation ---
         
         # Total Run Duration (Wall Clock)
         run_durations = []
@@ -178,7 +167,6 @@ class CapacityRiskCalculator:
         total_runtime_sec = sum(run_durations)
 
         # Production Time
-        # Sum of Actual CT for shots where stop_flag == 0
         prod_df = df[df['stop_flag'] == 0].copy()
         production_time_sec = prod_df['actual_ct'].sum()
         
@@ -190,7 +178,7 @@ class CapacityRiskCalculator:
         mttr_min = (downtime_sec / 60 / stops) if stops > 0 else 0
         stability_index = (production_time_sec / total_runtime_sec * 100) if total_runtime_sec > 0 else 100.0
 
-        # --- Capacity Logic (v7.53 Alignment) ---
+        # --- Capacity Logic ---
         
         avg_approved_ct = df['approved_ct_for_run'].mean()
         max_cavities = df['working_cavities'].max()
@@ -202,7 +190,6 @@ class CapacityRiskCalculator:
         true_loss_parts = optimal_output_parts - actual_output_parts
         
         # Inefficiency Calculation
-        # Use 'approved_ct_for_run' instead of raw 'approved_ct' for stability
         prod_df['parts_delta'] = ((prod_df['approved_ct_for_run'] - prod_df['actual_ct']) / prod_df['approved_ct_for_run']) * prod_df['working_cavities']
         
         capacity_gain_fast_parts = prod_df.loc[prod_df['parts_delta'] > 0, 'parts_delta'].sum()
@@ -214,16 +201,26 @@ class CapacityRiskCalculator:
         capacity_loss_slow_sec = abs(prod_df.loc[prod_df['time_delta'] < 0, 'time_delta'].sum())
 
         net_cycle_loss_parts = capacity_loss_slow_parts - capacity_gain_fast_parts
-        capacity_loss_downtime_parts = true_loss_parts - net_cycle_loss_parts # The Plug
+        capacity_loss_downtime_parts = true_loss_parts - net_cycle_loss_parts
         
-        # Total Capacity Loss in Seconds
         net_cycle_loss_sec = capacity_loss_slow_sec - capacity_gain_fast_sec
         total_capacity_loss_sec = downtime_sec + net_cycle_loss_sec
         
         gap_to_target_parts = actual_output_parts - target_output_parts
         capacity_loss_vs_target_parts = max(0, -gap_to_target_parts)
+        
+        # --- NEW: Shot Counts for Run Rate Dashboard ---
+        total_shots = len(df)
+        stop_count_shots = df['stop_flag'].sum()
+        normal_shots = total_shots - stop_count_shots
+        
+        # Run Rate Efficiency (Shot based)
+        run_rate_efficiency = (normal_shots / total_shots) if total_shots > 0 else 0
+        
+        # Capacity Efficiency (Part based)
+        capacity_efficiency = (actual_output_parts / optimal_output_parts) if optimal_output_parts > 0 else 0
 
-        # Classification (Strict logic using Approved CT for Run)
+        # Shot Typing
         epsilon = 0.001
         conditions = [
             df['stop_flag'] == 1,
@@ -232,8 +229,6 @@ class CapacityRiskCalculator:
         ]
         choices = ['Downtime (Stop)', 'Slow Cycle', 'Fast Cycle']
         df['shot_type'] = np.select(conditions, choices, default='On Target')
-        # Visually mark the run break on the *first shot* of the new run for clarity, 
-        # even though the stop was flagged on the *last shot* of the previous run.
         df.loc[is_new_run, 'shot_type'] = 'Run Break (Excluded)'
 
         return {
@@ -254,7 +249,11 @@ class CapacityRiskCalculator:
             "total_capacity_loss_sec": total_capacity_loss_sec,
             "gap_to_target_parts": gap_to_target_parts,
             "capacity_loss_vs_target_parts": capacity_loss_vs_target_parts,
-            "efficiency_rate": (actual_output_parts / optimal_output_parts) if optimal_output_parts > 0 else 0
+            # Updated Keys for Dashboard
+            "efficiency_rate": run_rate_efficiency, # Mapped to Run Rate Efficiency
+            "capacity_efficiency": capacity_efficiency,
+            "total_shots": total_shots,
+            "normal_shots": normal_shots
         }
 
 # ==============================================================================
