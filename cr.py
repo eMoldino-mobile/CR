@@ -7,7 +7,7 @@ import cr_utils as cr_utils  # Keep import name exact
 # ==============================================================================
 # --- PAGE SETUP ---
 # ==============================================================================
-st.set_page_config(layout="wide", page_title="Capacity Risk Dashboard (v8.0)")
+st.set_page_config(layout="wide", page_title="Capacity Risk Dashboard (v8.1)")
 
 # ==============================================================================
 # --- DASHBOARD LOGIC ---
@@ -104,14 +104,6 @@ def render_dashboard(df_tool, tool_name, config, demand_info):
         # K4: Total Capacity Loss (True)
         # Use True Loss (Optimal - Actual) to be exact
         true_loss = res['optimal_output_parts'] - res['actual_output_parts']
-        # Time lost corresponds to the parts lost at the approved rate
-        # However, visually it's often Run Time - Prod Time (Downtime) + Cycle Loss Time
-        total_time_lost = res['total_runtime_sec'] - res['production_time_sec'] # Base Downtime
-        # Add inefficiency time
-        # net_cycle_loss_time = res['capacity_loss_slow_parts'] * AvgCT? 
-        # Simpler: Total Loss Time = Total Run Time - (Actual Parts * Approved CT)
-        # But for the visual, let's stick to the summed loss seconds from utils
-        time_lost_display = cr_utils.format_seconds_to_dhm(res['total_capacity_loss_parts'] * (res['total_runtime_sec']/res['optimal_output_parts']) if res['optimal_output_parts']>0 else 0)
         
         k4.markdown("**Total Capacity Loss (True)**")
         k4.markdown(f"<h3 style='color:#ff6961; margin-top: -10px;'>{true_loss:,.0f} parts</h3>", unsafe_allow_html=True)
