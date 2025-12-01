@@ -136,8 +136,11 @@ class CapacityRiskCalculator:
         )
         df['approved_ct_for_run'] = df['run_id'].map(run_approved_cts)
         
-        # 4. Stop Detection
-        is_time_gap = (df['time_diff_sec'] > (df['actual_ct'] + self.downtime_gap_tolerance)) & (~is_new_run)
+        # 4. Stop Detection (FIXED LOGIC)
+        # Use Previous Shot CT for gap comparison, not Current Shot CT
+        df['prev_actual_ct'] = df['actual_ct'].shift(1).fillna(0)
+        
+        is_time_gap = (df['time_diff_sec'] > (df['prev_actual_ct'] + self.downtime_gap_tolerance)) & (~is_new_run)
         is_abnormal = ((df['actual_ct'] < lower_limit) | (df['actual_ct'] > upper_limit))
         is_hard_stop = df['actual_ct'] >= 999.9
 
@@ -169,7 +172,7 @@ class CapacityRiskCalculator:
         
         total_runtime_sec = sum(run_durations)
 
-        # Production Time
+        # Production Time (Actual sum of normal shots)
         prod_df = df[df['stop_flag'] == 0].copy()
         production_time_sec = prod_df['actual_ct'].sum()
         
@@ -183,7 +186,6 @@ class CapacityRiskCalculator:
 
         # --- Capacity Logic (v7.53 Alignment) ---
         
-        # Use the Run-stabilized Approved CT for global calculations
         avg_approved_ct = df['approved_ct_for_run'].mean()
         max_cavities = df['working_cavities'].max()
         
@@ -194,7 +196,6 @@ class CapacityRiskCalculator:
         true_loss_parts = optimal_output_parts - actual_output_parts
         
         # Inefficiency Calculation
-        # Use 'approved_ct_for_run' instead of raw 'approved_ct' for stability
         prod_df['parts_delta'] = ((prod_df['approved_ct_for_run'] - prod_df['actual_ct']) / prod_df['approved_ct_for_run']) * prod_df['working_cavities']
         
         capacity_gain_fast_parts = prod_df.loc[prod_df['parts_delta'] > 0, 'parts_delta'].sum()
@@ -209,14 +210,13 @@ class CapacityRiskCalculator:
         capacity_loss_downtime_parts = true_loss_parts - net_cycle_loss_parts # The Plug
         
         # Total Capacity Loss in Seconds
-        # = Downtime Seconds + Net Slow Cycle Seconds
         net_cycle_loss_sec = capacity_loss_slow_sec - capacity_gain_fast_sec
         total_capacity_loss_sec = downtime_sec + net_cycle_loss_sec
         
         gap_to_target_parts = actual_output_parts - target_output_parts
         capacity_loss_vs_target_parts = max(0, -gap_to_target_parts)
 
-        # Classification (Strict logic using Approved CT for Run)
+        # Classification
         epsilon = 0.001
         conditions = [
             df['stop_flag'] == 1,
@@ -242,7 +242,7 @@ class CapacityRiskCalculator:
             "capacity_loss_slow_parts": capacity_loss_slow_parts,
             "capacity_gain_fast_parts": capacity_gain_fast_parts,
             "total_capacity_loss_parts": true_loss_parts,
-            "total_capacity_loss_sec": total_capacity_loss_sec, 
+            "total_capacity_loss_sec": total_capacity_loss_sec,
             "gap_to_target_parts": gap_to_target_parts,
             "capacity_loss_vs_target_parts": capacity_loss_vs_target_parts,
             "efficiency_rate": (actual_output_parts / optimal_output_parts) if optimal_output_parts > 0 else 0
