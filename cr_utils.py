@@ -48,7 +48,7 @@ def load_all_data_cr(files):
                 return None
 
             # 1. Tool ID
-            tool_col = get_col(["TOOLING ID", "EQUIPMENT CODE", "TOOL_ID", "TOOL"])
+            tool_col = get_col(["TOOLING ID", "EQUIPMENT CODE", "TOOL_ID", "TOOL", "MOLD"])
             if tool_col: df.rename(columns={tool_col: "tool_id"}, inplace=True)
 
             # 2. Shot Time
@@ -56,16 +56,20 @@ def load_all_data_cr(files):
             if time_col: df.rename(columns={time_col: "shot_time"}, inplace=True)
 
             # 3. Actual CT
-            act_ct_col = get_col(["ACTUAL CT", "ACTUAL_CT", "CYCLE TIME", "CT"])
+            act_ct_col = get_col(["ACTUAL CT", "ACTUAL_CT", "CYCLE TIME", "CT", "ACTUAL CYCLE TIME"])
             if act_ct_col: df.rename(columns={act_ct_col: "actual_ct"}, inplace=True)
 
             # 4. Approved CT (Specific to CR)
-            app_ct_col = get_col(["APPROVED CT", "APPROVED_CT", "STD CT", "STANDARD CT", "REFERENCE CT"])
+            app_ct_col = get_col(["APPROVED CT", "APPROVED_CT", "STD CT", "STANDARD CT", "REFERENCE CT", "OPTIMAL CT"])
             if app_ct_col: df.rename(columns={app_ct_col: "approved_ct"}, inplace=True)
 
             # 5. Working Cavities (Specific to CR)
             cav_col = get_col(["WORKING CAVITIES", "CAVITIES", "ACTUAL CAVITIES", "CAVITY"])
             if cav_col: df.rename(columns={cav_col: "working_cavities"}, inplace=True)
+            
+            # 6. Plant Area (Optional filter)
+            area_col = get_col(["PLANT AREA", "AREA", "DEPARTMENT"])
+            if area_col: df.rename(columns={area_col: "plant_area"}, inplace=True)
 
             # Essential Validation
             if "shot_time" in df.columns and "actual_ct" in df.columns:
@@ -89,7 +93,8 @@ def load_all_data_cr(files):
 
 class CapacityRiskCalculator:
     """
-    Based on the RunRateCalculator, but extended to calculate Capacity Losses/Gains.
+    Based on the RunRateCalculator structure, but extended to calculate Capacity Losses/Gains.
+    Uses the same 'Run Identification' logic to determine valid Total Run Time.
     """
     def __init__(self, df: pd.DataFrame, 
                  tolerance: float, 
@@ -118,12 +123,15 @@ class CapacityRiskCalculator:
         df['approved_ct'] = pd.to_numeric(df['approved_ct'], errors='coerce').fillna(1)
         df['working_cavities'] = pd.to_numeric(df['working_cavities'], errors='coerce').fillna(self.default_cavities)
         
+        # Ensure positive Approved CT to avoid division by zero
+        df.loc[df['approved_ct'] <= 0, 'approved_ct'] = 1
+        
         df = df.sort_values("shot_time").reset_index(drop=True)
 
         # --- 2. Run Identification (The RR Backbone) ---
         # Calculate time diff to find "Breaks" (Weekends, Shift changes > interval)
         df['time_diff_sec'] = df['shot_time'].diff().dt.total_seconds().fillna(0)
-        # Fix first shot
+        # Fix first shot: assume it took its own cycle time
         if len(df) > 0: df.loc[0, 'time_diff_sec'] = df.loc[0, 'actual_ct']
 
         # Determine Runs based on interval threshold
@@ -141,14 +149,14 @@ class CapacityRiskCalculator:
         lower_limit = df['mode_ct'] * (1 - self.tolerance)
         upper_limit = df['mode_ct'] * (1 + self.tolerance)
         
-        # Time Gap Logic (exclude the Run Breaks)
+        # Time Gap Logic (exclude the Run Breaks themselves)
         is_time_gap = (df['time_diff_sec'] > (df['actual_ct'] + self.downtime_gap_tolerance)) & (~is_new_run)
         
         # Abnormal Cycle Logic
         is_abnormal = ((df['actual_ct'] < lower_limit) | (df['actual_ct'] > upper_limit))
         
         df['stop_flag'] = np.where(is_time_gap | is_abnormal, 1, 0)
-        # Force first shot of a *new run* to be valid (it's the start)
+        # Force first shot of a *new run* to be valid (it's the start, not a stop)
         df.loc[is_new_run, 'stop_flag'] = 0
 
         # --- 5. Adjusted Time (Accounting for gaps) ---
@@ -169,13 +177,19 @@ class CapacityRiskCalculator:
         
         # Downtime = Difference
         capacity_loss_downtime_sec = total_run_time_sec - total_actual_ct_sec
+        if capacity_loss_downtime_sec < 0: capacity_loss_downtime_sec = 0
         
-        # Averages for calc
+        # Weighted Averages for global calculations
+        # Weighted Avg Approved CT based on cavities (since output depends on both)
+        # Actually, simpler to sum Optimal Output per shot then derive avg if needed.
+        
+        # 6a. Optimal Output (The Ceiling) per shot
+        # For each shot, optimal output during that duration = (Duration / Approved CT) * Cavities
+        # However, tradition CR logic takes the *Time Period* and divides by avg CT. 
+        # Let's stick to the aggregate method for stability:
         avg_approved_ct = df['approved_ct'].mean()
         max_cavities = df['working_cavities'].max()
-
-        # 6a. Optimal Output (The Ceiling)
-        # Theoretical max if machine ran 100% of the *Run Time* at *Approved CT*
+        
         optimal_output_parts = (total_run_time_sec / avg_approved_ct) * max_cavities
         
         # 6b. Actual Output
@@ -193,6 +207,8 @@ class CapacityRiskCalculator:
         # 2. Inefficiency (Slow Cycles vs Fast Cycles)
         # Loss = (Actual - Approved) / Approved * Cavities
         df['parts_delta'] = ((df['approved_ct'] - df['actual_ct']) / df['approved_ct']) * df['working_cavities']
+        
+        # Filter out extreme values (optional, but good for data safety)
         
         capacity_gain_fast_parts = df.loc[df['parts_delta'] > 0, 'parts_delta'].sum()
         capacity_loss_slow_parts = abs(df.loc[df['parts_delta'] < 0, 'parts_delta'].sum())
@@ -275,13 +291,6 @@ def plot_waterfall(metrics_dict, benchmark_mode="Optimal"):
     gain_fast = metrics_dict['capacity_gain_fast_parts']
     
     # Starting Point
-    if benchmark_mode == "Target":
-        start_val = total_target
-        start_label = "Target Output"
-        # If calculating vs Target, we need to treat the gap differently, 
-        # but for visual simplicity in this refactor, we stick to the Optimal breakdown
-        # and show Target as a line.
-    
     measure = ["absolute", "relative", "relative", "relative", "total"]
     x_label = ["Optimal Capacity", "Downtime Loss", "Slow Cycle Loss", "Fast Cycle Gain", "Actual Output"]
     y_val = [total_opt, loss_dt, loss_slow, gain_fast, actual]

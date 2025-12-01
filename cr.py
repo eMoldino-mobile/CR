@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import datetime
-import cr_utils_refactored as cr_utils
+import cr_utils as cr_utils  # Keep import name exact
 
 # ==============================================================================
 # --- PAGE SETUP ---
@@ -146,13 +146,16 @@ def render_dashboard(df_tool, tool_name, config):
         })
     
     run_df = pd.DataFrame(run_stats)
-    st.dataframe(
-        run_df.style.format({
-            "Optimal": "{:,.0f}", "Actual": "{:,.0f}", "Net Loss": "{:,.0f}", 
-            "Efficiency": "{:.1%}", "Start": "{:%Y-%m-%d %H:%M}"
-        }), 
-        use_container_width=True
-    )
+    if not run_df.empty:
+        st.dataframe(
+            run_df.style.format({
+                "Optimal": "{:,.0f}", "Actual": "{:,.0f}", "Net Loss": "{:,.0f}", 
+                "Efficiency": "{:.1%}", "Start": "{:%Y-%m-%d %H:%M}"
+            }), 
+            use_container_width=True
+        )
+    else:
+        st.info("No runs detected in this period.")
 
 
 # ==============================================================================
