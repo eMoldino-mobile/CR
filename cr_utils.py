@@ -1,212 +1,329 @@
-import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+import plotly.graph_objects as go
+import plotly.express as px
+from io import BytesIO
 
-# --- Constants ---
+# ==============================================================================
+# --- CONSTANTS & SHARED FUNCTIONS ---
+# ==============================================================================
+
 PASTEL_COLORS = {
     'red': '#ff6961',
     'orange': '#ffb347',
-    'green': '#77dd77'
+    'green': '#77dd77',
+    'blue': '#3498DB',
+    'grey': '#808080'
 }
 
-# --- Utility Functions ---
-def format_duration(seconds):
-    if pd.isna(seconds) or seconds < 0: return "N/A"
-    total_minutes = int(seconds / 60)
-    hours = total_minutes // 60
-    minutes = total_minutes % 60
-    return f"{hours}h {minutes}m"
+def format_seconds_to_dhm(total_seconds):
+    """Converts total seconds into a 'Xd Yh Zm' string."""
+    if pd.isna(total_seconds) or total_seconds < 0: return "N/A"
+    total_minutes = int(total_seconds / 60)
+    days = total_minutes // (60 * 24)
+    remaining_minutes = total_minutes % (60 * 24)
+    hours = remaining_minutes // 60
+    minutes = remaining_minutes % 60
+    parts = []
+    if days > 0: parts.append(f"{days}d")
+    if hours > 0: parts.append(f"{hours}h")
+    if minutes > 0 or not parts: parts.append(f"{minutes}m")
+    return " ".join(parts) if parts else "0m"
 
-@st.cache_data
-def load_data(file):
-    """Loads data, similar to the Run Rate loader but looks for CR specific cols."""
-    try:
-        if file.name.endswith('.csv'):
-            df = pd.read_csv(file)
-        else:
-            df = pd.read_excel(file)
-        
-        # Column Normalization
-        col_map = {col.strip().upper(): col for col in df.columns}
-        def get_col(target): return col_map.get(target)
+def load_all_data_cr(files):
+    """
+    Loads data for Capacity Risk. 
+    Standardizes: tool_id, shot_time, actual_ct, approved_ct, working_cavities.
+    """
+    df_list = []
+    for file in files:
+        try:
+            df = pd.read_excel(file) if file.name.endswith(('.xls', '.xlsx')) else pd.read_csv(file)
+            
+            # Normalize Columns
+            col_map = {col.strip().upper(): col for col in df.columns}
+            def get_col(target_list):
+                for t in target_list:
+                    if t in col_map: return col_map[t]
+                return None
 
-        # Mapping specific to Capacity Risk
-        mappings = {
-            "SHOT TIME": get_col("SHOT TIME") or get_col("TIMESTAMP") or get_col("DATE"),
-            "ACTUAL CT": get_col("ACTUAL CT") or get_col("CYCLE TIME"),
-            "APPROVED CT": get_col("APPROVED CT") or get_col("STD CT") or get_col("OPTIMAL CT"),
-            "WORKING CAVITIES": get_col("WORKING CAVITIES") or get_col("CAVITIES"),
-            "TOOL_ID": get_col("TOOLING ID") or get_col("EQUIPMENT CODE") or get_col("TOOL_ID")
-        }
-        
-        # Rename found columns
-        df = df.rename(columns={v: k for k, v in mappings.items() if v})
-        
-        # Data Type Conversion
-        if "SHOT TIME" in df.columns:
-            df["SHOT TIME"] = pd.to_datetime(df["SHOT TIME"], errors='coerce')
-        
-        # Ensure numeric
-        for col in ["ACTUAL CT", "APPROVED CT", "WORKING CAVITIES"]:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-        
-        return df
-    except Exception as e:
-        st.error(f"Error loading file: {e}")
+            # 1. Tool ID
+            tool_col = get_col(["TOOLING ID", "EQUIPMENT CODE", "TOOL_ID", "TOOL"])
+            if tool_col: df.rename(columns={tool_col: "tool_id"}, inplace=True)
+
+            # 2. Shot Time
+            time_col = get_col(["SHOT TIME", "TIMESTAMP", "DATE", "TIME", "DATETIME"])
+            if time_col: df.rename(columns={time_col: "shot_time"}, inplace=True)
+
+            # 3. Actual CT
+            act_ct_col = get_col(["ACTUAL CT", "ACTUAL_CT", "CYCLE TIME", "CT"])
+            if act_ct_col: df.rename(columns={act_ct_col: "actual_ct"}, inplace=True)
+
+            # 4. Approved CT (Specific to CR)
+            app_ct_col = get_col(["APPROVED CT", "APPROVED_CT", "STD CT", "STANDARD CT", "REFERENCE CT"])
+            if app_ct_col: df.rename(columns={app_ct_col: "approved_ct"}, inplace=True)
+
+            # 5. Working Cavities (Specific to CR)
+            cav_col = get_col(["WORKING CAVITIES", "CAVITIES", "ACTUAL CAVITIES", "CAVITY"])
+            if cav_col: df.rename(columns={cav_col: "working_cavities"}, inplace=True)
+
+            # Essential Validation
+            if "shot_time" in df.columns and "actual_ct" in df.columns:
+                df["shot_time"] = pd.to_datetime(df["shot_time"], errors="coerce")
+                df["actual_ct"] = pd.to_numeric(df["actual_ct"], errors="coerce")
+                df.dropna(subset=["shot_time", "actual_ct"], inplace=True)
+                df_list.append(df)
+                
+        except Exception as e:
+            continue
+    
+    if not df_list:
         return pd.DataFrame()
+        
+    return pd.concat(df_list, ignore_index=True)
+
 
 # ==============================================================================
-# --- CORE LOGIC: RUN RATE CALCULATOR (Identical to Run Rate App) ---
+# --- CORE CALCULATION ENGINE (EXTENDED FOR CAPACITY) ---
 # ==============================================================================
-class RunRateCalculator:
+
+class CapacityRiskCalculator:
     """
-    The foundational logic. Identifies Runs, Stops, and Total Runtime.
+    Based on the RunRateCalculator, but extended to calculate Capacity Losses/Gains.
     """
-    def __init__(self, df: pd.DataFrame, tolerance: float, downtime_gap_tolerance: float, analysis_mode='aggregate'):
+    def __init__(self, df: pd.DataFrame, 
+                 tolerance: float, 
+                 downtime_gap_tolerance: float, 
+                 run_interval_hours: float,
+                 target_output_perc: float = 100.0,
+                 default_cavities: int = 1):
+        
         self.df_raw = df.copy()
         self.tolerance = tolerance
         self.downtime_gap_tolerance = downtime_gap_tolerance
-        self.analysis_mode = analysis_mode
-        self.results = self._calculate_all_metrics()
+        self.run_interval_hours = run_interval_hours
+        self.target_output_perc = target_output_perc
+        self.default_cavities = default_cavities
+        
+        self.results = self._calculate_metrics()
 
-    def _calculate_all_metrics(self) -> dict:
+    def _calculate_metrics(self) -> dict:
         df = self.df_raw.copy()
-        if "SHOT TIME" not in df.columns or df.empty: return {}
-        
-        df = df.dropna(subset=["SHOT TIME"]).sort_values("SHOT TIME").reset_index(drop=True)
-        
-        # Ensure columns exist (default to 0 if missing, though CR usually needs them)
-        if "ACTUAL CT" not in df.columns: df["ACTUAL CT"] = 0
-        else: df["ACTUAL CT"] = df["ACTUAL CT"].fillna(0)
+        if df.empty: return {}
 
-        df["time_diff_sec"] = df["SHOT TIME"].diff().dt.total_seconds().fillna(0)
+        # --- 1. Standardization & Defaults ---
+        if 'approved_ct' not in df.columns: df['approved_ct'] = df['actual_ct'].median() # Fallback
+        if 'working_cavities' not in df.columns: df['working_cavities'] = self.default_cavities
         
-        # 1. Mode CT Calculation
-        if not df.empty:
-             mode_ct = df[df["ACTUAL CT"] < 999.9]['ACTUAL CT'].mode().max() if not df[df["ACTUAL CT"] < 999.9].empty else 0
-        else: mode_ct = 0
+        df['approved_ct'] = pd.to_numeric(df['approved_ct'], errors='coerce').fillna(1)
+        df['working_cavities'] = pd.to_numeric(df['working_cavities'], errors='coerce').fillna(self.default_cavities)
         
-        lower_limit = mode_ct * (1 - self.tolerance)
-        upper_limit = mode_ct * (1 + self.tolerance)
+        df = df.sort_values("shot_time").reset_index(drop=True)
 
-        # 2. Stop Logic
-        df['next_shot_time_diff'] = df['time_diff_sec'].shift(-1).fillna(0)
-        is_hard_stop = df["ACTUAL CT"] >= 999.9
-        is_abnormal = ((df["ACTUAL CT"] < lower_limit) | (df["ACTUAL CT"] > upper_limit)) & ~is_hard_stop
-        is_gap = df["next_shot_time_diff"] > (df["ACTUAL CT"] + self.downtime_gap_tolerance)
-        
-        df["stop_flag"] = np.where(is_abnormal | is_gap | is_hard_stop, 1, 0)
-        df["stop_event"] = (df["stop_flag"] == 1) & (df["stop_flag"].shift(1, fill_value=0) == 0)
+        # --- 2. Run Identification (The RR Backbone) ---
+        # Calculate time diff to find "Breaks" (Weekends, Shift changes > interval)
+        df['time_diff_sec'] = df['shot_time'].diff().dt.total_seconds().fillna(0)
+        # Fix first shot
+        if len(df) > 0: df.loc[0, 'time_diff_sec'] = df.loc[0, 'actual_ct']
 
-        # 3. Time Attribution (The "Downtime Plug")
-        df['adj_ct_sec'] = df['ACTUAL CT']
-        df.loc[is_gap, 'adj_ct_sec'] = df['next_shot_time_diff']
+        # Determine Runs based on interval threshold
+        is_new_run = df['time_diff_sec'] > (self.run_interval_hours * 3600)
+        df['run_id'] = is_new_run.cumsum()
+
+        # --- 3. Mode CT Calculation (Per Run for accuracy) ---
+        run_modes = df[df['actual_ct'] < 1000].groupby('run_id')['actual_ct'].apply(
+            lambda x: x.mode().iloc[0] if not x.mode().empty else x.mean()
+        )
+        df['mode_ct'] = df['run_id'].map(run_modes)
         
-        # Basic sums (refined later by Run Splitter)
-        production_time_sec = df.loc[df['stop_flag'] == 0, 'ACTUAL CT'].sum()
+        # --- 4. Stop Detection (RR Logic) ---
+        # A stop is either an abnormal cycle (outside mode tolerance) or a time gap
+        lower_limit = df['mode_ct'] * (1 - self.tolerance)
+        upper_limit = df['mode_ct'] * (1 + self.tolerance)
         
+        # Time Gap Logic (exclude the Run Breaks)
+        is_time_gap = (df['time_diff_sec'] > (df['actual_ct'] + self.downtime_gap_tolerance)) & (~is_new_run)
+        
+        # Abnormal Cycle Logic
+        is_abnormal = ((df['actual_ct'] < lower_limit) | (df['actual_ct'] > upper_limit))
+        
+        df['stop_flag'] = np.where(is_time_gap | is_abnormal, 1, 0)
+        # Force first shot of a *new run* to be valid (it's the start)
+        df.loc[is_new_run, 'stop_flag'] = 0
+
+        # --- 5. Adjusted Time (Accounting for gaps) ---
+        # If it's a time gap stop, the "duration" of that shot is the gap
+        df['adj_ct_sec'] = df['actual_ct']
+        df.loc[is_time_gap, 'adj_ct_sec'] = df['time_diff_sec']
+        # If it's a new run, the "duration" is just the cycle time (gap excluded)
+        df.loc[is_new_run, 'adj_ct_sec'] = df['actual_ct']
+
+        # --- 6. Capacity Calculations (The CR Layer) ---
+        
+        # Totals for the dataframe
+        # Run Time = Sum of all adjusted cycle times (includes downtime gaps, excludes run breaks)
+        total_run_time_sec = df['adj_ct_sec'].sum()
+        
+        # Production Time = Sum of actual cycle times
+        total_actual_ct_sec = df['actual_ct'].sum()
+        
+        # Downtime = Difference
+        capacity_loss_downtime_sec = total_run_time_sec - total_actual_ct_sec
+        
+        # Averages for calc
+        avg_approved_ct = df['approved_ct'].mean()
+        max_cavities = df['working_cavities'].max()
+
+        # 6a. Optimal Output (The Ceiling)
+        # Theoretical max if machine ran 100% of the *Run Time* at *Approved CT*
+        optimal_output_parts = (total_run_time_sec / avg_approved_ct) * max_cavities
+        
+        # 6b. Actual Output
+        actual_output_parts = df['working_cavities'].sum()
+        
+        # 6c. Target Output
+        target_output_parts = optimal_output_parts * (self.target_output_perc / 100.0)
+
+        # 6d. Loss Segmentation (Parts)
+        
+        # 1. Downtime Loss: Time lost * Rate
+        # We calculate "Parts lost due to downtime"
+        capacity_loss_downtime_parts = (capacity_loss_downtime_sec / avg_approved_ct) * max_cavities
+        
+        # 2. Inefficiency (Slow Cycles vs Fast Cycles)
+        # Loss = (Actual - Approved) / Approved * Cavities
+        df['parts_delta'] = ((df['approved_ct'] - df['actual_ct']) / df['approved_ct']) * df['working_cavities']
+        
+        capacity_gain_fast_parts = df.loc[df['parts_delta'] > 0, 'parts_delta'].sum()
+        capacity_loss_slow_parts = abs(df.loc[df['parts_delta'] < 0, 'parts_delta'].sum())
+
+        # Reconciliation check
+        total_capacity_loss_parts = capacity_loss_downtime_parts + capacity_loss_slow_parts - capacity_gain_fast_parts
+        
+        # Gap to Target
+        gap_to_target_parts = actual_output_parts - target_output_parts
+        capacity_loss_vs_target_parts = max(0, -gap_to_target_parts)
+
+        # --- 7. Shot Classification for Charts ---
+        conditions = [
+            df['stop_flag'] == 1,
+            df['actual_ct'] > df['approved_ct'] * 1.02, # Slow
+            df['actual_ct'] < df['approved_ct'] * 0.98  # Fast
+        ]
+        choices = ['Downtime (Stop)', 'Slow Cycle', 'Fast Cycle']
+        df['shot_type'] = np.select(conditions, choices, default='On Target')
+
         return {
-            "processed_df": df, 
-            "production_time_sec": production_time_sec,
-            "mode_ct": mode_ct
+            "processed_df": df,
+            "total_run_time_sec": total_run_time_sec,
+            "total_actual_ct_sec": total_actual_ct_sec,
+            "capacity_loss_downtime_sec": capacity_loss_downtime_sec,
+            "optimal_output_parts": optimal_output_parts,
+            "actual_output_parts": actual_output_parts,
+            "target_output_parts": target_output_parts,
+            "capacity_loss_downtime_parts": capacity_loss_downtime_parts,
+            "capacity_loss_slow_parts": capacity_loss_slow_parts,
+            "capacity_gain_fast_parts": capacity_gain_fast_parts,
+            "total_capacity_loss_parts": total_capacity_loss_parts,
+            "gap_to_target_parts": gap_to_target_parts,
+            "capacity_loss_vs_target_parts": capacity_loss_vs_target_parts,
+            "efficiency_rate": (actual_output_parts / optimal_output_parts) if optimal_output_parts > 0 else 0
         }
 
-# ==============================================================================
-# --- EXTENSION: CAPACITY CALCULATOR (Builds on top of Run Rate) ---
-# ==============================================================================
-
-def calculate_capacity_metrics(df_tool, tolerance, gap, run_interval_hours, default_cavities=1):
+def aggregate_by_period(df, period_col, tolerance, dt_gap, run_int, target_perc, def_cav):
     """
-    1. Runs the RunRateCalculator to identify Stops.
-    2. Splits data into Runs based on Interval.
-    3. Calculates Capacity Loss (Parts) based on Approved CT.
+    Groups data by a period column (e.g., 'date', 'week') and runs the calculator for each.
+    Returns a DataFrame of aggregated results.
     """
-    # 1. Base Run Rate Logic
-    base_calc = RunRateCalculator(df_tool, tolerance, gap)
-    df = base_calc.results.get('processed_df')
+    results_list = []
     
-    if df is None or df.empty: return {}
+    for period, df_subset in df.groupby(period_col):
+        calc = CapacityRiskCalculator(df_subset, tolerance, dt_gap, run_int, target_perc, def_cav)
+        res = calc.results
+        
+        row = {
+            period_col: period,
+            'Optimal Output': res['optimal_output_parts'],
+            'Target Output': res['target_output_parts'],
+            'Actual Output': res['actual_output_parts'],
+            'Total Loss': res['total_capacity_loss_parts'],
+            'Downtime Loss': res['capacity_loss_downtime_parts'],
+            'Slow Cycle Loss': res['capacity_loss_slow_parts'],
+            'Fast Cycle Gain': res['capacity_gain_fast_parts'],
+            'Run Time (hrs)': res['total_run_time_sec'] / 3600,
+            'Gap to Target': res['gap_to_target_parts']
+        }
+        results_list.append(row)
+        
+    return pd.DataFrame(results_list).sort_values(period_col)
 
-    # Fill missing cols if needed
-    if "APPROVED CT" not in df.columns: df["APPROVED CT"] = df['ACTUAL CT'].mode().max() # Fallback
-    if "WORKING CAVITIES" not in df.columns: df["WORKING CAVITIES"] = default_cavities
+# ==============================================================================
+# --- PLOTTING FUNCTIONS ---
+# ==============================================================================
 
-    # 2. Run Identification (The "Run-Based" Philosophy)
-    RUN_INTERVAL_SEC = run_interval_hours * 3600
-    is_new_run = df['time_diff_sec'] > RUN_INTERVAL_SEC
-    df['run_id'] = is_new_run.cumsum()
+def plot_waterfall(metrics_dict, benchmark_mode="Optimal"):
+    """
+    Creates the Waterfall chart showing how capacity is lost.
+    """
     
-    # 3. Iterate Runs and Aggregate
-    # We do this to get accurate "Total Runtime" (excluding 8h+ gaps)
+    total_opt = metrics_dict['optimal_output_parts']
+    total_target = metrics_dict['target_output_parts']
+    actual = metrics_dict['actual_output_parts']
     
-    total_metrics = {
-        "Total Run Duration (sec)": 0,
-        "Production Time (sec)": 0,
-        "Downtime (sec)": 0,
-        "Optimal Output (parts)": 0,
-        "Actual Output (parts)": 0,
-        "Loss - Downtime (parts)": 0,
-        "Loss - Speed (parts)": 0,
-        "Gain - Speed (parts)": 0,
-        "Total Shots": len(df)
-    }
+    loss_dt = -metrics_dict['capacity_loss_downtime_parts']
+    loss_slow = -metrics_dict['capacity_loss_slow_parts']
+    gain_fast = metrics_dict['capacity_gain_fast_parts']
     
-    for _, df_run in df.groupby('run_id'):
-        # A. Time Calculations (Per Run)
-        first_shot = df_run['SHOT TIME'].min()
-        last_shot = df_run['SHOT TIME'].max()
-        last_ct = df_run.iloc[-1]['ACTUAL CT']
-        
-        run_duration = (last_shot - first_shot).total_seconds() + last_ct
-        
-        # Production time = Sum of Actual CT of "Good" shots (stop_flag=0)
-        # Note: RunRateCalculator already flagged these.
-        prod_time = df_run[df_run['stop_flag'] == 0]['ACTUAL CT'].sum()
-        downtime = run_duration - prod_time
-        
-        # B. Capacity Calculations (Per Run)
-        # Using weighted average Approved CT for the run in case it changes
-        avg_approved_ct = df_run['APPROVED CT'].mean()
-        if avg_approved_ct == 0: avg_approved_ct = 1
-        
-        max_cavities = df_run['WORKING CAVITIES'].max() # Assuming constant per run
-        
-        # Optimal Output = If we ran the whole duration at Approved CT
-        optimal_parts = (run_duration / avg_approved_ct) * max_cavities
-        
-        # Actual Output = Sum of cavities per shot
-        actual_parts = df_run['WORKING CAVITIES'].sum()
-        
-        # C. Loss Attribution
-        # 1. How many parts did we lose because the machine stopped?
-        #    (Downtime Duration / Approved CT)
-        loss_downtime_parts = (downtime / avg_approved_ct) * max_cavities
-        
-        # 2. Speed Loss/Gain
-        #    Calculated as a plug or shot-by-shot. Let's do shot-by-shot for precision.
-        #    For every production shot: (Actual CT - Approved CT) is lost time.
-        prod_shots = df_run[df_run['stop_flag'] == 0].copy()
-        prod_shots['time_delta'] = prod_shots['ACTUAL CT'] - prod_shots['APPROVED CT']
-        
-        # If Time Delta > 0 (Slower than approved) -> Loss
-        # If Time Delta < 0 (Faster than approved) -> Gain
-        
-        loss_speed_sec = prod_shots[prod_shots['time_delta'] > 0]['time_delta'].sum()
-        gain_speed_sec = abs(prod_shots[prod_shots['time_delta'] < 0]['time_delta'].sum())
-        
-        loss_speed_parts = (loss_speed_sec / avg_approved_ct) * max_cavities
-        gain_speed_parts = (gain_speed_sec / avg_approved_ct) * max_cavities
-        
-        # Aggregate
-        total_metrics["Total Run Duration (sec)"] += run_duration
-        total_metrics["Production Time (sec)"] += prod_time
-        total_metrics["Downtime (sec)"] += downtime
-        total_metrics["Optimal Output (parts)"] += optimal_parts
-        total_metrics["Actual Output (parts)"] += actual_parts
-        total_metrics["Loss - Downtime (parts)"] += loss_downtime_parts
-        total_metrics["Loss - Speed (parts)"] += loss_speed_parts
-        total_metrics["Gain - Speed (parts)"] += gain_speed_parts
+    # Starting Point
+    if benchmark_mode == "Target":
+        start_val = total_target
+        start_label = "Target Output"
+        # If calculating vs Target, we need to treat the gap differently, 
+        # but for visual simplicity in this refactor, we stick to the Optimal breakdown
+        # and show Target as a line.
+    
+    measure = ["absolute", "relative", "relative", "relative", "total"]
+    x_label = ["Optimal Capacity", "Downtime Loss", "Slow Cycle Loss", "Fast Cycle Gain", "Actual Output"]
+    y_val = [total_opt, loss_dt, loss_slow, gain_fast, actual]
+    text_val = [f"{total_opt:,.0f}", f"{loss_dt:,.0f}", f"{loss_slow:,.0f}", f"+{gain_fast:,.0f}", f"{actual:,.0f}"]
+    
+    fig = go.Figure(go.Waterfall(
+        name="Capacity Bridge", orientation="v",
+        measure=measure,
+        x=x_label,
+        y=y_val,
+        text=text_val,
+        textposition="outside",
+        connector={"line": {"color": "rgb(63, 63, 63)"}},
+        decreasing={"marker": {"color": PASTEL_COLORS['red']}},
+        increasing={"marker": {"color": PASTEL_COLORS['green']}},
+        totals={"marker": {"color": PASTEL_COLORS['blue']}}
+    ))
+    
+    if benchmark_mode == "Target":
+        fig.add_shape(type="line", x0=-0.5, x1=4.5, y0=total_target, y1=total_target,
+                      line=dict(color="orange", width=2, dash="dash"))
+        fig.add_annotation(x=0, y=total_target, text="Target", showarrow=False, yshift=10)
 
-    return total_metrics
+    fig.update_layout(title="Capacity Loss Waterfall", showlegend=False, height=450)
+    return fig
+
+def plot_capacity_trend(trend_df, x_col):
+    """
+    Stacked bar chart of Actual vs Losses over time.
+    """
+    fig = go.Figure()
+    
+    # Actual
+    fig.add_trace(go.Bar(name='Actual Output', x=trend_df[x_col], y=trend_df['Actual Output'], marker_color=PASTEL_COLORS['blue']))
+    
+    # Losses
+    fig.add_trace(go.Bar(name='Downtime Loss', x=trend_df[x_col], y=trend_df['Downtime Loss'], marker_color=PASTEL_COLORS['grey']))
+    fig.add_trace(go.Bar(name='Slow Cycle Loss', x=trend_df[x_col], y=trend_df['Slow Cycle Loss'], marker_color=PASTEL_COLORS['red']))
+    
+    # Lines
+    fig.add_trace(go.Scatter(name='Optimal Output', x=trend_df[x_col], y=trend_df['Optimal Output'], mode='lines', line=dict(color='green', dash='dot')))
+    fig.add_trace(go.Scatter(name='Target Output', x=trend_df[x_col], y=trend_df['Target Output'], mode='lines', line=dict(color='orange', dash='dash')))
+
+    fig.update_layout(barmode='stack', title="Capacity Trend", xaxis_title=x_col, yaxis_title="Parts")
+    return fig
