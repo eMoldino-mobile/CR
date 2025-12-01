@@ -140,15 +140,33 @@ class CapacityRiskCalculator:
         
         df['stop_event'] = (df["stop_flag"] == 1) & (df["stop_flag"].shift(1, fill_value=0) == 0)
 
-        # Adjusted Time
+        # Adjusted Time (For Shot Type logic only)
         df['adj_ct_sec'] = df['actual_ct']
         df.loc[is_time_gap, 'adj_ct_sec'] = df['time_diff_sec']
         df.loc[is_new_run, 'adj_ct_sec'] = df['actual_ct'] 
 
-        # Metrics
-        total_runtime_sec = df['adj_ct_sec'].sum()
+        # --- Metrics Calculation (UPDATED: WALL CLOCK LOGIC) ---
+        
+        # 1. Total Run Duration (Wall Clock Method)
+        # Calculates (End - Start) + LastCT for each run, then sums them up.
+        # This matches the Run Rate App logic exactly.
+        run_durations = []
+        for _, run_df in df.groupby('run_id'):
+            if not run_df.empty:
+                start = run_df['shot_time'].min()
+                end = run_df['shot_time'].max()
+                last_ct = run_df.iloc[-1]['actual_ct']
+                duration = (end - start).total_seconds() + last_ct
+                run_durations.append(duration)
+        
+        total_runtime_sec = sum(run_durations)
+
+        # 2. Production Time (Sum of Actual Cycle Times for Normal Shots)
         prod_df = df[df['stop_flag'] == 0].copy()
         production_time_sec = prod_df['actual_ct'].sum()
+        
+        # 3. Downtime (Plug Figure)
+        # Downtime is the difference between Total Run Time and Production Time
         downtime_sec = total_runtime_sec - production_time_sec
         if downtime_sec < 0: downtime_sec = 0
 
@@ -177,7 +195,7 @@ class CapacityRiskCalculator:
         gap_to_target_parts = actual_output_parts - target_output_parts
         capacity_loss_vs_target_parts = max(0, -gap_to_target_parts)
 
-        # Classification (Strict logic, no 2% buffer)
+        # Classification
         epsilon = 0.001
         conditions = [
             df['stop_flag'] == 1,
@@ -204,7 +222,6 @@ class CapacityRiskCalculator:
             "capacity_gain_fast_parts": capacity_gain_fast_parts,
             "total_capacity_loss_parts": true_loss_parts,
             "gap_to_target_parts": gap_to_target_parts,
-            "capacity_loss_vs_target_parts": capacity_loss_vs_target_parts,
             "efficiency_rate": (actual_output_parts / optimal_output_parts) if optimal_output_parts > 0 else 0
         }
 
@@ -338,56 +355,30 @@ def calculate_capacity_risk_scores(df_all, config):
 # ==============================================================================
 
 def create_donut_chart(value, title, color_scheme='blue'):
-    """
-    Creates a donut chart similar to the Run Rate app style.
-    value: percentage (0-100)
-    title: string title for the center or header
-    color_scheme: 'blue', 'green', or custom hex
-    """
-    
-    # Determine color
-    if color_scheme == 'blue':
-        main_color = PASTEL_COLORS['blue']
-    elif color_scheme == 'green':
-        main_color = PASTEL_COLORS['green']
+    """Creates a donut chart similar to the Run Rate app style."""
+    if color_scheme == 'blue': main_color = PASTEL_COLORS['blue']
+    elif color_scheme == 'green': main_color = PASTEL_COLORS['green']
     elif color_scheme == 'dynamic':
         if value < 70: main_color = PASTEL_COLORS['red']
         elif value < 90: main_color = PASTEL_COLORS['orange']
         else: main_color = PASTEL_COLORS['green']
-    else:
-        main_color = color_scheme
+    else: main_color = color_scheme
 
-    # Cap value at 100 for visual, but text shows real value
     plot_val = min(value, 100)
     remainder = 100 - plot_val
     
     fig = go.Figure(data=[go.Pie(
-        values=[plot_val, remainder],
-        hole=0.75,
-        sort=False,
-        direction='clockwise',
-        textinfo='none',
-        marker=dict(colors=[main_color, '#e6e6e6']),
-        hoverinfo='none'
+        values=[plot_val, remainder], hole=0.75, sort=False, direction='clockwise',
+        textinfo='none', marker=dict(colors=[main_color, '#e6e6e6']), hoverinfo='none'
     )])
 
-    # Center Text
-    fig.add_annotation(
-        text=f"{value:.1f}%",
-        x=0.5, y=0.5,
-        font=dict(size=24, weight='bold', color=main_color),
-        showarrow=False
-    )
+    fig.add_annotation(text=f"{value:.1f}%", x=0.5, y=0.5, font=dict(size=24, weight='bold', color=main_color), showarrow=False)
     
     fig.update_layout(
         title=dict(text=title, x=0.5, xanchor='center', y=0.95, font=dict(size=14)),
-        margin=dict(l=20, r=20, t=30, b=20),
-        height=180,
-        showlegend=False,
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)'
+        margin=dict(l=20, r=20, t=30, b=20), height=180, showlegend=False,
+        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'
     )
-    
     return fig
 
 def plot_waterfall(metrics, benchmark_mode="Optimal"):
@@ -440,16 +431,11 @@ def plot_performance_breakdown(df_agg, x_col, benchmark_mode):
 
 def plot_prediction_chart(dates, actual, peak, target, demand, start_date, start_val):
     fig = go.Figure()
-    
-    # Historical is not plotted here (handled in app), these are projections
     fig.add_trace(go.Scatter(x=dates, y=actual, mode='lines', name='Projected (Current Rate)', line=dict(color=PASTEL_COLORS['blue'], dash='dash')))
     fig.add_trace(go.Scatter(x=dates, y=peak, mode='lines', name='Theoretical Max (P90)', line=dict(color=PASTEL_COLORS['green'], dash='dot')))
     
-    if target:
-        fig.add_trace(go.Scatter(x=dates, y=target, mode='lines', name='Target Trend', line=dict(color=PASTEL_COLORS['target_line'], dash='longdashdot')))
-    
-    if demand > 0:
-        fig.add_hline(y=demand, line_dash="solid", line_color=PASTEL_COLORS['purple'], annotation_text=f"Demand: {demand:,.0f}")
+    if target: fig.add_trace(go.Scatter(x=dates, y=target, mode='lines', name='Target Trend', line=dict(color=PASTEL_COLORS['target_line'], dash='longdashdot')))
+    if demand > 0: fig.add_hline(y=demand, line_dash="solid", line_color=PASTEL_COLORS['purple'], annotation_text=f"Demand: {demand:,.0f}")
 
     fig.add_vline(x=start_date, line_width=1, line_color="grey")
     fig.add_annotation(x=start_date, y=start_val, text="Start", showarrow=True, arrowhead=1)
@@ -467,27 +453,19 @@ def plot_shot_analysis(df_shots, zoom_y=None):
         if not subset.empty:
             fig.add_trace(go.Bar(x=subset['shot_time'], y=subset['actual_ct'], name=shot_type, marker_color=color, hovertemplate='Time: %{x}<br>CT: %{y:.2f}s<extra></extra>'))
             
-    # Add Mode Bands (Green rectangles like RR)
-    # Simplify by doing one rect per run to avoid 1000s of shapes
     for r_id, run_df in df_shots.groupby('run_id'):
         lower = run_df['mode_lower'].iloc[0]
         upper = run_df['mode_upper'].iloc[0]
         start = run_df['shot_time'].min()
         end = run_df['shot_time'].max()
         
-        # This draws a light grey band over the tolerance area
-        fig.add_shape(type="rect", x0=start, x1=end, y0=lower, y1=upper,
-                      fillcolor="grey", opacity=0.2, line_width=0)
-        
-        # Annotation for the band (only once)
-        if r_id == 0: 
-             fig.add_annotation(x=start, y=upper, text="Mode Tolerance Band", showarrow=False, yshift=10, font=dict(color="grey", size=10))
+        fig.add_shape(type="rect", x0=start, x1=end, y0=lower, y1=upper, fillcolor="grey", opacity=0.2, line_width=0)
+        if r_id == 0: fig.add_annotation(x=start, y=upper, text="Mode Tolerance Band", showarrow=False, yshift=10, font=dict(color="grey", size=10))
 
     avg_ref = df_shots['approved_ct'].mean()
     fig.add_hline(y=avg_ref, line_dash="dash", line_color="green", annotation_text=f"Avg Approved CT: {avg_ref:.2f}s")
     
     layout_args = dict(title="Shot-by-Shot Analysis", yaxis_title="Cycle Time (sec)", hovermode="closest")
     if zoom_y: layout_args['yaxis_range'] = [0, zoom_y]
-    
     fig.update_layout(**layout_args)
     return fig
