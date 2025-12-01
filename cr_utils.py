@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
-from datetime import timedelta
+from datetime import datetime, timedelta
 from io import BytesIO
 
 # ==============================================================================
@@ -16,7 +16,8 @@ PASTEL_COLORS = {
     'blue': '#3498DB',
     'grey': '#808080',
     'target_line': 'deepskyblue',
-    'optimal_line': 'darkblue'
+    'optimal_line': 'darkblue',
+    'purple': '#8A2BE2'
 }
 
 def format_seconds_to_dhm(total_seconds):
@@ -115,7 +116,7 @@ class CapacityRiskCalculator:
         is_new_run = df['time_diff_sec'] > (self.run_interval_hours * 3600)
         df['run_id'] = is_new_run.cumsum()
 
-        # Mode CT & Limits
+        # Mode CT & Limits (RR Logic)
         run_modes = df[df['actual_ct'] < 1000].groupby('run_id')['actual_ct'].apply(
             lambda x: x.mode().iloc[0] if not x.mode().empty else x.mean()
         )
@@ -132,15 +133,17 @@ class CapacityRiskCalculator:
         is_hard_stop = df['actual_ct'] >= 999.9
 
         df['stop_flag'] = np.where(is_time_gap | is_abnormal | is_hard_stop, 1, 0)
-        df.loc[is_new_run, 'stop_flag'] = 0
-        if not df.empty: df.loc[0, 'stop_flag'] = 0
+        # Force first shot of every run to be production
+        if not df.empty:
+            first_shots = df.groupby('run_id').head(1).index
+            df.loc[first_shots, 'stop_flag'] = 0
         
         df['stop_event'] = (df["stop_flag"] == 1) & (df["stop_flag"].shift(1, fill_value=0) == 0)
 
         # Adjusted Time
         df['adj_ct_sec'] = df['actual_ct']
         df.loc[is_time_gap, 'adj_ct_sec'] = df['time_diff_sec']
-        df.loc[is_new_run, 'adj_ct_sec'] = df['actual_ct']
+        df.loc[is_new_run, 'adj_ct_sec'] = df['actual_ct'] 
 
         # Metrics
         total_runtime_sec = df['adj_ct_sec'].sum()
@@ -174,11 +177,12 @@ class CapacityRiskCalculator:
         gap_to_target_parts = actual_output_parts - target_output_parts
         capacity_loss_vs_target_parts = max(0, -gap_to_target_parts)
 
-        # Classification
+        # Classification (Strict logic, no 2% buffer)
+        epsilon = 0.001
         conditions = [
             df['stop_flag'] == 1,
-            df['actual_ct'] > df['approved_ct'] * 1.02, 
-            df['actual_ct'] < df['approved_ct'] * 0.98 
+            df['actual_ct'] > (df['approved_ct'] + epsilon), 
+            df['actual_ct'] < (df['approved_ct'] - epsilon)
         ]
         choices = ['Downtime (Stop)', 'Slow Cycle', 'Fast Cycle']
         df['shot_type'] = np.select(conditions, choices, default='On Target')
@@ -202,6 +206,131 @@ class CapacityRiskCalculator:
             "gap_to_target_parts": gap_to_target_parts,
             "efficiency_rate": (actual_output_parts / optimal_output_parts) if optimal_output_parts > 0 else 0
         }
+
+# ==============================================================================
+# --- AGGREGATION, PREDICTION & RISK LOGIC ---
+# ==============================================================================
+
+def get_aggregated_data(df, freq_mode, config):
+    """Generates aggregated dataframe for tables/charts."""
+    rows = []
+    
+    if freq_mode == 'Daily': grouper = df.groupby(df['shot_time'].dt.date)
+    elif freq_mode == 'Weekly': grouper = df.groupby(df['shot_time'].dt.to_period('W').astype(str))
+    elif freq_mode == 'Monthly': grouper = df.groupby(df['shot_time'].dt.to_period('M').astype(str))
+    elif freq_mode == 'by Run': 
+        temp_calc = CapacityRiskCalculator(df, **config)
+        grouper = temp_calc.results['processed_df'].groupby('run_id')
+    else: return pd.DataFrame()
+
+    for group_name, df_subset in grouper:
+        calc = CapacityRiskCalculator(df_subset, **config)
+        res = calc.results
+        if not res: continue
+        
+        rows.append({
+            'Period': group_name,
+            'Actual Output': res['actual_output_parts'],
+            'Optimal Output': res['optimal_output_parts'],
+            'Target Output': res['target_output_parts'],
+            'Downtime Loss': res['capacity_loss_downtime_parts'],
+            'Slow Loss': res['capacity_loss_slow_parts'],
+            'Fast Gain': res['capacity_gain_fast_parts'],
+            'Net Cycle Loss': res['capacity_loss_slow_parts'] - res['capacity_gain_fast_parts'],
+            'Total Loss': res['total_capacity_loss_parts'],
+            'Gap to Target': res['gap_to_target_parts'],
+            'Run Time': format_seconds_to_dhm(res['total_runtime_sec']),
+            'Downtime': format_seconds_to_dhm(res['downtime_sec'])
+        })
+        
+    return pd.DataFrame(rows)
+
+def calculate_theoretical_capacity(df_daily_agg):
+    if df_daily_agg.empty: return 0, 0, 0, 0
+    
+    min_date = pd.to_datetime(df_daily_agg['Period'].min())
+    max_date = pd.to_datetime(df_daily_agg['Period'].max())
+    total_span_days = (max_date - min_date).days + 1
+    if total_span_days <= 0: return 0, 0, 0, 0
+    
+    operating_days = len(df_daily_agg)
+    total_span_weeks = total_span_days / 7.0
+    avg_prod_days_per_week = operating_days / total_span_weeks if total_span_weeks > 0 else 0
+    
+    monthly_factor = avg_prod_days_per_week * 4.33
+    peak_daily = df_daily_agg['Actual Output'].quantile(0.90)
+    theoretical_monthly = peak_daily * monthly_factor
+    
+    return theoretical_monthly, monthly_factor, avg_prod_days_per_week, peak_daily
+
+def generate_prediction_data(df_daily_agg, start_date, target_date, demand_target):
+    df = df_daily_agg.copy()
+    df['Period'] = pd.to_datetime(df['Period'])
+    df = df.sort_values('Period').set_index('Period')
+    df['Cum Actual'] = df['Actual Output'].cumsum()
+    
+    start_ts = pd.Timestamp(start_date)
+    past_data = df[df.index <= start_ts]
+    start_val = past_data['Cum Actual'].iloc[-1] if not past_data.empty else 0
+    
+    days_in_data = len(df)
+    current_daily_rate = df['Actual Output'].sum() / days_in_data if days_in_data > 0 else 0
+    peak_daily = df['Actual Output'].quantile(0.90)
+    
+    projection_days = (target_date - start_date).days
+    if projection_days < 1: projection_days = 1
+    future_dates = [start_date + timedelta(days=i) for i in range(projection_days + 1)]
+    
+    proj_actual = [start_val + (current_daily_rate * i) for i in range(len(future_dates))]
+    proj_peak = [start_val + (peak_daily * i) for i in range(len(future_dates))]
+    
+    proj_target = []
+    if df['Target Output'].sum() > 0:
+        avg_target = df['Target Output'].mean()
+        proj_target = [start_val + (avg_target * i) for i in range(len(future_dates))]
+        
+    return future_dates, proj_actual, proj_peak, proj_target, start_val, current_daily_rate, peak_daily
+
+def calculate_capacity_risk_scores(df_all, config):
+    risk_data = []
+    for tool_id, df_tool in df_all.groupby('tool_id'):
+        max_date = df_tool['shot_time'].max()
+        cutoff_date = max_date - timedelta(weeks=4)
+        df_period = df_tool[df_tool['shot_time'] >= cutoff_date].copy()
+        
+        if df_period.empty: continue
+        
+        calc = CapacityRiskCalculator(df_period, **config)
+        res = calc.results
+        if res['target_output_parts'] == 0: continue
+        
+        ach_perc = (res['actual_output_parts'] / res['target_output_parts']) * 100
+        
+        midpoint = cutoff_date + (max_date - cutoff_date) / 2
+        df_late = df_period[df_period['shot_time'] >= midpoint]
+        df_early = df_period[df_period['shot_time'] < midpoint]
+        
+        trend = "Stable"
+        if not df_early.empty and not df_late.empty:
+            c_early = CapacityRiskCalculator(df_early, **config).results
+            c_late = CapacityRiskCalculator(df_late, **config).results
+            early_rate = c_early['actual_output_parts'] / (c_early['total_runtime_sec']/3600) if c_early['total_runtime_sec'] > 0 else 0
+            late_rate = c_late['actual_output_parts'] / (c_late['total_runtime_sec']/3600) if c_late['total_runtime_sec'] > 0 else 0
+            
+            if late_rate < early_rate * 0.95: trend = "Declining"
+            elif late_rate > early_rate * 1.05: trend = "Improving"
+
+        base_score = min(ach_perc, 100)
+        if trend == "Declining": base_score -= 20
+        
+        risk_data.append({
+            'Tool ID': tool_id,
+            'Risk Score': max(0, base_score),
+            'Achievement %': ach_perc,
+            'Trend': trend,
+            'Gap': res['gap_to_target_parts']
+        })
+    return pd.DataFrame(risk_data).sort_values('Risk Score')
 
 # ==============================================================================
 # --- PLOTTING FUNCTIONS ---
@@ -238,75 +367,53 @@ def plot_waterfall(metrics, benchmark_mode="Optimal"):
     return fig
 
 def plot_performance_breakdown(df_agg, x_col, benchmark_mode):
-    """
-    Stacked Bar Chart: Actual + Losses vs Optimal/Target Lines
-    """
     fig = go.Figure()
+    fig.add_trace(go.Bar(x=df_agg[x_col], y=df_agg['Actual Output'], name='Actual Output', marker_color=PASTEL_COLORS['blue']))
     
-    # 1. Actual Output
-    fig.add_trace(go.Bar(
-        x=df_agg[x_col], y=df_agg['Actual Output'], name='Actual Output',
-        marker_color=PASTEL_COLORS['blue']
-    ))
-    
-    # 2. Net Cycle Loss (Combined Slow - Fast)
-    # Ensure we don't plot negative bars if Gain > Loss
     cycle_loss_net = df_agg['Slow Loss'] - df_agg['Fast Gain']
     cycle_loss_plot = cycle_loss_net.clip(lower=0)
     
-    fig.add_trace(go.Bar(
-        x=df_agg[x_col], y=cycle_loss_plot, name='Net Cycle Loss',
-        marker_color=PASTEL_COLORS['orange']
-    ))
+    fig.add_trace(go.Bar(x=df_agg[x_col], y=cycle_loss_plot, name='Net Cycle Loss', marker_color=PASTEL_COLORS['orange']))
+    fig.add_trace(go.Bar(x=df_agg[x_col], y=df_agg['Downtime Loss'], name='Downtime Loss', marker_color=PASTEL_COLORS['grey']))
     
-    # 3. Downtime Loss
-    fig.add_trace(go.Bar(
-        x=df_agg[x_col], y=df_agg['Downtime Loss'], name='Downtime Loss',
-        marker_color=PASTEL_COLORS['grey']
-    ))
-    
-    # Lines
-    fig.add_trace(go.Scatter(
-        x=df_agg[x_col], y=df_agg['Optimal Output'], name='Optimal Output',
-        mode='lines', line=dict(color=PASTEL_COLORS['optimal_line'], dash='dot')
-    ))
+    fig.add_trace(go.Scatter(x=df_agg[x_col], y=df_agg['Optimal Output'], name='Optimal Output', mode='lines', line=dict(color=PASTEL_COLORS['optimal_line'], dash='dot')))
     
     if benchmark_mode == "Target Output":
-        fig.add_trace(go.Scatter(
-            x=df_agg[x_col], y=df_agg['Target Output'], name='Target Output',
-            mode='lines', line=dict(color=PASTEL_COLORS['target_line'], dash='dash')
-        ))
+        fig.add_trace(go.Scatter(x=df_agg[x_col], y=df_agg['Target Output'], name='Target Output', mode='lines', line=dict(color=PASTEL_COLORS['target_line'], dash='dash')))
 
     fig.update_layout(barmode='stack', title="Performance Breakdown", hovermode="x unified", height=450)
     return fig
 
-def plot_shot_analysis(df_shots, zoom_y=None):
-    """
-    Detailed shot-by-shot bar chart with Mode Bands.
-    """
-    if df_shots.empty: return go.Figure()
-    
+def plot_prediction_chart(dates, actual, peak, target, demand, start_date, start_val):
     fig = go.Figure()
     
-    # Color Map
-    color_map = {
-        'Slow Cycle': PASTEL_COLORS['red'],
-        'Fast Cycle': PASTEL_COLORS['orange'],
-        'On Target': PASTEL_COLORS['blue'],
-        'Downtime (Stop)': PASTEL_COLORS['grey'],
-        'Run Break (Excluded)': '#d3d3d3'
-    }
+    # Historical is not plotted here (handled in app), these are projections
+    fig.add_trace(go.Scatter(x=dates, y=actual, mode='lines', name='Projected (Current Rate)', line=dict(color=PASTEL_COLORS['blue'], dash='dash')))
+    fig.add_trace(go.Scatter(x=dates, y=peak, mode='lines', name='Theoretical Max (P90)', line=dict(color=PASTEL_COLORS['green'], dash='dot')))
+    
+    if target:
+        fig.add_trace(go.Scatter(x=dates, y=target, mode='lines', name='Target Trend', line=dict(color=PASTEL_COLORS['target_line'], dash='longdashdot')))
+    
+    if demand > 0:
+        fig.add_hline(y=demand, line_dash="solid", line_color=PASTEL_COLORS['purple'], annotation_text=f"Demand: {demand:,.0f}")
+
+    fig.add_vline(x=start_date, line_width=1, line_color="grey")
+    fig.add_annotation(x=start_date, y=start_val, text="Start", showarrow=True, arrowhead=1)
+
+    fig.update_layout(title="Future Capacity Prediction", xaxis_title="Date", yaxis_title="Cumulative Output", hovermode="x unified", height=500)
+    return fig
+
+def plot_shot_analysis(df_shots, zoom_y=None):
+    if df_shots.empty: return go.Figure()
+    fig = go.Figure()
+    color_map = {'Slow Cycle': PASTEL_COLORS['red'], 'Fast Cycle': PASTEL_COLORS['orange'], 'On Target': PASTEL_COLORS['blue'], 'Downtime (Stop)': PASTEL_COLORS['grey'], 'Run Break (Excluded)': '#d3d3d3'}
     
     for shot_type, color in color_map.items():
         subset = df_shots[df_shots['shot_type'] == shot_type]
         if not subset.empty:
-            fig.add_trace(go.Bar(
-                x=subset['shot_time'], y=subset['actual_ct'],
-                name=shot_type, marker_color=color,
-                hovertemplate='Time: %{x}<br>CT: %{y:.2f}s<extra></extra>'
-            ))
+            fig.add_trace(go.Bar(x=subset['shot_time'], y=subset['actual_ct'], name=shot_type, marker_color=color, hovertemplate='Time: %{x}<br>CT: %{y:.2f}s<extra></extra>'))
             
-    # Add Mode Bands (Grey rectangles)
+    # Add Mode Bands (Green rectangles like RR)
     # Simplify by doing one rect per run to avoid 1000s of shapes
     for r_id, run_df in df_shots.groupby('run_id'):
         lower = run_df['mode_lower'].iloc[0]
@@ -314,102 +421,19 @@ def plot_shot_analysis(df_shots, zoom_y=None):
         start = run_df['shot_time'].min()
         end = run_df['shot_time'].max()
         
+        # This draws a light grey band over the tolerance area
         fig.add_shape(type="rect", x0=start, x1=end, y0=lower, y1=upper,
                       fillcolor="grey", opacity=0.2, line_width=0)
+        
+        # Annotation for the band (only once)
+        if r_id == 0: 
+             fig.add_annotation(x=start, y=upper, text="Mode Tolerance Band", showarrow=False, yshift=10, font=dict(color="grey", size=10))
 
-    # Reference Line (Average Approved CT)
     avg_ref = df_shots['approved_ct'].mean()
     fig.add_hline(y=avg_ref, line_dash="dash", line_color="green", annotation_text=f"Avg Approved CT: {avg_ref:.2f}s")
-
+    
     layout_args = dict(title="Shot-by-Shot Analysis", yaxis_title="Cycle Time (sec)", hovermode="closest")
     if zoom_y: layout_args['yaxis_range'] = [0, zoom_y]
     
     fig.update_layout(**layout_args)
     return fig
-
-# ==============================================================================
-# --- AGGREGATION & RISK ---
-# ==============================================================================
-
-def get_aggregated_data(df, freq_mode, config):
-    """
-    Generates the aggregated dataframe for the Stacked Bar Chart & Detailed Tables.
-    freq_mode: 'Daily', 'Weekly', 'Monthly', 'by Run'
-    """
-    rows = []
-    
-    # Define grouper
-    if freq_mode == 'Daily': grouper = df.groupby(df['shot_time'].dt.date)
-    elif freq_mode == 'Weekly': grouper = df.groupby(df['shot_time'].dt.to_period('W').astype(str))
-    elif freq_mode == 'Monthly': grouper = df.groupby(df['shot_time'].dt.to_period('M').astype(str))
-    elif freq_mode == 'by Run': 
-        # Must run calc first to get run_ids
-        temp_calc = CapacityRiskCalculator(df, **config)
-        grouper = temp_calc.results['processed_df'].groupby('run_id')
-    else: return pd.DataFrame()
-
-    for group_name, df_subset in grouper:
-        calc = CapacityRiskCalculator(df_subset, **config)
-        res = calc.results
-        if not res: continue
-        
-        rows.append({
-            'Period': group_name,
-            'Actual Output': res['actual_output_parts'],
-            'Optimal Output': res['optimal_output_parts'],
-            'Target Output': res['target_output_parts'],
-            'Downtime Loss': res['capacity_loss_downtime_parts'],
-            'Slow Loss': res['capacity_loss_slow_parts'],
-            'Fast Gain': res['capacity_gain_fast_parts'],
-            'Net Cycle Loss': res['capacity_loss_slow_parts'] - res['capacity_gain_fast_parts'],
-            'Total Loss': res['total_capacity_loss_parts'],
-            'Gap to Target': res['gap_to_target_parts'],
-            'Run Time': format_seconds_to_dhm(res['total_runtime_sec']),
-            'Prod Time': format_seconds_to_dhm(res['production_time_sec']),
-            'Downtime': format_seconds_to_dhm(res['downtime_sec'])
-        })
-        
-    return pd.DataFrame(rows)
-
-def calculate_capacity_risk_scores(df_all, config):
-    """Risk Tower Logic"""
-    risk_data = []
-    for tool_id, df_tool in df_all.groupby('tool_id'):
-        max_date = df_tool['shot_time'].max()
-        cutoff_date = max_date - timedelta(weeks=4)
-        df_period = df_tool[df_tool['shot_time'] >= cutoff_date].copy()
-        
-        if df_period.empty: continue
-        
-        calc = CapacityRiskCalculator(df_period, **config)
-        res = calc.results
-        if res['target_output_parts'] == 0: continue
-        
-        ach_perc = (res['actual_output_parts'] / res['target_output_parts']) * 100
-        
-        # Trend
-        midpoint = cutoff_date + (max_date - cutoff_date) / 2
-        df_late = df_period[df_period['shot_time'] >= midpoint]
-        df_early = df_period[df_period['shot_time'] < midpoint]
-        
-        trend = "Stable"
-        if not df_early.empty and not df_late.empty:
-            c_early = CapacityRiskCalculator(df_early, **config).results
-            c_late = CapacityRiskCalculator(df_late, **config).results
-            early_rate = c_early['actual_output_parts'] / (c_early['total_runtime_sec']/3600) if c_early['total_runtime_sec'] > 0 else 0
-            late_rate = c_late['actual_output_parts'] / (c_late['total_runtime_sec']/3600) if c_late['total_runtime_sec'] > 0 else 0
-            
-            if late_rate < early_rate * 0.95: trend = "Declining"
-            elif late_rate > early_rate * 1.05: trend = "Improving"
-
-        base_score = min(ach_perc, 100)
-        if trend == "Declining": base_score -= 20
-        
-        risk_data.append({
-            'Tool ID': tool_id,
-            'Risk Score': max(0, base_score),
-            'Achievement %': ach_perc,
-            'Trend': trend,
-            'Gap': res['gap_to_target_parts']
-        })
-    return pd.DataFrame(risk_data).sort_values('Risk Score')
