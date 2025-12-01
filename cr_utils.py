@@ -173,7 +173,7 @@ class CapacityRiskCalculator:
         prod_df = df[df['stop_flag'] == 0].copy()
         production_time_sec = prod_df['actual_ct'].sum()
         
-        # Downtime (Plug)
+        # Downtime (Plug Figure)
         downtime_sec = total_runtime_sec - production_time_sec
         if downtime_sec < 0: downtime_sec = 0
 
@@ -199,9 +199,19 @@ class CapacityRiskCalculator:
         
         capacity_gain_fast_parts = prod_df.loc[prod_df['parts_delta'] > 0, 'parts_delta'].sum()
         capacity_loss_slow_parts = abs(prod_df.loc[prod_df['parts_delta'] < 0, 'parts_delta'].sum())
+        
+        # Inefficiency Time Calculation
+        prod_df['time_delta'] = prod_df['approved_ct_for_run'] - prod_df['actual_ct']
+        capacity_gain_fast_sec = prod_df.loc[prod_df['time_delta'] > 0, 'time_delta'].sum()
+        capacity_loss_slow_sec = abs(prod_df.loc[prod_df['time_delta'] < 0, 'time_delta'].sum())
 
         net_cycle_loss_parts = capacity_loss_slow_parts - capacity_gain_fast_parts
         capacity_loss_downtime_parts = true_loss_parts - net_cycle_loss_parts # The Plug
+        
+        # Total Capacity Loss in Seconds
+        # = Downtime Seconds + Net Slow Cycle Seconds
+        net_cycle_loss_sec = capacity_loss_slow_sec - capacity_gain_fast_sec
+        total_capacity_loss_sec = downtime_sec + net_cycle_loss_sec
         
         gap_to_target_parts = actual_output_parts - target_output_parts
         capacity_loss_vs_target_parts = max(0, -gap_to_target_parts)
@@ -232,6 +242,7 @@ class CapacityRiskCalculator:
             "capacity_loss_slow_parts": capacity_loss_slow_parts,
             "capacity_gain_fast_parts": capacity_gain_fast_parts,
             "total_capacity_loss_parts": true_loss_parts,
+            "total_capacity_loss_sec": total_capacity_loss_sec, 
             "gap_to_target_parts": gap_to_target_parts,
             "capacity_loss_vs_target_parts": capacity_loss_vs_target_parts,
             "efficiency_rate": (actual_output_parts / optimal_output_parts) if optimal_output_parts > 0 else 0

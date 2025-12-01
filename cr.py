@@ -7,7 +7,7 @@ import cr_utils as cr_utils  # Keep import name exact
 # ==============================================================================
 # --- PAGE SETUP ---
 # ==============================================================================
-st.set_page_config(layout="wide", page_title="Capacity Risk Dashboard (v8.1)")
+st.set_page_config(layout="wide", page_title="Capacity Risk Dashboard (v8.2)")
 
 # ==============================================================================
 # --- DASHBOARD LOGIC ---
@@ -15,7 +15,7 @@ st.set_page_config(layout="wide", page_title="Capacity Risk Dashboard (v8.1)")
 
 def render_dashboard(df_tool, tool_name, config, demand_info):
     
-    # --- 1. Analysis Level Selector ---
+    # --- 1. Analysis Level Selector (Matching Run Rate) ---
     analysis_level = st.radio(
         "Select Analysis Level",
         options=["Daily", "Weekly", "Monthly", "Custom Period"],
@@ -102,18 +102,18 @@ def render_dashboard(df_tool, tool_name, config, demand_info):
         k3.caption(f"Actual Production Time: {cr_utils.format_seconds_to_dhm(res['production_time_sec'])}")
         
         # K4: Total Capacity Loss (True)
-        # Use True Loss (Optimal - Actual) to be exact
         true_loss = res['optimal_output_parts'] - res['actual_output_parts']
         
         k4.markdown("**Total Capacity Loss (True)**")
         k4.markdown(f"<h3 style='color:#ff6961; margin-top: -10px;'>{true_loss:,.0f} parts</h3>", unsafe_allow_html=True)
-        k4.caption(f"Total Time Lost: {cr_utils.format_seconds_to_dhm(res['total_capacity_loss_sec'])}") # Use calculated sec from utils
+        # Use total_capacity_loss_sec which sums up downtime + inefficiency time
+        k4.caption(f"Total Time Lost: {cr_utils.format_seconds_to_dhm(res['total_capacity_loss_sec'])}")
 
     # --- 5. BREAKDOWN SECTION ---
     st.header("Capacity Loss Breakdown (vs Optimal Output)")
     st.info("These values are calculated based on the time-based logic (Downtime + Slow/Fast Cycles) using Optimal Output as the benchmark.")
     
-    c_chart, c_details = st.columns([1.2, 1]) # Slightly wider chart
+    c_chart, c_details = st.columns([1.5, 1]) # Chart takes more space
     
     with c_chart:
         st.subheader("Overall Performance Breakdown")
@@ -132,7 +132,7 @@ def render_dashboard(df_tool, tool_name, config, demand_info):
         # Construct the table data
         breakdown_data = [
             {"Metric": "Loss (RR Downtime)", "Parts": res['capacity_loss_downtime_parts'], "Time": cr_utils.format_seconds_to_dhm(res['downtime_sec'])},
-            {"Metric": "Net Loss (Cycle Time)", "Parts": net_cycle_loss, "Time": "N/A"}, # Time is mixed gain/loss
+            {"Metric": "Net Loss (Cycle Time)", "Parts": net_cycle_loss, "Time": "N/A"}, # Time is mixed
             {"Metric": "└ Loss (Slow Cycles)", "Parts": res['capacity_loss_slow_parts'], "Time": cr_utils.format_seconds_to_dhm(res['capacity_loss_slow_parts'] * (res['production_time_sec']/res['actual_output_parts']) if res['actual_output_parts'] else 0)},
             {"Metric": "└ Gain (Fast Cycles)", "Parts": res['capacity_gain_fast_parts'], "Time": cr_utils.format_seconds_to_dhm(res['capacity_gain_fast_parts'] * (res['production_time_sec']/res['actual_output_parts']) if res['actual_output_parts'] else 0)},
         ]
@@ -253,17 +253,28 @@ def render_dashboard(df_tool, tool_name, config, demand_info):
 # ==============================================================================
 
 def main():
-    st.sidebar.title("Capacity Risk v8.0")
+    # --- Sidebar Title ---
+    st.sidebar.title("Capacity Risk v8.2")
     
+    # --- 1. File Upload ---
+    st.sidebar.markdown("### File Upload")
     files = st.sidebar.file_uploader("Upload Data", accept_multiple_files=True, type=['xlsx', 'csv'])
-    if not files: st.info("Upload files."); st.stop()
+    
+    if not files:
+        st.info("👈 Upload files to begin.")
+        st.stop()
         
     df_all = cr_utils.load_all_data_cr(files)
-    if df_all.empty: st.error("No valid data found."); st.stop()
+    if df_all.empty:
+        st.error("No valid data found. Check columns.")
+        st.stop()
         
+    # --- 2. Tool Selection ---
+    st.sidebar.markdown("### Select Tool ID")
     tools = sorted(df_all['tool_id'].unique())
     selected_tool = st.sidebar.selectbox("Select Tool ID for Dashboard Analysis", tools)
     
+    # --- 3. Analysis Parameters (Run Rate Style) ---
     st.sidebar.title("Analysis Parameters ⚙️")
     
     with st.sidebar.expander("Configure Metrics", expanded=True):
@@ -290,6 +301,7 @@ def main():
     }
     demand_info = {'target': target_demand, 'received': received_parts}
 
+    # --- Tabs ---
     tab1, tab2 = st.tabs(["Capacity Dashboard", "Risk Tower"])
     
     df_tool = df_all[df_all['tool_id'] == selected_tool]
