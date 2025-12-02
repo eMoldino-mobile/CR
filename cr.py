@@ -249,8 +249,8 @@ def render_dashboard(df_tool, tool_name, config, demand_info):
     stop_events = run_breakdown_df['stop_events'].sum()
     
     opt_output = run_breakdown_df['optimal_output_parts'].sum()
-    # FIX: Sum Target Output from run breakdown to prevent KeyError
-    tgt_output = run_breakdown_df['target_output_parts'].sum() 
+    # FIX: Calculate Target Output from Optimal if column missing to avoid KeyError
+    tgt_output = opt_output * (config['target_output_perc'] / 100.0)
     act_output = run_breakdown_df['actual_output_parts'].sum()
     
     # Capacity Losses
@@ -272,7 +272,7 @@ def render_dashboard(df_tool, tool_name, config, demand_info):
         'efficiency_rate': eff_rate,
         'stability_index': stab_index,
         'optimal_output_parts': opt_output,
-        'target_output_parts': tgt_output, # <--- Fix: Added this key
+        'target_output_parts': tgt_output, # Included for waterfall chart
         'actual_output_parts': act_output,
         'total_shots': total_shots,
         'normal_shots': normal_shots,
