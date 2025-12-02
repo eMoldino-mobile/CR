@@ -13,7 +13,7 @@ importlib.reload(cr_utils)
 # ==============================================================================
 # --- PAGE CONFIG ---
 # ==============================================================================
-st.set_page_config(layout="wide", page_title="Capacity Risk Dashboard (v9.1)")
+st.set_page_config(layout="wide", page_title="Capacity Risk Dashboard (v9.3)")
 
 # ==============================================================================
 # --- 1. RENDER FUNCTIONS ---
@@ -81,11 +81,27 @@ def render_trends_tab(df_tool, config):
     for period, df_period in grouper:
         if df_period.empty: continue
         
-        # Calculate metrics for this specific chunk of time
-        calc = cr_utils.CapacityRiskCalculator(df_period, **config)
-        res = calc.results
+        # Calculate metrics for this specific chunk of time using aggregation logic
+        # This ensures the trend numbers match the dashboard summary logic
+        run_breakdown_df = cr_utils.calculate_run_summaries(df_period, config)
+        if run_breakdown_df.empty: continue
+
+        total_runtime = run_breakdown_df['total_runtime_sec'].sum()
+        prod_time = run_breakdown_df['production_time_sec'].sum()
+        downtime = run_breakdown_df['downtime_sec'].sum()
         
-        if not res: continue
+        total_shots = run_breakdown_df['total_shots'].sum()
+        normal_shots = run_breakdown_df['normal_shots'].sum()
+        stops = run_breakdown_df['stop_events'].sum()
+        
+        act_output = run_breakdown_df['actual_output_parts'].sum()
+        opt_output = run_breakdown_df['optimal_output_parts'].sum()
+
+        eff_rate = (normal_shots / total_shots) * 100 if total_shots > 0 else 0
+        stab_index = (prod_time / total_runtime * 100) if total_runtime > 0 else 0
+        
+        mttr = (downtime / 60 / stops) if stops > 0 else 0
+        mtbf = (prod_time / 60 / stops) if stops > 0 else (prod_time/60)
 
         # Format Label
         if trend_freq == "Daily": label = period.strftime('%Y-%m-%d')
@@ -95,13 +111,13 @@ def render_trends_tab(df_tool, config):
         trend_data.append({
             period_name: label,
             'SortKey': period if trend_freq == "Daily" else period.start_time,
-            'Stability Index (%)': res['stability_index'],
-            'Efficiency (%)': res['efficiency_rate'] * 100, # Convert to %
-            'Actual Output': res['actual_output_parts'],
-            'Optimal Output': res['optimal_output_parts'],
-            'MTTR (min)': res['mttr_min'],
-            'MTBF (min)': res.get('mtbf_min', 0) if res.get('stops',0) > 0 else 0, # Safety check
-            'Production Time (h)': res['production_time_sec'] / 3600
+            'Stability Index (%)': stab_index,
+            'Efficiency (%)': eff_rate, 
+            'Actual Output': act_output,
+            'Optimal Output': opt_output,
+            'MTTR (min)': mttr,
+            'MTBF (min)': mtbf,
+            'Production Time (h)': prod_time / 3600
         })
 
     if not trend_data:
@@ -213,10 +229,56 @@ def render_dashboard(df_tool, tool_name, config, demand_info):
     st.markdown(f"### {tool_name} Overview")
     st.subheader(sub_header)
 
-    # --- 5. Calculate Metrics for Selected View ---
-    # We re-run the calculator on the filtered slice to get aggregate metrics
-    calc_view = cr_utils.CapacityRiskCalculator(df_view, **config)
-    res = calc_view.results
+    # --- 5. Calculate Metrics (AGGREGATED from Runs) ---
+    # WE MUST CALCULATE SUMMARIES FROM THE TABLE DATA TO ENSURE CONSISTENCY
+    
+    run_breakdown_df = cr_utils.calculate_run_summaries(df_view, config)
+    
+    if run_breakdown_df.empty:
+        st.warning("No valid runs found in selected period.")
+        return
+
+    # --- Aggregation Logic (The "Single Source of Truth") ---
+    total_runtime = run_breakdown_df['total_runtime_sec'].sum()
+    prod_time = run_breakdown_df['production_time_sec'].sum()
+    downtime = run_breakdown_df['downtime_sec'].sum()
+    total_cap_loss_sec = run_breakdown_df['total_capacity_loss_sec'].sum()
+    
+    total_shots = run_breakdown_df['total_shots'].sum()
+    normal_shots = run_breakdown_df['normal_shots'].sum()
+    stop_events = run_breakdown_df['stop_events'].sum()
+    
+    opt_output = run_breakdown_df['optimal_output_parts'].sum()
+    act_output = run_breakdown_df['actual_output_parts'].sum()
+    
+    # Capacity Losses
+    loss_downtime = run_breakdown_df['capacity_loss_downtime_parts'].sum()
+    loss_slow = run_breakdown_df['capacity_loss_slow_parts'].sum()
+    gain_fast = run_breakdown_df['capacity_gain_fast_parts'].sum()
+    total_loss_parts = run_breakdown_df['total_capacity_loss_parts'].sum()
+
+    # Derived Metrics
+    eff_rate = (normal_shots / total_shots) if total_shots > 0 else 0
+    stab_index = (prod_time / total_runtime * 100) if total_runtime > 0 else 0
+    
+    # Construct Results Dict for Display
+    res = {
+        'total_runtime_sec': total_runtime,
+        'production_time_sec': prod_time,
+        'downtime_sec': downtime,
+        'total_capacity_loss_sec': total_cap_loss_sec,
+        'efficiency_rate': eff_rate,
+        'stability_index': stab_index,
+        'optimal_output_parts': opt_output,
+        'actual_output_parts': act_output,
+        'total_shots': total_shots,
+        'normal_shots': normal_shots,
+        'capacity_loss_downtime_parts': loss_downtime,
+        'capacity_loss_slow_parts': loss_slow,
+        'capacity_gain_fast_parts': gain_fast,
+        'total_capacity_loss_parts': total_loss_parts,
+        'processed_df': df_view # Use the view directly for charts (preserves global flags)
+    }
     
     # --- 6. KPI BOARDS ---
 
@@ -237,10 +299,10 @@ def render_dashboard(df_tool, tool_name, config, demand_info):
         k3.metric("Run Rate Downtime", cr_utils.format_seconds_to_dhm(res['downtime_sec']))
         k3.markdown(f"<span style='background-color:{cr_utils.PASTEL_COLORS['red']}; color:black; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.8em'>{down_perc:.1f}%</span>", unsafe_allow_html=True)
 
-        # 4. Efficiency (%) - Gauge/Metric
+        # 4. Efficiency (%)
         k4.metric("Run Rate Efficiency (%)", f"{res['efficiency_rate']*100:.1f}%")
         
-        # 5. Stability Index (%) - Gauge/Metric
+        # 5. Stability Index (%)
         k5.metric("Run Rate Stability Index (%)", f"{res['stability_index']:.1f}%")
 
     # --- KPI Board 2: Capacity Metrics ---
@@ -265,86 +327,76 @@ def render_dashboard(df_tool, tool_name, config, demand_info):
 
     # --- KPI Board 3: Cycle Time Metrics ---
     with st.container(border=True):
-        # Flattened layout: 4 columns instead of nested columns for better spacing
         ct1, ct2, ct3, ct4 = st.columns(4)
         
         # 1. Approved CT
         avg_app_ct = df_view['approved_ct'].mean()
         ct1.metric("Approved Cycle Time", f"{avg_app_ct:.2f} s")
         
-        # Metrics for limits
-        if 'mode_ct' in df_view.columns:
-            min_mode = df_view['mode_ct'].min()
-            max_mode = df_view['mode_ct'].max()
-            min_lower = df_view['mode_lower'].min()
-            max_upper = df_view['mode_upper'].max()
-        else:
-            min_mode = max_mode = min_lower = max_upper = 0
+        # Metrics for limits (Using aggregated ranges from run breakdown)
+        min_mode = run_breakdown_df['mode_ct'].min()
+        max_mode = run_breakdown_df['mode_ct'].max()
+        min_lower = run_breakdown_df['mode_lower'].min()
+        max_upper = run_breakdown_df['mode_upper'].max()
 
         # 2. Lower Limit
-        ct2.metric("Lower Limit Range", f"{min_lower:.2f} - {df_view['mode_lower'].max():.2f} s")
+        ct2.metric("Lower Limit Range", f"{min_lower:.2f} - {run_breakdown_df['mode_lower'].max():.2f} s")
         
         # 3. Mode CT
         ct3.metric("Mode CT Range", f"{min_mode:.2f} - {max_mode:.2f} s")
         
         # 4. Upper Limit
-        ct4.metric("Upper Limit Range", f"{df_view['mode_upper'].min():.2f} - {max_upper:.2f} s")
+        ct4.metric("Upper Limit Range", f"{run_breakdown_df['mode_upper'].min():.2f} - {max_upper:.2f} s")
 
     st.markdown("---")
 
-    # --- Run-Based Analysis (New Section) ---
+    # --- Run-Based Analysis ---
     st.header("Run-Based Analysis")
     with st.expander("View Run Breakdown Table", expanded=True):
-        run_breakdown_df = cr_utils.calculate_run_summaries(df_view, config)
+        # Create a display copy
+        d_df = run_breakdown_df.copy()
         
-        if not run_breakdown_df.empty:
-            # Create a display copy to format strings without losing numeric data for sorting if needed
-            d_df = run_breakdown_df.copy()
-            
-            # --- Format Columns ---
-            # Generate Run Label (Run 001, Run 002, etc.) based on sorted time
-            d_df = d_df.sort_values('start_time').reset_index(drop=True)
-            d_df['RUN ID'] = d_df.index.map(lambda x: f"Run {x+1:03d}")
-            
-            d_df["Period (date/time from to)"] = d_df.apply(lambda row: f"{row['start_time'].strftime('%Y-%m-%d %H:%M')} to {row['end_time'].strftime('%Y-%m-%d %H:%M')}", axis=1)
-            
-            d_df["Normal Shots"] = d_df.apply(lambda r: f"{r['normal_shots']:,} ({r['normal_shots']/r['total_shots']*100:.1f}%)" if r['total_shots']>0 else "0 (0.0%)", axis=1)
-            
-            d_df["Stop Events"] = d_df.apply(lambda r: f"{r['stop_events']} ({r['stopped_shots']/r['total_shots']*100:.1f}%)" if r['total_shots']>0 else "0 (0.0%)", axis=1)
-            
-            d_df["Total Run duration (d/h/m)"] = d_df['total_runtime_sec'].apply(cr_utils.format_seconds_to_dhm)
-            
-            d_df["Production Time (d/h/m)"] = d_df.apply(lambda r: f"{cr_utils.format_seconds_to_dhm(r['production_time_sec'])} ({r['production_time_sec']/r['total_runtime_sec']*100:.1f}%)" if r['total_runtime_sec']>0 else "0m (0.0%)", axis=1)
-            
-            d_df["Downtime (d/h/m)"] = d_df.apply(lambda r: f"{cr_utils.format_seconds_to_dhm(r['downtime_sec'])} ({r['downtime_sec']/r['total_runtime_sec']*100:.1f}%)" if r['total_runtime_sec']>0 else "0m (0.0%)", axis=1)
-            
-            # Rename for display
-            rename_map = {
-                'total_shots': 'Total shots',
-                'mode_ct': 'Mode CT (for the run)',
-                'lower_limit': 'Lower limit CT (sec)',
-                'upper_limit': 'Upper Limit CT (sec)'
-            }
-            d_df.rename(columns=rename_map, inplace=True)
-            
-            # Select Final Columns
-            cols_order = [
-                'RUN ID', 'Period (date/time from to)', 'Total shots', 'Normal Shots', 'Stop Events',
-                'Mode CT (for the run)', 'Lower limit CT (sec)', 'Upper Limit CT (sec)',
-                'Total Run duration (d/h/m)', 'Production Time (d/h/m)', 'Downtime (d/h/m)'
-            ]
-            
-            st.dataframe(
-                d_df[cols_order].style.format({
-                    'Mode CT (for the run)': '{:.2f}',
-                    'Lower limit CT (sec)': '{:.2f}',
-                    'Upper Limit CT (sec)': '{:.2f}'
-                }),
-                use_container_width=True,
-                hide_index=True
-            )
-        else:
-            st.info("No run data available for the selected period.")
+        # --- Format Columns ---
+        d_df = d_df.sort_values('start_time').reset_index(drop=True)
+        d_df['RUN ID'] = d_df.index.map(lambda x: f"Run {x+1:03d}")
+        
+        d_df["Period (date/time from to)"] = d_df.apply(lambda row: f"{row['start_time'].strftime('%Y-%m-%d %H:%M')} to {row['end_time'].strftime('%Y-%m-%d %H:%M')}", axis=1)
+        
+        d_df["Normal Shots"] = d_df.apply(lambda r: f"{r['normal_shots']:,} ({r['normal_shots']/r['total_shots']*100:.1f}%)" if r['total_shots']>0 else "0 (0.0%)", axis=1)
+        
+        d_df["Stop Events"] = d_df.apply(lambda r: f"{r['stop_events']} ({r['stopped_shots']/r['total_shots']*100:.1f}%)" if r['total_shots']>0 else "0 (0.0%)", axis=1)
+        
+        d_df["Total Run duration (d/h/m)"] = d_df['total_runtime_sec'].apply(cr_utils.format_seconds_to_dhm)
+        
+        d_df["Production Time (d/h/m)"] = d_df.apply(lambda r: f"{cr_utils.format_seconds_to_dhm(r['production_time_sec'])} ({r['production_time_sec']/r['total_runtime_sec']*100:.1f}%)" if r['total_runtime_sec']>0 else "0m (0.0%)", axis=1)
+        
+        d_df["Downtime (d/h/m)"] = d_df.apply(lambda r: f"{cr_utils.format_seconds_to_dhm(r['downtime_sec'])} ({r['downtime_sec']/r['total_runtime_sec']*100:.1f}%)" if r['total_runtime_sec']>0 else "0m (0.0%)", axis=1)
+        
+        # Rename for display
+        rename_map = {
+            'total_shots': 'Total shots',
+            'mode_ct': 'Mode CT (for the run)',
+            'lower_limit': 'Lower limit CT (sec)',
+            'upper_limit': 'Upper Limit CT (sec)'
+        }
+        d_df.rename(columns=rename_map, inplace=True)
+        
+        # Select Final Columns
+        cols_order = [
+            'RUN ID', 'Period (date/time from to)', 'Total shots', 'Normal Shots', 'Stop Events',
+            'Mode CT (for the run)', 'Lower limit CT (sec)', 'Upper Limit CT (sec)',
+            'Total Run duration (d/h/m)', 'Production Time (d/h/m)', 'Downtime (d/h/m)'
+        ]
+        
+        st.dataframe(
+            d_df[cols_order].style.format({
+                'Mode CT (for the run)': '{:.2f}',
+                'Lower limit CT (sec)': '{:.2f}',
+                'Upper Limit CT (sec)': '{:.2f}'
+            }),
+            use_container_width=True,
+            hide_index=True
+        )
 
     st.markdown("---")
 
@@ -353,14 +405,13 @@ def render_dashboard(df_tool, tool_name, config, demand_info):
 
     with t1:
         st.subheader("Capacity Loss Waterfall")
-        # Layout reverted to chart on left, detailed breakdown table on right
+        # Layout: Chart on left, Detailed breakdown on right
         c_chart, c_details = st.columns([1.5, 1]) 
         
         with c_chart:
             st.plotly_chart(cr_utils.plot_waterfall(res, "Optimal Output"), use_container_width=True)
             
         with c_details:
-            # Reverted to the detailed box + table style
             true_loss = res['optimal_output_parts'] - res['actual_output_parts']
             
             with st.container(border=True):
@@ -409,7 +460,6 @@ def render_dashboard(df_tool, tool_name, config, demand_info):
         st.subheader("Forecast")
         agg_daily = cr_utils.get_aggregated_data(df_view, 'Daily', config)
         if not agg_daily.empty:
-            # FIX: Removed .date() call on the date object. agg_daily['Period'] already contains date objects.
             start_date_val = agg_daily['Period'].max()
             
             dates, proj_act, proj_peak, proj_tgt, start_val, _, _ = cr_utils.generate_prediction_data(
@@ -429,7 +479,7 @@ def render_dashboard(df_tool, tool_name, config, demand_info):
 # ==============================================================================
 
 def main():
-    st.sidebar.title("Capacity Risk v9.1")
+    st.sidebar.title("Capacity Risk v9.3")
     
     # --- File Upload ---
     st.sidebar.markdown("### File Upload")
