@@ -160,7 +160,9 @@ def render_trends_tab(df_tool, config):
             'Target Met (%)': '{:.1f}%',
             'Optimal Met (%)': '{:.1f}%',
             'Production Time (h)': '{:.1f}'
-        }).background_gradient(subset=['Target Met (%)'], cmap='RdYlGn', vmin=50, vmax=110),
+        })
+        .background_gradient(subset=['Target Met (%)'], cmap='RdYlGn', vmin=50, vmax=110)
+        .background_gradient(subset=['Optimal Met (%)'], cmap='RdYlGn', vmin=50, vmax=110),
         use_container_width=True
     )
 
@@ -181,6 +183,8 @@ def render_trends_tab(df_tool, config):
 
 def render_dashboard(df_tool, tool_name, config):
     """Renders the Main Capacity Dashboard (Tab 2)."""
+
+    benchmark_mode = config.get('benchmark_mode', 'Optimal Output')
 
     # --- 1. Analysis Level & Filter Controls ---
     analysis_level = st.radio(
@@ -408,12 +412,12 @@ def render_dashboard(df_tool, tool_name, config):
     # Re-ordering: Waterfall -> Cycle Time Chart -> Run Breakdown -> Production Totals
     
     # A. Capacity Loss Waterfall
-    st.subheader("Capacity Loss Waterfall")
+    st.subheader(f"Capacity Loss Waterfall (vs {benchmark_mode})")
     c_chart, c_details = st.columns([1.5, 1]) 
     
     with c_chart:
         # FIX: Ensure res contains all keys needed for plot_waterfall
-        st.plotly_chart(cr_utils.plot_waterfall(res, "Optimal Output"), use_container_width=True)
+        st.plotly_chart(cr_utils.plot_waterfall(res, benchmark_mode), use_container_width=True)
         
     with c_details:
         
@@ -474,13 +478,13 @@ def render_dashboard(df_tool, tool_name, config):
     selected_freq = st.selectbox("View Analysis By", freq_options, index=default_ix, key='perf_breakdown_freq')
 
     # 1. Performance Breakdown Chart (Stacked Bar)
-    st.subheader(f"Performance Breakdown ({selected_freq})")
+    st.subheader(f"Performance Breakdown ({selected_freq} - vs {benchmark_mode})")
     
     # Aggregate data for bar chart - Reuse existing function but pass config
     agg_df_chart = cr_utils.get_aggregated_data(df_view, selected_freq, config)
     
     if not agg_df_chart.empty:
-        st.plotly_chart(cr_utils.plot_performance_breakdown(agg_df_chart, 'Period', "Optimal Output"), use_container_width=True)
+        st.plotly_chart(cr_utils.plot_performance_breakdown(agg_df_chart, 'Period', benchmark_mode), use_container_width=True)
 
         st.markdown("---")
 
@@ -647,12 +651,14 @@ def main():
         run_interval_hours = st.slider("Run Interval Threshold (hours)", 1, 24, 8, 1)
 
     with st.sidebar.expander("Capacity Settings", expanded=False):
+        benchmark_mode = st.radio("Benchmark View", ["Optimal Output", "Target Output"], horizontal=True)
         target_output_perc = st.slider("Target Output %", 50, 100, 90)
         default_cavities = st.number_input("Default Cavities", value=1, min_value=1)
         remove_maint = st.checkbox("Remove Maintenance/Warehouse", value=False)
 
     # Config Dictionary
     config = {
+        'benchmark_mode': benchmark_mode,
         'target_output_perc': target_output_perc,
         'tolerance': tolerance,
         'downtime_gap_tolerance': downtime_gap_tolerance,
