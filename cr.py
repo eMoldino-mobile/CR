@@ -13,7 +13,7 @@ importlib.reload(cr_utils)
 # ==============================================================================
 # --- PAGE CONFIG ---
 # ==============================================================================
-st.set_page_config(layout="wide", page_title="Capacity Risk Dashboard (v9.7)")
+st.set_page_config(layout="wide", page_title="Capacity Risk Dashboard (v9.8)")
 
 # ==============================================================================
 # --- 1. RENDER FUNCTIONS ---
@@ -66,23 +66,33 @@ def render_trends_tab(df_tool, config):
     with col_ctrl:
         trend_freq = st.selectbox("Select Trend Frequency", ["Daily", "Weekly", "Monthly"], key="cr_trend_freq")
 
+    # Pre-process ALL data for the tool to establish Run IDs and standard metrics first
+    # This prevents grouping errors where chunks of data might not have run_id
+    base_calc = cr_utils.CapacityRiskCalculator(df_tool, **config)
+    df_tool_processed = base_calc.results['processed_df']
+    
+    if df_tool_processed.empty:
+        st.warning("No data available after processing.")
+        return
+
     # Generate Trend Data
     trend_data = []
     
     if trend_freq == "Daily":
-        grouper = df_tool.groupby(df_tool['shot_time'].dt.date)
+        grouper = df_tool_processed.groupby(df_tool_processed['shot_time'].dt.date)
         period_name = "Date"
     elif trend_freq == "Weekly":
-        grouper = df_tool.groupby(df_tool['shot_time'].dt.to_period('W'))
+        grouper = df_tool_processed.groupby(df_tool_processed['shot_time'].dt.to_period('W'))
         period_name = "Week"
     else:
-        grouper = df_tool.groupby(df_tool['shot_time'].dt.to_period('M'))
+        grouper = df_tool_processed.groupby(df_tool_processed['shot_time'].dt.to_period('M'))
         period_name = "Month"
 
     for period, df_period in grouper:
         if df_period.empty: continue
         
         # Calculate metrics for this specific chunk of time using aggregation logic
+        # Note: run_id already exists in df_period, so calculate_run_summaries will work
         run_breakdown_df = cr_utils.calculate_run_summaries(df_period, config)
         if run_breakdown_df.empty: continue
 
@@ -265,6 +275,7 @@ def render_dashboard(df_tool, tool_name, config):
     # Derived Metrics
     eff_rate = (normal_shots / total_shots) if total_shots > 0 else 0
     stab_index = (prod_time / total_runtime * 100) if total_runtime > 0 else 0
+    true_loss = res['optimal_output_parts'] - res['actual_output_parts'] if 'optimal_output_parts' in locals() else opt_output - act_output
     
     # Construct Results Dict for Display
     res = {
@@ -325,6 +336,15 @@ def render_dashboard(df_tool, tool_name, config):
             norm_perc = (res['normal_shots'] / res['total_shots'] * 100) if res['total_shots'] > 0 else 0
             st.plotly_chart(cr_utils.create_donut_chart(norm_perc, f"Normal Shots ({res['normal_shots']:,.0f}) vs Total ({res['total_shots']:,.0f})", color_scheme='green'), use_container_width=True)
 
+    # --- MOVED: Overall Totals (Production Totals) ---
+    st.subheader("Overall Totals")
+    with st.container(border=True):
+        pt1, pt2, pt3, pt4 = st.columns(4)
+        pt1.metric("Total Actual Output", f"{res['actual_output_parts']:,.0f}")
+        pt2.metric("Total Optimal Output", f"{res['optimal_output_parts']:,.0f}")
+        pt3.metric("Net Loss", f"{true_loss:,.0f} parts")
+        pt4.metric("Total Shots", f"{res['total_shots']:,.0f}")
+
     # --- KPI Board 3: Cycle Time Metrics ---
     with st.container(border=True):
         ct1, ct2, ct3, ct4 = st.columns(4)
@@ -377,7 +397,6 @@ def render_dashboard(df_tool, tool_name, config):
         st.plotly_chart(cr_utils.plot_waterfall(res, "Optimal Output"), use_container_width=True)
         
     with c_details:
-        true_loss = res['optimal_output_parts'] - res['actual_output_parts']
         
         with st.container(border=True):
             st.markdown("**Total Net Impact**")
@@ -426,14 +445,20 @@ def render_dashboard(df_tool, tool_name, config):
     st.markdown("---")
 
     # C. Run-Based Analysis & Performance Breakdown
-    st.header("Run-Based Analysis")
+    st.header("Performance Analysis")
     
+    # --- Added Dropdown for View Control ---
+    freq_options = ['by Run', 'Hourly', 'Daily', 'Weekly', 'Monthly']
+    default_ix = 2 if 'Weekly' in analysis_level or 'Monthly' in analysis_level else 0
+    if 'Daily' in analysis_level: default_ix = 1 # Default to Hourly for Daily view
+    
+    selected_freq = st.selectbox("View Analysis By", freq_options, index=default_ix, key='perf_breakdown_freq')
+
     # 1. Performance Breakdown Chart (Stacked Bar)
-    st.subheader("Performance Breakdown")
+    st.subheader(f"Performance Breakdown ({selected_freq})")
+    
     # Aggregate data for bar chart - Reuse existing function but pass config
-    # We need to decide if we group by Run or Hour here. Default to Run if daily view.
-    freq_mode = 'by Run' if 'Daily' in analysis_level else 'Daily'
-    agg_df_chart = cr_utils.get_aggregated_data(df_view, freq_mode, config)
+    agg_df_chart = cr_utils.get_aggregated_data(df_view, selected_freq, config)
     
     if not agg_df_chart.empty:
         st.plotly_chart(cr_utils.plot_performance_breakdown(agg_df_chart, 'Period', "Optimal Output"), use_container_width=True)
@@ -441,7 +466,7 @@ def render_dashboard(df_tool, tool_name, config):
         st.markdown("---")
 
         # --- RE-INTRODUCED: Production Totals Report ---
-        st.header(f"Production Totals Report ({freq_mode})")
+        st.header(f"Production Totals Report ({selected_freq})")
         
         # Calculate derived columns for the table
         totals_df = agg_df_chart.copy()
@@ -468,7 +493,7 @@ def render_dashboard(df_tool, tool_name, config):
         st.dataframe(totals_table, use_container_width=True, hide_index=True)
 
         # --- RE-INTRODUCED: Capacity Loss & Gain Report ---
-        st.header(f"Capacity Loss & Gain Report (vs Optimal) ({freq_mode})")
+        st.header(f"Capacity Loss & Gain Report (vs Optimal) ({selected_freq})")
         
         # Calculate derived columns
         loss_gain_df = agg_df_chart.copy()
@@ -567,16 +592,6 @@ def render_dashboard(df_tool, tool_name, config):
         )
 
     st.markdown("---")
-
-    # D. Production Totals
-    st.header("Overall Totals")
-    with st.container(border=True):
-        pt1, pt2, pt3, pt4 = st.columns(4)
-        pt1.metric("Total Actual Output", f"{res['actual_output_parts']:,.0f}")
-        pt2.metric("Total Optimal Output", f"{res['optimal_output_parts']:,.0f}")
-        pt3.metric("Net Loss", f"{true_loss:,.0f} parts")
-        # Assuming you want Total Shots here as well
-        pt4.metric("Total Shots", f"{res['total_shots']:,.0f}")
 
 
 # ==============================================================================
