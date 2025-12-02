@@ -13,7 +13,7 @@ importlib.reload(cr_utils)
 # ==============================================================================
 # --- PAGE CONFIG ---
 # ==============================================================================
-st.set_page_config(layout="wide", page_title="Capacity Risk Dashboard (v9.8)")
+st.set_page_config(layout="wide", page_title="Capacity Risk Dashboard (v9.9)")
 
 # ==============================================================================
 # --- 1. RENDER FUNCTIONS ---
@@ -106,12 +106,20 @@ def render_trends_tab(df_tool, config):
         
         act_output = run_breakdown_df['actual_output_parts'].sum()
         opt_output = run_breakdown_df['optimal_output_parts'].sum()
+        
+        # FIX: Calculate Target Output from Optimal if column missing to avoid KeyError, 
+        # or take from utils if available
+        tgt_output = run_breakdown_df['target_output_parts'].sum() if 'target_output_parts' in run_breakdown_df.columns else (opt_output * (config['target_output_perc'] / 100.0))
 
         eff_rate = (normal_shots / total_shots) * 100 if total_shots > 0 else 0
         stab_index = (prod_time / total_runtime * 100) if total_runtime > 0 else 0
         
         mttr = (downtime / 60 / stops) if stops > 0 else 0
         mtbf = (prod_time / 60 / stops) if stops > 0 else (prod_time/60)
+
+        # New Perc Metrics
+        target_met_perc = (act_output / tgt_output * 100) if tgt_output > 0 else 0
+        optimal_met_perc = (act_output / opt_output * 100) if opt_output > 0 else 0
 
         # Format Label
         if trend_freq == "Daily": label = period.strftime('%Y-%m-%d')
@@ -125,6 +133,9 @@ def render_trends_tab(df_tool, config):
             'Efficiency (%)': eff_rate, 
             'Actual Output': act_output,
             'Optimal Output': opt_output,
+            'Target Output': tgt_output,
+            'Target Met (%)': target_met_perc,
+            'Optimal Met (%)': optimal_met_perc,
             'MTTR (min)': mttr,
             'MTBF (min)': mtbf,
             'Production Time (h)': prod_time / 3600
@@ -145,18 +156,26 @@ def render_trends_tab(df_tool, config):
             'MTBF (min)': '{:.1f}',
             'Actual Output': '{:,.0f}',
             'Optimal Output': '{:,.0f}',
+            'Target Output': '{:,.0f}',
+            'Target Met (%)': '{:.1f}%',
+            'Optimal Met (%)': '{:.1f}%',
             'Production Time (h)': '{:.1f}'
-        }).background_gradient(subset=['Stability Index (%)'], cmap='RdYlGn', vmin=0, vmax=100),
+        }).background_gradient(subset=['Target Met (%)'], cmap='RdYlGn', vmin=50, vmax=110),
         use_container_width=True
     )
 
     # 2. Visual Chart
     st.subheader("Visual Trend")
     metric_to_plot = st.selectbox("Select Metric to Visualize", 
-                                  ['Stability Index (%)', 'Actual Output', 'Efficiency (%)', 'MTTR (min)'],
+                                  ['Target Met (%)', 'Optimal Met (%)', 'Stability Index (%)', 'Actual Output', 'Efficiency (%)', 'MTTR (min)'],
                                   key="cr_trend_viz_select")
     
     fig = px.line(df_trends.sort_index(ascending=False), x=period_name, y=metric_to_plot, markers=True, title=f"{metric_to_plot} Trend")
+    
+    # Add target line for percentages
+    if "Met (%)" in metric_to_plot:
+        fig.add_hline(y=100, line_dash="dash", line_color="green", annotation_text="100% Target")
+    
     st.plotly_chart(fig, use_container_width=True)
 
 
@@ -336,7 +355,7 @@ def render_dashboard(df_tool, tool_name, config):
             norm_perc = (res['normal_shots'] / res['total_shots'] * 100) if res['total_shots'] > 0 else 0
             st.plotly_chart(cr_utils.create_donut_chart(norm_perc, f"Normal Shots ({res['normal_shots']:,.0f}) vs Total ({res['total_shots']:,.0f})", color_scheme='green'), use_container_width=True)
 
-    # --- MOVED: Overall Totals (Production Totals) ---
+    # --- Overall Totals ---
     st.subheader("Overall Totals")
     with st.container(border=True):
         pt1, pt2, pt3, pt4 = st.columns(4)
@@ -599,7 +618,7 @@ def render_dashboard(df_tool, tool_name, config):
 # ==============================================================================
 
 def main():
-    st.sidebar.title("Capacity Risk v9.8")
+    st.sidebar.title("Capacity Risk v9.9")
     
     # --- File Upload ---
     st.sidebar.markdown("### File Upload")
