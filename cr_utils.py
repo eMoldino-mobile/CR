@@ -297,6 +297,7 @@ def calculate_run_summaries(df_period, config):
             
             # Capacity Metrics (Added for Aggregation)
             'optimal_output_parts': res['optimal_output_parts'],
+            'target_output_parts': res['target_output_parts'], # Added for Trend Analysis
             'actual_output_parts': res['actual_output_parts'],
             'capacity_loss_downtime_parts': res['capacity_loss_downtime_parts'],
             'capacity_loss_slow_parts': res['capacity_loss_slow_parts'],
