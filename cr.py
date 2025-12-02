@@ -149,7 +149,7 @@ def render_trends_tab(df_tool, config):
     st.plotly_chart(fig, use_container_width=True)
 
 
-def render_dashboard(df_tool, tool_name, config, demand_info):
+def render_dashboard(df_tool, tool_name, config):
     """Renders the Main Capacity Dashboard (Tab 2)."""
 
     # --- 1. Analysis Level & Filter Controls ---
@@ -404,7 +404,7 @@ def render_dashboard(df_tool, tool_name, config, demand_info):
     st.markdown("---")
 
     # --- 7. Lower Section: Breakdown & Charts ---
-    t1, t2, t3 = st.tabs(["Performance Breakdown", "Shot Analysis", "Future Forecast"])
+    t1, t2 = st.tabs(["Performance Breakdown", "Shot Analysis"])
 
     with t1:
         st.subheader("Capacity Loss Waterfall")
@@ -460,23 +460,6 @@ def render_dashboard(df_tool, tool_name, config, demand_info):
         with st.expander("View Shot Data Table"):
             st.dataframe(res['processed_df'][['shot_time', 'actual_ct', 'run_id', 'shot_type', 'stop_flag']], use_container_width=True)
 
-    with t3:
-        st.subheader("Forecast")
-        agg_daily = cr_utils.get_aggregated_data(df_view, 'Daily', config)
-        if not agg_daily.empty:
-            start_date_val = agg_daily['Period'].max()
-            
-            dates, proj_act, proj_peak, proj_tgt, start_val, _, _ = cr_utils.generate_prediction_data(
-                agg_daily, 
-                start_date_val,
-                start_date_val + timedelta(days=30), 
-                demand_info['target']
-            )
-            fig_pred = cr_utils.plot_prediction_chart(dates, proj_act, proj_peak, proj_tgt, demand_info['target'], start_date_val, start_val)
-            st.plotly_chart(fig_pred, use_container_width=True)
-        else:
-            st.info("Insufficient data for forecasting.")
-
 
 # ==============================================================================
 # --- MAIN ENTRY POINT ---
@@ -527,7 +510,7 @@ def main():
     }
     
     # Placeholder Demand Info (could be expanded later)
-    demand_info = {'target': 0, 'received': 0}
+    # demand_info = {'target': 0, 'received': 0}
 
     # --- Filter Data for Selected Tool ---
     df_tool = df_all[df_all['tool_id'] == selected_tool]
@@ -540,7 +523,7 @@ def main():
     
     with t_dash:
         if not df_tool.empty:
-            render_dashboard(df_tool, selected_tool, config, demand_info)
+            render_dashboard(df_tool, selected_tool, config)
         else:
             st.warning("No data for selected tool.")
 
