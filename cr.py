@@ -292,6 +292,62 @@ def render_dashboard(df_tool, tool_name, config, demand_info):
 
     st.markdown("---")
 
+    # --- Run-Based Analysis (New Section) ---
+    st.header("Run-Based Analysis")
+    with st.expander("View Run Breakdown Table", expanded=True):
+        run_breakdown_df = cr_utils.calculate_run_summaries(df_view, config)
+        
+        if not run_breakdown_df.empty:
+            # Create a display copy to format strings without losing numeric data for sorting if needed
+            d_df = run_breakdown_df.copy()
+            
+            # --- Format Columns ---
+            # Generate Run Label (Run 001, Run 002, etc.) based on sorted time
+            d_df = d_df.sort_values('start_time').reset_index(drop=True)
+            d_df['RUN ID'] = d_df.index.map(lambda x: f"Run {x+1:03d}")
+            
+            d_df["Period (date/time from to)"] = d_df.apply(lambda row: f"{row['start_time'].strftime('%Y-%m-%d %H:%M')} to {row['end_time'].strftime('%Y-%m-%d %H:%M')}", axis=1)
+            
+            d_df["Normal Shots"] = d_df.apply(lambda r: f"{r['normal_shots']:,} ({r['normal_shots']/r['total_shots']*100:.1f}%)" if r['total_shots']>0 else "0 (0.0%)", axis=1)
+            
+            d_df["Stop Events"] = d_df.apply(lambda r: f"{r['stop_events']} ({r['stopped_shots']/r['total_shots']*100:.1f}%)" if r['total_shots']>0 else "0 (0.0%)", axis=1)
+            
+            d_df["Total Run duration (d/h/m)"] = d_df['total_runtime_sec'].apply(cr_utils.format_seconds_to_dhm)
+            
+            d_df["Production Time (d/h/m)"] = d_df.apply(lambda r: f"{cr_utils.format_seconds_to_dhm(r['production_time_sec'])} ({r['production_time_sec']/r['total_runtime_sec']*100:.1f}%)" if r['total_runtime_sec']>0 else "0m (0.0%)", axis=1)
+            
+            d_df["Downtime (d/h/m)"] = d_df.apply(lambda r: f"{cr_utils.format_seconds_to_dhm(r['downtime_sec'])} ({r['downtime_sec']/r['total_runtime_sec']*100:.1f}%)" if r['total_runtime_sec']>0 else "0m (0.0%)", axis=1)
+            
+            # Rename for display
+            rename_map = {
+                'total_shots': 'Total shots',
+                'mode_ct': 'Mode CT (for the run)',
+                'lower_limit': 'Lower limit CT (sec)',
+                'upper_limit': 'Upper Limit CT (sec)'
+            }
+            d_df.rename(columns=rename_map, inplace=True)
+            
+            # Select Final Columns
+            cols_order = [
+                'RUN ID', 'Period (date/time from to)', 'Total shots', 'Normal Shots', 'Stop Events',
+                'Mode CT (for the run)', 'Lower limit CT (sec)', 'Upper Limit CT (sec)',
+                'Total Run duration (d/h/m)', 'Production Time (d/h/m)', 'Downtime (d/h/m)'
+            ]
+            
+            st.dataframe(
+                d_df[cols_order].style.format({
+                    'Mode CT (for the run)': '{:.2f}',
+                    'Lower limit CT (sec)': '{:.2f}',
+                    'Upper Limit CT (sec)': '{:.2f}'
+                }),
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.info("No run data available for the selected period.")
+
+    st.markdown("---")
+
     # --- 7. Lower Section: Breakdown & Charts ---
     t1, t2, t3 = st.tabs(["Performance Breakdown", "Shot Analysis", "Future Forecast"])
 
