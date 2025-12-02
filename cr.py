@@ -176,7 +176,7 @@ def render_dashboard(df_tool, tool_name, config, dashboard_mode="Optimal"):
     """
     
     benchmark_mode = "Optimal Output" if dashboard_mode == "Optimal" else "Target Output"
-    key_suffix = f"_{dashboard_mode.lower()}" # Unique key suffix for widgets
+    key_suffix = f"_{dashboard_mode.lower()}" # Unique key suffix for widgets and charts
 
     # --- 1. Analysis Level & Filter Controls ---
     c1, c2 = st.columns([2, 1])
@@ -325,10 +325,18 @@ def render_dashboard(df_tool, tool_name, config, dashboard_mode="Optimal"):
         c1, c2 = st.columns(2)
         with c1:
             act_perc = (res['actual_output_parts'] / benchmark_output * 100) if benchmark_output > 0 else 0
-            st.plotly_chart(cr_utils.create_donut_chart(act_perc, f"Actual ({res['actual_output_parts']:,.0f}) vs {dashboard_mode} ({benchmark_output:,.0f})", color_scheme='blue'), use_container_width=True)
+            st.plotly_chart(
+                cr_utils.create_donut_chart(act_perc, f"Actual ({res['actual_output_parts']:,.0f}) vs {dashboard_mode} ({benchmark_output:,.0f})", color_scheme='blue'), 
+                use_container_width=True,
+                key=f"donut_actual_{key_suffix}"
+            )
         with c2:
             norm_perc = (res['normal_shots'] / res['total_shots'] * 100) if res['total_shots'] > 0 else 0
-            st.plotly_chart(cr_utils.create_donut_chart(norm_perc, f"Normal Shots ({res['normal_shots']:,.0f}) vs Total ({res['total_shots']:,.0f})", color_scheme='green'), use_container_width=True)
+            st.plotly_chart(
+                cr_utils.create_donut_chart(norm_perc, f"Normal Shots ({res['normal_shots']:,.0f}) vs Total ({res['total_shots']:,.0f})", color_scheme='green'), 
+                use_container_width=True,
+                key=f"donut_normal_{key_suffix}"
+            )
 
     st.subheader("Overall Totals")
     with st.container(border=True):
@@ -369,7 +377,11 @@ def render_dashboard(df_tool, tool_name, config, dashboard_mode="Optimal"):
     c_chart, c_details = st.columns([1.5, 1]) 
     
     with c_chart:
-        st.plotly_chart(cr_utils.plot_waterfall(res, benchmark_mode), use_container_width=True)
+        st.plotly_chart(
+            cr_utils.plot_waterfall(res, benchmark_mode), 
+            use_container_width=True,
+            key=f"waterfall_{key_suffix}"
+        )
         
     with c_details:
         with st.container(border=True):
@@ -411,7 +423,11 @@ def render_dashboard(df_tool, tool_name, config, dashboard_mode="Optimal"):
     st.markdown("---")
 
     st.subheader("Shot-by-Shot Visualization")
-    st.plotly_chart(cr_utils.plot_shot_analysis(res['processed_df']), use_container_width=True)
+    st.plotly_chart(
+        cr_utils.plot_shot_analysis(res['processed_df']), 
+        use_container_width=True,
+        key=f"shot_chart_{key_suffix}"
+    )
     with st.expander("View Shot Data Table (Collapsed)", expanded=False):
         st.dataframe(res['processed_df'][['shot_time', 'actual_ct', 'run_id', 'shot_type', 'stop_flag']], use_container_width=True)
 
@@ -431,7 +447,11 @@ def render_dashboard(df_tool, tool_name, config, dashboard_mode="Optimal"):
     agg_df_chart = cr_utils.get_aggregated_data(df_view, selected_freq, config)
     
     if not agg_df_chart.empty:
-        st.plotly_chart(cr_utils.plot_performance_breakdown(agg_df_chart, 'Period', benchmark_mode), use_container_width=True)
+        st.plotly_chart(
+            cr_utils.plot_performance_breakdown(agg_df_chart, 'Period', benchmark_mode), 
+            use_container_width=True,
+            key=f"perf_chart_{key_suffix}"
+        )
 
         st.markdown("---")
 
