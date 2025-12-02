@@ -13,7 +13,7 @@ importlib.reload(cr_utils)
 # ==============================================================================
 # --- PAGE CONFIG ---
 # ==============================================================================
-st.set_page_config(layout="wide", page_title="Capacity Risk Dashboard (v9.3)")
+st.set_page_config(layout="wide", page_title="Capacity Risk Dashboard (v9.4)")
 
 # ==============================================================================
 # --- 1. RENDER FUNCTIONS ---
@@ -82,7 +82,6 @@ def render_trends_tab(df_tool, config):
         if df_period.empty: continue
         
         # Calculate metrics for this specific chunk of time using aggregation logic
-        # This ensures the trend numbers match the dashboard summary logic
         run_breakdown_df = cr_utils.calculate_run_summaries(df_period, config)
         if run_breakdown_df.empty: continue
 
@@ -231,6 +230,7 @@ def render_dashboard(df_tool, tool_name, config, demand_info):
 
     # --- 5. Calculate Metrics (AGGREGATED from Runs) ---
     # WE MUST CALCULATE SUMMARIES FROM THE TABLE DATA TO ENSURE CONSISTENCY
+    # This matches the Run Rate App logic: Summaries are sums of runs.
     
     run_breakdown_df = cr_utils.calculate_run_summaries(df_view, config)
     
@@ -249,6 +249,8 @@ def render_dashboard(df_tool, tool_name, config, demand_info):
     stop_events = run_breakdown_df['stop_events'].sum()
     
     opt_output = run_breakdown_df['optimal_output_parts'].sum()
+    # FIX: Sum Target Output from run breakdown to prevent KeyError
+    tgt_output = run_breakdown_df['target_output_parts'].sum() 
     act_output = run_breakdown_df['actual_output_parts'].sum()
     
     # Capacity Losses
@@ -270,6 +272,7 @@ def render_dashboard(df_tool, tool_name, config, demand_info):
         'efficiency_rate': eff_rate,
         'stability_index': stab_index,
         'optimal_output_parts': opt_output,
+        'target_output_parts': tgt_output, # <--- Fix: Added this key
         'actual_output_parts': act_output,
         'total_shots': total_shots,
         'normal_shots': normal_shots,
@@ -409,6 +412,7 @@ def render_dashboard(df_tool, tool_name, config, demand_info):
         c_chart, c_details = st.columns([1.5, 1]) 
         
         with c_chart:
+            # FIX: Ensure res contains all keys needed for plot_waterfall
             st.plotly_chart(cr_utils.plot_waterfall(res, "Optimal Output"), use_container_width=True)
             
         with c_details:
@@ -479,7 +483,7 @@ def render_dashboard(df_tool, tool_name, config, demand_info):
 # ==============================================================================
 
 def main():
-    st.sidebar.title("Capacity Risk v9.3")
+    st.sidebar.title("Capacity Risk v9.4")
     
     # --- File Upload ---
     st.sidebar.markdown("### File Upload")
