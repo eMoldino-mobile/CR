@@ -437,9 +437,90 @@ def render_dashboard(df_tool, tool_name, config):
     
     if not agg_df_chart.empty:
         st.plotly_chart(cr_utils.plot_performance_breakdown(agg_df_chart, 'Period', "Optimal Output"), use_container_width=True)
+
+        st.markdown("---")
+
+        # --- RE-INTRODUCED: Production Totals Report ---
+        st.header(f"Production Totals Report ({freq_mode})")
+        
+        # Calculate derived columns for the table
+        totals_df = agg_df_chart.copy()
+        
+        # Formatting helper
+        totals_df['Actual Production Time'] = totals_df.apply(
+            lambda r: f"{cr_utils.format_seconds_to_dhm(r['Production Time Sec'])} ({r['Production Time Sec']/r['Run Time Sec']:.1%})" if r['Run Time Sec'] > 0 else "0m (0.0%)", 
+            axis=1
+        )
+        totals_df['Production Shots (Pct)'] = totals_df.apply(
+            lambda r: f"{r['Normal Shots']:,.0f} ({r['Normal Shots']/r['Total Shots']:.1%})" if r['Total Shots'] > 0 else "0 (0.0%)", 
+            axis=1
+        )
+        
+        # Select and Rename Columns
+        totals_table = pd.DataFrame()
+        totals_table['Period'] = totals_df['Period']
+        totals_table['Overall Run Time'] = totals_df['Run Time'] + " (" + totals_df['Run Time Sec'].apply(lambda x: f"{x:.0f}s") + ")"
+        totals_table['Actual Production Time'] = totals_df['Actual Production Time']
+        totals_table['Total Shots'] = totals_df['Total Shots'].map('{:,.0f}'.format)
+        totals_table['Production Shots'] = totals_df['Production Shots (Pct)']
+        totals_table['Downtime Shots'] = totals_df['Downtime Shots'].map('{:,.0f}'.format)
+        
+        st.dataframe(totals_table, use_container_width=True, hide_index=True)
+
+        # --- RE-INTRODUCED: Capacity Loss & Gain Report ---
+        st.header(f"Capacity Loss & Gain Report (vs Optimal) ({freq_mode})")
+        
+        # Calculate derived columns
+        loss_gain_df = agg_df_chart.copy()
+        
+        # Formatting for Table
+        lg_table = pd.DataFrame()
+        lg_table['Period'] = loss_gain_df['Period']
+        lg_table['Optimal Output'] = loss_gain_df['Optimal Output'].map('{:,.2f}'.format)
+        
+        lg_table['Actual Output'] = loss_gain_df.apply(
+            lambda r: f"{r['Actual Output']:,.2f} ({r['Actual Output']/r['Optimal Output']:.1%})" if r['Optimal Output'] > 0 else "0.00 (0.0%)", 
+            axis=1
+        )
+        lg_table['Loss (RR Downtime)'] = loss_gain_df.apply(
+            lambda r: f"{r['Downtime Loss']:,.2f} ({r['Downtime Loss']/r['Optimal Output']:.1%})" if r['Optimal Output'] > 0 else "0.00 (0.0%)", 
+            axis=1
+        )
+        lg_table['Loss (Slow Cycles)'] = loss_gain_df.apply(
+            lambda r: f"{r['Slow Loss']:,.2f} ({r['Slow Loss']/r['Optimal Output']:.1%})" if r['Optimal Output'] > 0 else "0.00 (0.0%)", 
+            axis=1
+        )
+        lg_table['Gain (Fast Cycles)'] = loss_gain_df.apply(
+            lambda r: f"{r['Fast Gain']:,.2f} ({r['Fast Gain']/r['Optimal Output']:.1%})" if r['Optimal Output'] > 0 else "0.00 (0.0%)", 
+            axis=1
+        )
+        lg_table['Total Net Loss'] = loss_gain_df.apply(
+            lambda r: f"{r['Total Loss']:,.2f} ({r['Total Loss']/r['Optimal Output']:.1%})" if r['Optimal Output'] > 0 else "0.00 (0.0%)", 
+            axis=1
+        )
+
+        # Styling Logic
+        def style_loss_gain(col):
+            col_name = col.name
+            if col_name == 'Loss (RR Downtime)': return ['color: #ff6961'] * len(col) # Red
+            if col_name == 'Loss (Slow Cycles)': return ['color: #ffb347'] * len(col) # Orange/Red
+            if col_name == 'Gain (Fast Cycles)': return ['color: #77dd77'] * len(col) # Green
+            if col_name == 'Total Net Loss':
+                # Check underlying numeric value from the source DF
+                # This is tricky in Pandas styling on a different DF. 
+                # Simplified: Just make it bold/colored based on string inspection or assumption.
+                return ['font-weight: bold'] * len(col)
+            return [''] * len(col)
+
+        st.dataframe(
+            lg_table.style.apply(style_loss_gain, axis=0),
+            use_container_width=True,
+            hide_index=True
+        )
+
     
     # 2. Run Breakdown Table
-    with st.expander("View Run Breakdown Table", expanded=True):
+    with st.expander("View Run Breakdown Table (Details)", expanded=False):
         # Create a display copy
         d_df = run_breakdown_df.copy()
         
@@ -488,7 +569,7 @@ def render_dashboard(df_tool, tool_name, config):
     st.markdown("---")
 
     # D. Production Totals
-    st.header("Production Totals")
+    st.header("Overall Totals")
     with st.container(border=True):
         pt1, pt2, pt3, pt4 = st.columns(4)
         pt1.metric("Total Actual Output", f"{res['actual_output_parts']:,.0f}")
@@ -503,7 +584,7 @@ def render_dashboard(df_tool, tool_name, config):
 # ==============================================================================
 
 def main():
-    st.sidebar.title("Capacity Risk v9.6")
+    st.sidebar.title("Capacity Risk v9.8")
     
     # --- File Upload ---
     st.sidebar.markdown("### File Upload")

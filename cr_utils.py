@@ -342,7 +342,15 @@ def get_aggregated_data(df, freq_mode, config):
             'Total Loss': res['total_capacity_loss_parts'],
             'Gap to Target': res['gap_to_target_parts'],
             'Run Time': format_seconds_to_dhm(res['total_runtime_sec']),
-            'Downtime': format_seconds_to_dhm(res['downtime_sec'])
+            'Downtime': format_seconds_to_dhm(res['downtime_sec']),
+            
+            # --- Added for detailed Tables ---
+            'Run Time Sec': res['total_runtime_sec'],
+            'Production Time Sec': res['production_time_sec'],
+            'Downtime Sec': res['downtime_sec'],
+            'Total Shots': res['total_shots'],
+            'Normal Shots': res['normal_shots'],
+            'Downtime Shots': res['total_shots'] - res['normal_shots']
         })
         
     return pd.DataFrame(rows)
