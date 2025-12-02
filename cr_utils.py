@@ -85,8 +85,9 @@ def load_all_data_cr(files):
 class CapacityRiskCalculator:
     def __init__(self, df: pd.DataFrame, tolerance: float, downtime_gap_tolerance: float, 
                  run_interval_hours: float, target_output_perc: float = 100.0, 
-                 default_cavities: int = 1, remove_maintenance: bool = False):
+                 default_cavities: int = 1, remove_maintenance: bool = False, **kwargs):
         
+        # Note: **kwargs added to safely ignore extra config parameters like 'benchmark_mode'
         self.df_raw = df.copy()
         self.tolerance = tolerance
         self.downtime_gap_tolerance = downtime_gap_tolerance
@@ -505,7 +506,7 @@ def plot_waterfall(metrics, benchmark_mode="Optimal"):
         totals={"marker": {"color": PASTEL_COLORS['blue']}}
     ))
     
-    if benchmark_mode == "Target Output":
+    if "Target" in str(benchmark_mode):
         fig.add_shape(type="line", x0=-0.5, x1=4.5, y0=total_target, y1=total_target,
                       line=dict(color=PASTEL_COLORS['target_line'], width=2, dash="dash"))
         fig.add_annotation(x=0, y=total_target, text=f"Target: {total_target:,.0f}", showarrow=False, yshift=10)
@@ -525,7 +526,7 @@ def plot_performance_breakdown(df_agg, x_col, benchmark_mode):
     
     fig.add_trace(go.Scatter(x=df_agg[x_col], y=df_agg['Optimal Output'], name='Optimal Output', mode='lines', line=dict(color=PASTEL_COLORS['optimal_line'], dash='dot')))
     
-    if benchmark_mode == "Target Output":
+    if "Target" in str(benchmark_mode):
         fig.add_trace(go.Scatter(x=df_agg[x_col], y=df_agg['Target Output'], name='Target Output', mode='lines', line=dict(color=PASTEL_COLORS['target_line'], dash='dash')))
 
     fig.update_layout(barmode='stack', title="Performance Breakdown", hovermode="x unified", height=450)
