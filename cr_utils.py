@@ -331,8 +331,16 @@ def get_aggregated_data(df, freq_mode, config):
         res = calc.results
         if not res: continue
         
+        # New logic for period label consistency
+        period_label = group_name
+        if freq_mode == 'by Run':
+            try:
+                period_label = f"Run {int(group_name) + 1}"
+            except (ValueError, TypeError):
+                pass
+
         rows.append({
-            'Period': group_name,
+            'Period': period_label,
             'Actual Output': res['actual_output_parts'],
             'Optimal Output': res['optimal_output_parts'],
             'Target Output': res['target_output_parts'],
@@ -558,6 +566,20 @@ def plot_shot_analysis(df_shots, zoom_y=None):
     avg_ref = df_shots['approved_ct'].mean()
     fig.add_hline(y=avg_ref, line_dash="dash", line_color="green", annotation_text=f"Avg Approved CT: {avg_ref:.2f}s")
     
+    # Auto-zoom if not provided
+    if zoom_y is None and not df_shots.empty:
+        # Use 95th percentile or 4x Approved CT as a heuristic to avoid extreme stop outliers
+        cts = df_shots['actual_ct']
+        if len(cts) > 0:
+            # Filter extremely large values just for the range calculation
+            # Reasonable max is often just above the normal operating window
+            ref_max = df_shots['approved_ct'].max() * 4
+            
+            # Also look at distribution, ignoring the top 5% which are usually stops
+            dist_max = cts.quantile(0.95) * 1.5
+            
+            zoom_y = max(ref_max, dist_max)
+
     layout_args = dict(title="Shot-by-Shot Analysis", yaxis_title="Cycle Time (sec)", hovermode="closest")
     if zoom_y: layout_args['yaxis_range'] = [0, zoom_y]
     fig.update_layout(**layout_args)
