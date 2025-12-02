@@ -320,6 +320,7 @@ def get_aggregated_data(df, freq_mode, config):
     if freq_mode == 'Daily': grouper = df.groupby(df['shot_time'].dt.date)
     elif freq_mode == 'Weekly': grouper = df.groupby(df['shot_time'].dt.to_period('W').astype(str))
     elif freq_mode == 'Monthly': grouper = df.groupby(df['shot_time'].dt.to_period('M').astype(str))
+    elif freq_mode == 'Hourly': grouper = df.groupby(df['shot_time'].dt.floor('H'))
     elif freq_mode == 'by Run': 
         temp_calc = CapacityRiskCalculator(df, **config)
         grouper = temp_calc.results['processed_df'].groupby('run_id')
