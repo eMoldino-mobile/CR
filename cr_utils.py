@@ -284,11 +284,24 @@ def calculate_run_summaries(df_period, config):
             'stop_events': res['stops'],
             'stopped_shots': res['total_shots'] - res['normal_shots'],
             'mode_ct': df_run['mode_ct'].iloc[0] if 'mode_ct' in df_run else 0,
-            'lower_limit': df_run['mode_lower'].iloc[0] if 'mode_lower' in df_run else 0,
-            'upper_limit': df_run['mode_upper'].iloc[0] if 'mode_upper' in df_run else 0,
+            'mode_lower': df_run['mode_lower'].iloc[0] if 'mode_lower' in df_run else 0,
+            'mode_upper': df_run['mode_upper'].iloc[0] if 'mode_upper' in df_run else 0,
+            'lower_limit': df_run['mode_lower'].iloc[0] if 'mode_lower' in df_run else 0, # Alias for consistency
+            'upper_limit': df_run['mode_upper'].iloc[0] if 'mode_upper' in df_run else 0, # Alias for consistency
+            
+            # Time Metrics
             'total_runtime_sec': res['total_runtime_sec'],
             'production_time_sec': res['production_time_sec'],
-            'downtime_sec': res['downtime_sec']
+            'downtime_sec': res['downtime_sec'],
+            'total_capacity_loss_sec': res['total_capacity_loss_sec'],
+            
+            # Capacity Metrics (Added for Aggregation)
+            'optimal_output_parts': res['optimal_output_parts'],
+            'actual_output_parts': res['actual_output_parts'],
+            'capacity_loss_downtime_parts': res['capacity_loss_downtime_parts'],
+            'capacity_loss_slow_parts': res['capacity_loss_slow_parts'],
+            'capacity_gain_fast_parts': res['capacity_gain_fast_parts'],
+            'total_capacity_loss_parts': res['total_capacity_loss_parts']
         })
         
     if not summary_list:
