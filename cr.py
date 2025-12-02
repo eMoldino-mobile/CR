@@ -289,7 +289,7 @@ def render_dashboard(df_tool, tool_name, config):
 
     # --- KPI Board 1: Run Rate Metrics (Time & Stability) ---
     with st.container(border=True):
-        k1, k2, k3 = st.columns(3)
+        k1, k2, k3, k4, k5 = st.columns(5)
         
         # 1. Total Run Duration
         k1.metric("Total Run Duration", cr_utils.format_seconds_to_dhm(res['total_runtime_sec']))
@@ -304,35 +304,25 @@ def render_dashboard(df_tool, tool_name, config):
         k3.metric("Run Rate Downtime", cr_utils.format_seconds_to_dhm(res['downtime_sec']))
         k3.markdown(f"<span style='background-color:{cr_utils.PASTEL_COLORS['red']}; color:black; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.8em'>{down_perc:.1f}%</span>", unsafe_allow_html=True)
 
-    # --- Donut Charts Row ---
+        # 4. Efficiency (%) - Metric Only
+        k4.metric("Run Rate Efficiency (%)", f"{res['efficiency_rate']*100:.1f}%")
+        
+        # 5. Stability Index (%) - Metric Only
+        k5.metric("Run Rate Stability Index (%)", f"{res['stability_index']:.1f}%")
+
+    # --- Donut Charts Row (Capacity & Shots) ---
     with st.container(border=True):
         c1, c2 = st.columns(2)
+        
+        # Chart 1: Actual vs Optimal Output
         with c1:
-            eff_val = res['efficiency_rate'] * 100
-            st.plotly_chart(cr_utils.create_donut_chart(eff_val, "Run Rate Efficiency (%)", color_scheme='blue'), use_container_width=True)
+            act_perc = (res['actual_output_parts'] / res['optimal_output_parts'] * 100) if res['optimal_output_parts'] > 0 else 0
+            st.plotly_chart(cr_utils.create_donut_chart(act_perc, f"Actual Output ({res['actual_output_parts']:,.0f}) vs Optimal ({res['optimal_output_parts']:,.0f})", color_scheme='blue'), use_container_width=True)
+            
+        # Chart 2: Normal vs Total Shots
         with c2:
-            stab_val = res['stability_index']
-            st.plotly_chart(cr_utils.create_donut_chart(stab_val, "Run Rate Stability Index (%)", color_scheme='dynamic'), use_container_width=True)
-
-    # --- KPI Board 2: Capacity Metrics ---
-    with st.container(border=True):
-        c1, c2, c3, c4 = st.columns(4)
-        
-        # 1. Optimal Output
-        c1.metric("Optimal Output (100%)", f"{res['optimal_output_parts']:,.0f}")
-        
-        # 2. Actual Output
-        act_perc = (res['actual_output_parts'] / res['optimal_output_parts'] * 100) if res['optimal_output_parts'] > 0 else 0
-        c2.metric("Actual Output", f"{res['actual_output_parts']:,.0f}")
-        c2.markdown(f"<span style='color:{'green' if act_perc>90 else 'orange'}; font-weight:bold; font-size:0.8em'>{act_perc:.1f}% of Optimal</span>", unsafe_allow_html=True)
-
-        # 3. Total Shots
-        c3.metric("Total Shots", f"{res['total_shots']:,.0f}")
-        
-        # 4. Normal Shots
-        norm_perc = (res['normal_shots'] / res['total_shots'] * 100) if res['total_shots'] > 0 else 0
-        c4.metric("Normal Shots", f"{res['normal_shots']:,.0f}")
-        c4.markdown(f"<span style='background-color:{cr_utils.PASTEL_COLORS['green']}; color:black; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.8em'>{norm_perc:.1f}% of Total</span>", unsafe_allow_html=True)
+            norm_perc = (res['normal_shots'] / res['total_shots'] * 100) if res['total_shots'] > 0 else 0
+            st.plotly_chart(cr_utils.create_donut_chart(norm_perc, f"Normal Shots ({res['normal_shots']:,.0f}) vs Total ({res['total_shots']:,.0f})", color_scheme='green'), use_container_width=True)
 
     # --- KPI Board 3: Cycle Time Metrics ---
     with st.container(border=True):
