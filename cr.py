@@ -13,7 +13,7 @@ importlib.reload(cr_utils)
 # ==============================================================================
 # --- PAGE CONFIG ---
 # ==============================================================================
-st.set_page_config(layout="wide", page_title="Capacity Risk Dashboard (v9.4)")
+st.set_page_config(layout="wide", page_title="Capacity Risk Dashboard (v9.5)")
 
 # ==============================================================================
 # --- 1. RENDER FUNCTIONS ---
@@ -229,9 +229,6 @@ def render_dashboard(df_tool, tool_name, config):
     st.subheader(sub_header)
 
     # --- 5. Calculate Metrics (AGGREGATED from Runs) ---
-    # WE MUST CALCULATE SUMMARIES FROM THE TABLE DATA TO ENSURE CONSISTENCY
-    # This matches the Run Rate App logic: Summaries are sums of runs.
-    
     run_breakdown_df = cr_utils.calculate_run_summaries(df_view, config)
     
     if run_breakdown_df.empty:
@@ -249,8 +246,13 @@ def render_dashboard(df_tool, tool_name, config):
     stop_events = run_breakdown_df['stop_events'].sum()
     
     opt_output = run_breakdown_df['optimal_output_parts'].sum()
+    
     # FIX: Calculate Target Output from Optimal if column missing to avoid KeyError
-    tgt_output = opt_output * (config['target_output_perc'] / 100.0)
+    if 'target_output_parts' in run_breakdown_df.columns:
+        tgt_output = run_breakdown_df['target_output_parts'].sum() 
+    else:
+        tgt_output = opt_output * (config['target_output_perc'] / 100.0)
+
     act_output = run_breakdown_df['actual_output_parts'].sum()
     
     # Capacity Losses
@@ -272,7 +274,7 @@ def render_dashboard(df_tool, tool_name, config):
         'efficiency_rate': eff_rate,
         'stability_index': stab_index,
         'optimal_output_parts': opt_output,
-        'target_output_parts': tgt_output, # Included for waterfall chart
+        'target_output_parts': tgt_output, 
         'actual_output_parts': act_output,
         'total_shots': total_shots,
         'normal_shots': normal_shots,
@@ -287,7 +289,7 @@ def render_dashboard(df_tool, tool_name, config):
 
     # --- KPI Board 1: Run Rate Metrics (Time & Stability) ---
     with st.container(border=True):
-        k1, k2, k3, k4, k5 = st.columns(5)
+        k1, k2, k3 = st.columns(3)
         
         # 1. Total Run Duration
         k1.metric("Total Run Duration", cr_utils.format_seconds_to_dhm(res['total_runtime_sec']))
@@ -302,11 +304,15 @@ def render_dashboard(df_tool, tool_name, config):
         k3.metric("Run Rate Downtime", cr_utils.format_seconds_to_dhm(res['downtime_sec']))
         k3.markdown(f"<span style='background-color:{cr_utils.PASTEL_COLORS['red']}; color:black; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.8em'>{down_perc:.1f}%</span>", unsafe_allow_html=True)
 
-        # 4. Efficiency (%)
-        k4.metric("Run Rate Efficiency (%)", f"{res['efficiency_rate']*100:.1f}%")
-        
-        # 5. Stability Index (%)
-        k5.metric("Run Rate Stability Index (%)", f"{res['stability_index']:.1f}%")
+    # --- Donut Charts Row ---
+    with st.container(border=True):
+        c1, c2 = st.columns(2)
+        with c1:
+            eff_val = res['efficiency_rate'] * 100
+            st.plotly_chart(cr_utils.create_donut_chart(eff_val, "Run Rate Efficiency (%)", color_scheme='blue'), use_container_width=True)
+        with c2:
+            stab_val = res['stability_index']
+            st.plotly_chart(cr_utils.create_donut_chart(stab_val, "Run Rate Stability Index (%)", color_scheme='dynamic'), use_container_width=True)
 
     # --- KPI Board 2: Capacity Metrics ---
     with st.container(border=True):
@@ -466,7 +472,7 @@ def render_dashboard(df_tool, tool_name, config):
 # ==============================================================================
 
 def main():
-    st.sidebar.title("Capacity Risk v9.4")
+    st.sidebar.title("Capacity Risk v9.5")
     
     # --- File Upload ---
     st.sidebar.markdown("### File Upload")
