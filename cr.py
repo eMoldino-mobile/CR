@@ -13,7 +13,7 @@ importlib.reload(cr_utils)
 # ==============================================================================
 # --- PAGE CONFIG ---
 # ==============================================================================
-st.set_page_config(layout="wide", page_title="Capacity Risk Dashboard (v9.0)")
+st.set_page_config(layout="wide", page_title="Capacity Risk Dashboard (v9.1)")
 
 # ==============================================================================
 # --- 1. RENDER FUNCTIONS ---
@@ -238,7 +238,6 @@ def render_dashboard(df_tool, tool_name, config, demand_info):
         k3.markdown(f"<span style='background-color:{cr_utils.PASTEL_COLORS['red']}; color:black; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.8em'>{down_perc:.1f}%</span>", unsafe_allow_html=True)
 
         # 4. Efficiency (%) - Gauge/Metric
-        # Using visual metric style for consistency with Run Rate
         k4.metric("Run Rate Efficiency (%)", f"{res['efficiency_rate']*100:.1f}%")
         
         # 5. Stability Index (%) - Gauge/Metric
@@ -266,16 +265,14 @@ def render_dashboard(df_tool, tool_name, config, demand_info):
 
     # --- KPI Board 3: Cycle Time Metrics ---
     with st.container(border=True):
-        ct1, ct2, ct3 = st.columns([1, 2, 1])
+        # Flattened layout: 4 columns instead of nested columns for better spacing
+        ct1, ct2, ct3, ct4 = st.columns(4)
         
         # 1. Approved CT
-        # Calculate weighted average approved CT for display if mixed
         avg_app_ct = df_view['approved_ct'].mean()
         ct1.metric("Approved Cycle Time", f"{avg_app_ct:.2f} s")
         
-        # 2. Mode CT Ranges
-        # This matches the "Run Rate" dashboard metric: "Mode Cycle Time Range (sec)"
-        # We need to find the min/max of mode CTs in this view
+        # Metrics for limits
         if 'mode_ct' in df_view.columns:
             min_mode = df_view['mode_ct'].min()
             max_mode = df_view['mode_ct'].max()
@@ -284,38 +281,67 @@ def render_dashboard(df_tool, tool_name, config, demand_info):
         else:
             min_mode = max_mode = min_lower = max_upper = 0
 
-        with ct2:
-            s1, s2, s3 = st.columns(3)
-            s1.metric("Lower Limit Range", f"{min_lower:.2f} - {df_view['mode_lower'].max():.2f} s")
-            with s2:
-                st.metric("Mode CT Range", f"{min_mode:.2f} - {max_mode:.2f} s", help="The range of Mode Cycle Times detected across runs in this period.")
-            s3.metric("Upper Limit Range", f"{df_view['mode_upper'].min():.2f} - {max_upper:.2f} s")
+        # 2. Lower Limit
+        ct2.metric("Lower Limit Range", f"{min_lower:.2f} - {df_view['mode_lower'].max():.2f} s")
+        
+        # 3. Mode CT
+        ct3.metric("Mode CT Range", f"{min_mode:.2f} - {max_mode:.2f} s")
+        
+        # 4. Upper Limit
+        ct4.metric("Upper Limit Range", f"{df_view['mode_upper'].min():.2f} - {max_upper:.2f} s")
 
     st.markdown("---")
 
     # --- 7. Lower Section: Breakdown & Charts ---
-    # Re-using the logic from previous version but cleaned up
-    
     t1, t2, t3 = st.tabs(["Performance Breakdown", "Shot Analysis", "Future Forecast"])
 
     with t1:
         st.subheader("Capacity Loss Waterfall")
-        c_chart, c_table = st.columns([2, 1])
+        # Layout reverted to chart on left, detailed breakdown table on right
+        c_chart, c_details = st.columns([1.5, 1]) 
+        
         with c_chart:
             st.plotly_chart(cr_utils.plot_waterfall(res, "Optimal Output"), use_container_width=True)
-        with c_table:
-             # Mini Table for Breakdown
-            loss_data = [
-                {"Category": "Downtime Loss", "Parts": res['capacity_loss_downtime_parts'], "Color": "red"},
-                {"Category": "Slow Cycle Loss", "Parts": res['capacity_loss_slow_parts'], "Color": "orange"},
-                {"Category": "Fast Cycle Gain", "Parts": res['capacity_gain_fast_parts'], "Color": "green"},
-                {"Category": "Total Net Loss", "Parts": res['optimal_output_parts'] - res['actual_output_parts'], "Color": "grey"}
+            
+        with c_details:
+            # Reverted to the detailed box + table style
+            true_loss = res['optimal_output_parts'] - res['actual_output_parts']
+            
+            with st.container(border=True):
+                st.markdown("**Total Net Impact**")
+                st.markdown(f"<h2 style='color:#ff6961; margin:0;'>{true_loss:,.0f} parts</h2>", unsafe_allow_html=True)
+                st.caption(f"Net Time Lost: {cr_utils.format_seconds_to_dhm(res['total_capacity_loss_sec'])}")
+            
+            net_cycle_loss = res['capacity_loss_slow_parts'] - res['capacity_gain_fast_parts']
+            
+            # Construct the table data
+            breakdown_data = [
+                {"Metric": "Loss (RR Downtime)", "Parts": res['capacity_loss_downtime_parts'], "Time": cr_utils.format_seconds_to_dhm(res['downtime_sec'])},
+                {"Metric": "Net Loss (Cycle Time)", "Parts": net_cycle_loss, "Time": "N/A"},
+                {"Metric": "└ Loss (Slow Cycles)", "Parts": res['capacity_loss_slow_parts'], "Time": cr_utils.format_seconds_to_dhm(res['capacity_loss_slow_parts'] * (res['production_time_sec']/res['actual_output_parts']) if res['actual_output_parts'] else 0)},
+                {"Metric": "└ Gain (Fast Cycles)", "Parts": res['capacity_gain_fast_parts'], "Time": cr_utils.format_seconds_to_dhm(res['capacity_gain_fast_parts'] * (res['production_time_sec']/res['actual_output_parts']) if res['actual_output_parts'] else 0)},
             ]
-            st.write(" **Numeric Breakdown**")
-            for item in loss_data:
-                color = item['Color']
-                val = item['Parts']
-                st.markdown(f"- **{item['Category']}**: {val:,.0f} parts")
+            
+            df_breakdown = pd.DataFrame(breakdown_data)
+            
+            def style_breakdown(row):
+                styles = [''] * len(row)
+                if row['Metric'] == "Loss (RR Downtime)":
+                    styles[1] = 'color: #ff6961; font-weight: bold;'
+                elif row['Metric'] == "Net Loss (Cycle Time)":
+                    color = '#ff6961' if row['Parts'] > 0 else '#77dd77'
+                    styles[1] = f'color: {color}; font-weight: bold;'
+                elif "Gain" in row['Metric']:
+                    styles[1] = 'color: #77dd77;'
+                elif "Loss" in row['Metric']:
+                    styles[1] = 'color: #ff6961;'
+                return styles
+
+            st.dataframe(
+                df_breakdown.style.apply(style_breakdown, axis=1).format({"Parts": "{:,.0f}"}), 
+                use_container_width=True, 
+                hide_index=True
+            )
 
     with t2:
         st.subheader("Shot-by-Shot Visualization")
@@ -327,13 +353,16 @@ def render_dashboard(df_tool, tool_name, config, demand_info):
         st.subheader("Forecast")
         agg_daily = cr_utils.get_aggregated_data(df_view, 'Daily', config)
         if not agg_daily.empty:
+            # FIX: Removed .date() call on the date object. agg_daily['Period'] already contains date objects.
+            start_date_val = agg_daily['Period'].max()
+            
             dates, proj_act, proj_peak, proj_tgt, start_val, _, _ = cr_utils.generate_prediction_data(
                 agg_daily, 
-                agg_daily['Period'].max().date(), 
-                agg_daily['Period'].max().date() + timedelta(days=30), 
+                start_date_val,
+                start_date_val + timedelta(days=30), 
                 demand_info['target']
             )
-            fig_pred = cr_utils.plot_prediction_chart(dates, proj_act, proj_peak, proj_tgt, demand_info['target'], agg_daily['Period'].max().date(), start_val)
+            fig_pred = cr_utils.plot_prediction_chart(dates, proj_act, proj_peak, proj_tgt, demand_info['target'], start_date_val, start_val)
             st.plotly_chart(fig_pred, use_container_width=True)
         else:
             st.info("Insufficient data for forecasting.")
@@ -344,7 +373,7 @@ def render_dashboard(df_tool, tool_name, config, demand_info):
 # ==============================================================================
 
 def main():
-    st.sidebar.title("Capacity Risk v9.0")
+    st.sidebar.title("Capacity Risk v9.1")
     
     # --- File Upload ---
     st.sidebar.markdown("### File Upload")
@@ -360,7 +389,6 @@ def main():
         st.stop()
 
     # --- Tool Selection ---
-    # [Tool ID] Overview requirement: This is dynamic based on selection
     tool_ids = sorted(df_all['tool_id'].unique())
     selected_tool = st.sidebar.selectbox("Select Tool ID", tool_ids)
 
