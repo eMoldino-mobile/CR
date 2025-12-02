@@ -13,7 +13,7 @@ importlib.reload(cr_utils)
 # ==============================================================================
 # --- PAGE CONFIG ---
 # ==============================================================================
-st.set_page_config(layout="wide", page_title="Capacity Risk Dashboard (v9.6)")
+st.set_page_config(layout="wide", page_title="Capacity Risk Dashboard (v9.7)")
 
 # ==============================================================================
 # --- 1. RENDER FUNCTIONS ---
@@ -22,18 +22,19 @@ st.set_page_config(layout="wide", page_title="Capacity Risk Dashboard (v9.6)")
 def render_risk_tower(df_all_tools, config):
     """Renders the Risk Tower (Tab 1)."""
     st.title("Capacity Risk Tower")
-    st.info("This tower analyzes performance over the last 4 weeks. Tools are evaluated on Stability, Trend, and Capacity Achievement.")
+    st.info("This tower identifies tools at risk by analyzing weekly production gaps over the last 4 weeks.")
 
     with st.expander("ℹ️ How the Risk Tower Works"):
         st.markdown("""
         The Risk Tower evaluates each tool based on its performance over its own most recent 4-week period.
         
-        - **Risk Score**: Calculated based on Stability and Achievement % against Target.
-        - **Trend**: Penalty applied if stability is declining.
+        - **Gap % (Avg)**: average percentage gap between Actual and Target output over the last 4 weeks.
+        - **Weekly Trend**: Visual indicator of whether the gap is widening or closing.
+        - **Risk Score**: Calculated based on the magnitude of the gap and the trend direction.
         - **Color Coding**:
-            - <span style='background-color:#ff6961; color: black; padding: 2px 5px; border-radius: 5px;'>Red (0-50)</span>: High Risk
-            - <span style='background-color:#ffb347; color: black; padding: 2px 5px; border-radius: 5px;'>Orange (51-80)</span>: Medium Risk
-            - <span style='background-color:#77dd77; color: black; padding: 2px 5px; border-radius: 5px;'>Green (>80)</span>: Low Risk
+            - <span style='background-color:#ff6961; color: black; padding: 2px 5px; border-radius: 5px;'>Red (High Gap)</span>: High Risk
+            - <span style='background-color:#ffb347; color: black; padding: 2px 5px; border-radius: 5px;'>Orange (Moderate Gap)</span>: Medium Risk
+            - <span style='background-color:#77dd77; color: black; padding: 2px 5px; border-radius: 5px;'>Green (Low/No Gap)</span>: Low Risk
         """, unsafe_allow_html=True)
 
     risk_df = cr_utils.calculate_capacity_risk_scores(df_all_tools, config)
