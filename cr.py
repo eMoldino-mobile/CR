@@ -13,7 +13,7 @@ importlib.reload(cr_utils)
 # ==============================================================================
 # --- PAGE CONFIG ---
 # ==============================================================================
-st.set_page_config(layout="wide", page_title="Capacity Risk Dashboard (v9.5)")
+st.set_page_config(layout="wide", page_title="Capacity Risk Dashboard (v9.6)")
 
 # ==============================================================================
 # --- 1. RENDER FUNCTIONS ---
@@ -347,10 +347,97 @@ def render_dashboard(df_tool, tool_name, config):
         # 4. Upper Limit
         ct4.metric("Upper Limit Range", f"{run_breakdown_df['mode_upper'].min():.2f} - {max_upper:.2f} s")
 
+    # --- What do these metrics mean? (Collapsed) ---
+    with st.expander("ℹ️ What do these metrics mean?"):
+        st.markdown("""
+        **Run Rate Metrics:**
+        - **Run Rate Efficiency (%)**: Percentage of shots that are "Normal" (not stops). *Formula: Normal Shots / Total Shots*
+        - **Run Rate Stability Index (%)**: Percentage of total run time spent producing. *Formula: Production Time / Total Run Duration*
+        - **Total Run Duration**: Sum of all individual production runs (excludes large gaps like weekends).
+        - **Downtime**: Total Run Duration minus Production Time.
+
+        **Capacity Metrics:**
+        - **Optimal Output**: Theoretical maximum parts possible if running at Approved Cycle Time for the entire duration.
+        - **Actual Output**: The actual number of parts produced (Total Shots x Cavities).
+        - **Capacity Loss**: The difference between Optimal and Actual output, broken down by cause (Downtime vs Slow Cycles).
+        """)
+
     st.markdown("---")
 
-    # --- Run-Based Analysis ---
+    # --- 7. Lower Section: Breakdown & Charts ---
+    # Re-ordering: Waterfall -> Cycle Time Chart -> Run Breakdown -> Production Totals
+    
+    # A. Capacity Loss Waterfall
+    st.subheader("Capacity Loss Waterfall")
+    c_chart, c_details = st.columns([1.5, 1]) 
+    
+    with c_chart:
+        # FIX: Ensure res contains all keys needed for plot_waterfall
+        st.plotly_chart(cr_utils.plot_waterfall(res, "Optimal Output"), use_container_width=True)
+        
+    with c_details:
+        true_loss = res['optimal_output_parts'] - res['actual_output_parts']
+        
+        with st.container(border=True):
+            st.markdown("**Total Net Impact**")
+            st.markdown(f"<h2 style='color:#ff6961; margin:0;'>{true_loss:,.0f} parts</h2>", unsafe_allow_html=True)
+            st.caption(f"Net Time Lost: {cr_utils.format_seconds_to_dhm(res['total_capacity_loss_sec'])}")
+        
+        net_cycle_loss = res['capacity_loss_slow_parts'] - res['capacity_gain_fast_parts']
+        
+        # Construct the table data
+        breakdown_data = [
+            {"Metric": "Loss (RR Downtime)", "Parts": res['capacity_loss_downtime_parts'], "Time": cr_utils.format_seconds_to_dhm(res['downtime_sec'])},
+            {"Metric": "Net Loss (Cycle Time)", "Parts": net_cycle_loss, "Time": "N/A"},
+            {"Metric": "└ Loss (Slow Cycles)", "Parts": res['capacity_loss_slow_parts'], "Time": cr_utils.format_seconds_to_dhm(res['capacity_loss_slow_parts'] * (res['production_time_sec']/res['actual_output_parts']) if res['actual_output_parts'] else 0)},
+            {"Metric": "└ Gain (Fast Cycles)", "Parts": res['capacity_gain_fast_parts'], "Time": cr_utils.format_seconds_to_dhm(res['capacity_gain_fast_parts'] * (res['production_time_sec']/res['actual_output_parts']) if res['actual_output_parts'] else 0)},
+        ]
+        
+        df_breakdown = pd.DataFrame(breakdown_data)
+        
+        def style_breakdown(row):
+            styles = [''] * len(row)
+            if row['Metric'] == "Loss (RR Downtime)":
+                styles[1] = 'color: #ff6961; font-weight: bold;'
+            elif row['Metric'] == "Net Loss (Cycle Time)":
+                color = '#ff6961' if row['Parts'] > 0 else '#77dd77'
+                styles[1] = f'color: {color}; font-weight: bold;'
+            elif "Gain" in row['Metric']:
+                styles[1] = 'color: #77dd77;'
+            elif "Loss" in row['Metric']:
+                styles[1] = 'color: #ff6961;'
+            return styles
+
+        st.dataframe(
+            df_breakdown.style.apply(style_breakdown, axis=1).format({"Parts": "{:,.0f}"}), 
+            use_container_width=True, 
+            hide_index=True
+        )
+
+    st.markdown("---")
+
+    # B. Shot Analysis (Cycle Time Graph)
+    st.subheader("Shot-by-Shot Visualization")
+    st.plotly_chart(cr_utils.plot_shot_analysis(res['processed_df']), use_container_width=True)
+    with st.expander("View Shot Data Table (Collapsed)", expanded=False):
+        st.dataframe(res['processed_df'][['shot_time', 'actual_ct', 'run_id', 'shot_type', 'stop_flag']], use_container_width=True)
+
+    st.markdown("---")
+
+    # C. Run-Based Analysis & Performance Breakdown
     st.header("Run-Based Analysis")
+    
+    # 1. Performance Breakdown Chart (Stacked Bar)
+    st.subheader("Performance Breakdown")
+    # Aggregate data for bar chart - Reuse existing function but pass config
+    # We need to decide if we group by Run or Hour here. Default to Run if daily view.
+    freq_mode = 'by Run' if 'Daily' in analysis_level else 'Daily'
+    agg_df_chart = cr_utils.get_aggregated_data(df_view, freq_mode, config)
+    
+    if not agg_df_chart.empty:
+        st.plotly_chart(cr_utils.plot_performance_breakdown(agg_df_chart, 'Period', "Optimal Output"), use_container_width=True)
+    
+    # 2. Run Breakdown Table
     with st.expander("View Run Breakdown Table", expanded=True):
         # Create a display copy
         d_df = run_breakdown_df.copy()
@@ -399,62 +486,15 @@ def render_dashboard(df_tool, tool_name, config):
 
     st.markdown("---")
 
-    # --- 7. Lower Section: Breakdown & Charts ---
-    t1, t2 = st.tabs(["Performance Breakdown", "Shot Analysis"])
-
-    with t1:
-        st.subheader("Capacity Loss Waterfall")
-        # Layout: Chart on left, Detailed breakdown on right
-        c_chart, c_details = st.columns([1.5, 1]) 
-        
-        with c_chart:
-            # FIX: Ensure res contains all keys needed for plot_waterfall
-            st.plotly_chart(cr_utils.plot_waterfall(res, "Optimal Output"), use_container_width=True)
-            
-        with c_details:
-            true_loss = res['optimal_output_parts'] - res['actual_output_parts']
-            
-            with st.container(border=True):
-                st.markdown("**Total Net Impact**")
-                st.markdown(f"<h2 style='color:#ff6961; margin:0;'>{true_loss:,.0f} parts</h2>", unsafe_allow_html=True)
-                st.caption(f"Net Time Lost: {cr_utils.format_seconds_to_dhm(res['total_capacity_loss_sec'])}")
-            
-            net_cycle_loss = res['capacity_loss_slow_parts'] - res['capacity_gain_fast_parts']
-            
-            # Construct the table data
-            breakdown_data = [
-                {"Metric": "Loss (RR Downtime)", "Parts": res['capacity_loss_downtime_parts'], "Time": cr_utils.format_seconds_to_dhm(res['downtime_sec'])},
-                {"Metric": "Net Loss (Cycle Time)", "Parts": net_cycle_loss, "Time": "N/A"},
-                {"Metric": "└ Loss (Slow Cycles)", "Parts": res['capacity_loss_slow_parts'], "Time": cr_utils.format_seconds_to_dhm(res['capacity_loss_slow_parts'] * (res['production_time_sec']/res['actual_output_parts']) if res['actual_output_parts'] else 0)},
-                {"Metric": "└ Gain (Fast Cycles)", "Parts": res['capacity_gain_fast_parts'], "Time": cr_utils.format_seconds_to_dhm(res['capacity_gain_fast_parts'] * (res['production_time_sec']/res['actual_output_parts']) if res['actual_output_parts'] else 0)},
-            ]
-            
-            df_breakdown = pd.DataFrame(breakdown_data)
-            
-            def style_breakdown(row):
-                styles = [''] * len(row)
-                if row['Metric'] == "Loss (RR Downtime)":
-                    styles[1] = 'color: #ff6961; font-weight: bold;'
-                elif row['Metric'] == "Net Loss (Cycle Time)":
-                    color = '#ff6961' if row['Parts'] > 0 else '#77dd77'
-                    styles[1] = f'color: {color}; font-weight: bold;'
-                elif "Gain" in row['Metric']:
-                    styles[1] = 'color: #77dd77;'
-                elif "Loss" in row['Metric']:
-                    styles[1] = 'color: #ff6961;'
-                return styles
-
-            st.dataframe(
-                df_breakdown.style.apply(style_breakdown, axis=1).format({"Parts": "{:,.0f}"}), 
-                use_container_width=True, 
-                hide_index=True
-            )
-
-    with t2:
-        st.subheader("Shot-by-Shot Visualization")
-        st.plotly_chart(cr_utils.plot_shot_analysis(res['processed_df']), use_container_width=True)
-        with st.expander("View Shot Data Table"):
-            st.dataframe(res['processed_df'][['shot_time', 'actual_ct', 'run_id', 'shot_type', 'stop_flag']], use_container_width=True)
+    # D. Production Totals
+    st.header("Production Totals")
+    with st.container(border=True):
+        pt1, pt2, pt3, pt4 = st.columns(4)
+        pt1.metric("Total Actual Output", f"{res['actual_output_parts']:,.0f}")
+        pt2.metric("Total Optimal Output", f"{res['optimal_output_parts']:,.0f}")
+        pt3.metric("Net Loss", f"{true_loss:,.0f} parts")
+        # Assuming you want Total Shots here as well
+        pt4.metric("Total Shots", f"{res['total_shots']:,.0f}")
 
 
 # ==============================================================================
@@ -462,7 +502,7 @@ def render_dashboard(df_tool, tool_name, config):
 # ==============================================================================
 
 def main():
-    st.sidebar.title("Capacity Risk v9.5")
+    st.sidebar.title("Capacity Risk v9.6")
     
     # --- File Upload ---
     st.sidebar.markdown("### File Upload")
